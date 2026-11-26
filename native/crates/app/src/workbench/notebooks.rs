@@ -309,6 +309,16 @@ impl Workbench {
                 });
             }
         }
+        // InteractiveDocumentContribution: the interactive window's notebook type unless an extension contributes it.
+        if !types.iter().any(|kind| kind.view_type == super::interactive::VIEW_TYPE) {
+            types.push(NotebookType {
+                view_type: super::interactive::VIEW_TYPE.into(),
+                display_name: "Interactive".into(),
+                priority: "builtin".into(),
+                selectors: vec![(json!("*.interactive"), Value::Null)],
+                options: Value::Null,
+            });
+        }
         for serializer in &self.host.notebooks.serializers {
             let registration = &serializer.registration;
             match types.iter_mut().find(|kind| kind.view_type == serializer.view_type) {
@@ -334,12 +344,16 @@ impl Workbench {
         }
         let transient = self.host.notebooks.serializer(view_type).map(|serializer| serializer.options.clone()).unwrap_or_default();
         let (mut model, texts) = NotebookModel::new(uri.clone(), view_type, data, transient);
-        model.dirty = dirty;
+        model.scratchpad = view_type == super::interactive::VIEW_TYPE && self.setting("interactiveWindow.promptToSaveOnClose") != true;
+        model.dirty = dirty && !model.scratchpad;
         for text in &texts {
             self.create_cell_model(text);
         }
         self.host.notebooks.models.push(model);
         self.editors_changed(cx);
+        for association in self.host.notebooks.kernels.notebook_added(view_type, &key) {
+            self.host.send("ExtHostNotebookKernels", "$acceptNotebookAssociation", association_args(&association));
+        }
         if dirty {
             self.host.send("ExtHostNotebookDocuments", "$acceptDirtyStateChanged", vec![uri, json!(true)]);
         }
@@ -714,14 +728,21 @@ impl Workbench {
         notebooks.editors.retain(|editor| tabs.iter().any(|(id, _)| *id == editor.tab_model_id));
         for (tab_model_id, notebook) in tabs {
             if notebooks.editor(tab_model_id).is_none() {
-                notebooks.editors.push(NotebookEditor { tab_model_id, id: format!("$notebookEditor{tab_model_id}"), notebook, focus: 0, selections: vec![(0, 1)] });
+                notebooks.editors.push(NotebookEditor { tab_model_id, id: format!("$notebookEditor{tab_model_id}"), notebook, focus: 0, selections: vec![(0, 1)], input_focused: false, visible_ranges: None });
             }
         }
         self.editors.stacked_editors.clear();
         for editor in &notebooks.editors {
             let Some(model) = notebooks.model(&editor.notebook) else { continue };
-            let Some(cell) = model.cells.get(editor.focus).or(model.cells.last()) else { continue };
-            let (scheme, path) = uri_parts(&cell.uri).expect("cell URIs are built by notebook::cell_uri");
+            // An interactive window's input editor, when it has the focus or there is no cell.
+            let input = notebooks.interactives.iter().find(|interactive| interactive.notebook == editor.notebook).map(|interactive| &interactive.input);
+            let input = input.filter(|input| uri_parts(input).is_ok_and(|(scheme, path)| self.editors.model(scheme, &path).is_some()));
+            let focused = match input {
+                Some(input) if editor.input_focused || model.cells.is_empty() => Some(input),
+                _ => model.cells.get(editor.focus).or(model.cells.last()).map(|cell| &cell.uri),
+            };
+            let Some(focused) = focused else { continue };
+            let (scheme, path) = uri_parts(focused).expect("cell and input URIs have a scheme");
             self.editors.stacked_editors.insert(editor.tab_model_id, crate::diff_editor::Side { scheme: scheme.to_owned(), path });
         }
     }
@@ -731,6 +752,8 @@ impl Workbench {
     /// with its notebook there.
     pub(super) fn send_notebook_changes(&mut self) {
         self.sync_notebook_editors();
+        self.release_interactives();
+        self.interactive_input_changed();
         self.release_notebooks();
         let visible: Vec<(Option<usize>, u32)> = self
             .groups_in_grid_order()
@@ -812,7 +835,7 @@ impl Workbench {
     }
 
 
-    fn active_notebook_editor_mut(&mut self) -> Option<&mut NotebookEditor> {
+    pub(super) fn active_notebook_editor_mut(&mut self) -> Option<&mut NotebookEditor> {
         let tab_model_id = self.editors.active_tab().filter(|editor| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME)?.model_id;
         self.host.notebooks.editors.iter_mut().find(|editor| editor.tab_model_id == tab_model_id)
     }
@@ -951,7 +974,7 @@ impl Workbench {
 
     /// notebookExecutionServiceImpl.ts `executeNotebookCells`: each cell without an execution gets one, the
     /// resolved kernel is bound and runs the cells its languages allow; the outcome resolves once it returns.
-    fn execute_notebook_cells(&mut self, key: &str, handles: Vec<u64>, cx: &mut Context<Self>) -> Outcome {
+    pub(super) fn execute_notebook_cells(&mut self, key: &str, handles: Vec<u64>, cx: &mut Context<Self>) -> Outcome {
         let model = self.host.notebooks.model(key).expect("an open notebook");
         let (view_type, uri) = (model.view_type.clone(), model.uri.clone());
         let mut started = Vec::new();
@@ -1072,6 +1095,7 @@ impl Workbench {
             "$completeExecution" => {
                 if let Some(execution) = self.host.notebooks.kernels.executions.remove(&handle) {
                     self.complete_cell_execution(&execution.notebook, execution.cell_handle, arg(1), cx);
+                    self.scroll_interactive_to_executed(&execution.notebook, execution.cell_handle);
                 }
                 Outcome::done()
             }
@@ -1098,8 +1122,9 @@ impl Workbench {
         if self.host.notebooks.kernels.start_cell(&key, cell_handle) {
             self.initialize_cell_execution(&key, cell_handle, cx);
         }
-        let execution = notebook::kernels::Execution { notebook: key, cell_handle, state: ExecutionState::Pending };
+        let execution = notebook::kernels::Execution { notebook: key.clone(), cell_handle, state: ExecutionState::Pending };
         self.host.notebooks.kernels.executions.insert(handle, execution);
+        self.scroll_interactive_to_executed(&key, cell_handle);
         Ok(Value::Null)
     }
 
@@ -1265,6 +1290,10 @@ async fn serializer_handle(workbench: &WeakEntity<Workbench>, cx: &mut AsyncApp,
 
 /// `$dataToNotebook` of the serializer of `view_type`.
 async fn data_to_notebook(workbench: &WeakEntity<Workbench>, cx: &mut AsyncApp, view_type: &str, bytes: &[u8]) -> NotebookResult {
+    // mainThreadNotebook.ts: an empty interactive window starts without cells.
+    if bytes.is_empty() && view_type == super::interactive::VIEW_TYPE {
+        return Ok(json!({ "cells": [], "metadata": {} }));
+    }
     let handle = serializer_handle(workbench, cx, view_type).await?;
     let call = workbench.update(cx, |workbench, _| workbench.host.call("ExtHostNotebook", "$dataToNotebook", vec![json!(handle), json!({ VSBUFFER_KEY: STANDARD.encode(bytes) })])).map_err(canceled)?;
     call.await.map_err(canceled)?

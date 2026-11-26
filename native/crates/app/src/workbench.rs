@@ -104,6 +104,7 @@ mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
 mod editor_type_picker;
+pub mod interactive;
 mod notebook_editor;
 mod notebook_outline;
 mod notebook_status_bar;
@@ -493,6 +494,7 @@ impl Render for Workbench {
         self.update_extension_editor_webviews(window, cx);
         self.auto_save_models_changed(cx);
         self.backup_models_changed(cx);
+        self.send_notebook_visible_ranges();
         self.follow_content_hover_editor();
         self.follow_rename_editor_state(window, cx);
         self.folding_model_changed(cx);
@@ -735,6 +737,7 @@ impl Workbench {
         workbench.editors.disposed.settings = Some(workbench.settings.clone());
         workbench.register_workbench_actions();
         workbench.register_notebook_commands();
+        workbench.register_interactive_commands();
         workbench.register_diff_editor_commands();
         workbench.register_file_compare_commands();
         workbench.register_diff_gutter_commands();

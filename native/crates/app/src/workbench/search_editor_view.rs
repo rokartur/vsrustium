@@ -121,6 +121,11 @@ impl Workbench {
 
     /// `EditorInput.getName`: "Search: {query}" for a search editor (`SearchEditorInput.getName`), the file name otherwise.
     pub(super) fn editor_name(&self, editor: &crate::editor::OpenEditor) -> String {
+        if editor.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME
+            && let Some(name) = self.interactive_name(&editor.document().path.to_string_lossy())
+        {
+            return name;
+        }
         match self.search_editors.get(&editor.document().path).filter(|_| editor.document().scheme == SEARCH_EDITOR_SCHEME) {
             Some(search_editor) => search_editor_name(search_editor.backing_file.as_deref(), &search_editor.config.query),
             None if editor.document().scheme == crate::output::OUTPUT_SCHEME => "Output".into(),

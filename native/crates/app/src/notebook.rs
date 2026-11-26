@@ -33,6 +33,83 @@ pub struct Notebooks {
     pub sent_editors: Vec<String>,
     pub sent_active: Option<String>,
     pub sent_visible: Vec<String>,
+    /// The interactive windows (InteractiveEditorInput): notebook URI string, input URI and history.
+    pub interactives: Vec<Interactive>,
+}
+
+/// An interactive window's input editor model and its history (interactiveHistoryService.ts).
+pub struct Interactive {
+    pub notebook: String,
+    pub input: Value,
+    /// The window's title (`InteractiveEditorInput.windowNames`), its notebook's base name without one.
+    pub title: Option<String>,
+    pub history: History,
+    /// A tab showed it: once none does, the window goes.
+    pub shown: bool,
+}
+
+/// base/common/history.ts `HistoryNavigator2` with capacity 50: distinct values, oldest first, the last one the
+/// input being typed, and a cursor.
+#[derive(Debug)]
+pub struct History {
+    entries: Vec<String>,
+    cursor: usize,
+}
+
+impl History {
+    const CAPACITY: usize = 50;
+
+    pub fn new(value: &str) -> Self {
+        History { entries: vec![value.to_owned()], cursor: 0 }
+    }
+
+    pub fn current(&self) -> &str {
+        &self.entries[self.cursor]
+    }
+
+    /// `add`: appended (an equal older entry goes), the cursor on it, the oldest dropped past the capacity.
+    pub fn add(&mut self, value: &str) {
+        self.entries.retain(|entry| entry != value);
+        self.entries.push(value.to_owned());
+        if self.entries.len() > Self::CAPACITY {
+            self.entries.remove(0);
+        }
+        self.cursor = self.entries.len() - 1;
+    }
+
+    /// `replaceLast`: the last entry becomes `value`, an equal older entry goes.
+    pub fn replace_last(&mut self, value: &str) {
+        let last = self.entries.len() - 1;
+        if self.entries[last] == value {
+            return;
+        }
+        self.entries[last] = value.to_owned();
+        let mut index = 0;
+        while index < self.entries.len() - 1 {
+            if self.entries[index] != value {
+                index += 1;
+                continue;
+            }
+            self.entries.remove(index);
+            if index < self.cursor {
+                self.cursor -= 1;
+            }
+        }
+    }
+
+    pub fn previous(&mut self) -> &str {
+        self.cursor = self.cursor.saturating_sub(1);
+        self.current()
+    }
+
+    pub fn next(&mut self) -> &str {
+        self.cursor = (self.cursor + 1).min(self.entries.len() - 1);
+        self.current()
+    }
+
+    pub fn reset_cursor(&mut self) {
+        self.cursor = self.entries.len() - 1;
+    }
 }
 
 /// A `$registerNotebookSerializer`.
@@ -54,6 +131,10 @@ pub struct NotebookEditor {
     pub focus: usize,
     /// `ICellRange`s.
     pub selections: Vec<(usize, usize)>,
+    /// An interactive window's input editor has the focus (not a cell).
+    pub input_focused: bool,
+    /// The visible cell ranges the host last heard of, None before the first frame.
+    pub visible_ranges: Option<Vec<(usize, usize)>>,
 }
 
 impl Notebooks {
@@ -191,6 +272,9 @@ pub struct NotebookModel {
     pub version_id: u64,
     next_handle: u64,
     pub dirty: bool,
+    /// notebookEditorModelResolverServiceImpl.ts `isScratchpad`: changes never make it dirty (an interactive window
+    /// without `interactiveWindow.promptToSaveOnClose`).
+    pub scratchpad: bool,
     /// The serializer's `TransientOptions`: `transientOutputs`, `transientCellMetadata`, `transientDocumentMetadata`.
     pub transient: Value,
     /// Cell edits of the notebook editor to undo and redo; the cells' text edits are on their models' stacks, all
@@ -210,7 +294,7 @@ pub struct CellsUndo {
 impl NotebookModel {
     /// `NotebookTextModel` from `NotebookData` (a `NotebookDataDto`); the new cells' texts are returned with it.
     pub fn new(uri: Value, view_type: &str, data: &Value, transient: Value) -> (Self, Vec<NewCellText>) {
-        let mut model = NotebookModel { uri, view_type: view_type.to_owned(), metadata: object_or_empty(&data["metadata"]), cells: Vec::new(), version_id: 0, next_handle: 0, dirty: false, transient, undo: Vec::new(), redo: Vec::new() };
+        let mut model = NotebookModel { uri, view_type: view_type.to_owned(), metadata: object_or_empty(&data["metadata"]), cells: Vec::new(), version_id: 0, next_handle: 0, dirty: false, scratchpad: false, transient, undo: Vec::new(), redo: Vec::new() };
         let cells = data["cells"].as_array().cloned().unwrap_or_default();
         let (cells, texts) = model.create_cells(&cells);
         model.cells = cells;
@@ -327,7 +411,7 @@ impl NotebookModel {
             return Ok(applied);
         }
         self.version_id += 1;
-        self.dirty |= dirtying;
+        self.dirty |= dirtying && !self.scratchpad;
         applied.event = Some(json!({ "rawEvents": events, "versionId": self.version_id }));
         Ok(applied)
     }
@@ -449,7 +533,7 @@ impl NotebookModel {
     /// `_bindCellContentHandler` for a text change of the cell at `index`: the next version, dirty.
     pub fn cell_content_changed(&mut self, index: usize) -> Value {
         self.version_id += 1;
-        self.dirty = true;
+        self.dirty |= !self.scratchpad;
         json!({ "rawEvents": [{ "kind": change::CELL_CONTENT, "index": index }], "versionId": self.version_id })
     }
 
@@ -563,6 +647,15 @@ pub fn working_copy_type_id(view_type: &str) -> String {
 pub fn view_type_of_working_copy(type_id: &str) -> Option<&str> {
     let (notebook_type, view_type) = type_id.strip_prefix("notebook/")?.split_once('/')?;
     (notebook_type == view_type && !view_type.contains('/') && view_type != "interactive").then_some(view_type)
+}
+
+/// InteractiveEditorInput `name`: the window's title, else its notebook's base name without the extension.
+pub fn interactive_name(uri: &Value, interactive: &Interactive) -> String {
+    if let Some(title) = &interactive.title {
+        return title.clone();
+    }
+    let name = label(uri);
+    name.rsplit_once('.').map_or(name.clone(), |(stem, _)| stem.to_owned())
 }
 
 /// The tab label of a notebook: its resource's base name (`EditorInput.getName`).
