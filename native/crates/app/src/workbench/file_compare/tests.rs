@@ -47,6 +47,12 @@ fn the_compare_commands_open_diff_editors(cx: &mut TestAppContext) {
     assert_eq!(saved_text, ["one", "two", ""], "the original side is the file on disk");
     let diff_tab_dirty = workbench.read_with(cx, |workbench, _| workbench.tab_shows_dirty(workbench.editors.active_index().unwrap()));
     assert!(diff_tab_dirty, "the diff tab shows its modified side's dirty state");
+    let cursors = workbench.read_with(cx, |workbench, _| {
+        let file_tab = workbench.editors.editors.iter().find(|editor| editor.document().is("file", &a)).unwrap();
+        let cursor = |editor: &crate::editor::OpenEditor| (editor.selections[0].start().line, editor.selections[0].start().column);
+        (cursor(workbench.editors.active().unwrap()), cursor(file_tab))
+    });
+    assert_eq!(cursors, ((0, 0), (0, 1)), "the diff's modified editor starts at its first change; the text editor keeps its cursor");
 
     run("selectForCompare", vec![uri(&a)], cx);
     let selected = workbench.update_in(cx, |workbench, window, _| workbench.key_context(window)["resourceSelectedForCompare"].clone());

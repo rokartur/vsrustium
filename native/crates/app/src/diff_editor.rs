@@ -54,6 +54,9 @@ pub struct DiffInput {
     /// The modified model's document symbols for the breadcrumbs, and the model version they were asked for.
     pub symbols: Vec<OutlineSymbol>,
     pub symbols_version: Option<u32>,
+    /// The modified side's code editor: its model's, with its own cursors, scroll and view zones, as
+    /// diffEditorWidget.ts creates a CodeEditorWidget per side. `EditorGroup` attaches it on open.
+    pub modified_editor: Option<OpenEditor>,
 }
 
 /// The diff of the models' versions it was computed for.
@@ -65,7 +68,7 @@ pub struct ComputedDiff {
 
 impl DiffInput {
     pub fn new(original: Side, modified: Side, label: Option<String>) -> Self {
-        DiffInput { original, modified, label, diff: None, inline_now: false, zones: Vec::new(), placed_zones: Vec::new(), unchanged: Vec::new(), unchanged_key: None, placed_unchanged: Vec::new(), unchanged_cursors: Vec::new(), unchanged_drag: None, symbols: Vec::new(), symbols_version: None }
+        DiffInput { original, modified, label, diff: None, inline_now: false, zones: Vec::new(), placed_zones: Vec::new(), unchanged: Vec::new(), unchanged_key: None, placed_unchanged: Vec::new(), unchanged_cursors: Vec::new(), unchanged_drag: None, symbols: Vec::new(), symbols_version: None, modified_editor: None }
     }
 
     /// `computeLabels` name: the preferred label, else `original ↔ modified`.
