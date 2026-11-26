@@ -397,9 +397,9 @@ pub struct Workbench {
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
     notebook_views: notebook_editor::NotebookViews,
-    /// The tab the command line opened before the editors registered (editorResolverService.ts): its breadcrumbs have
-    /// no editor type picker until the active editor changes, as breadcrumbsControl.ts computes it on that change.
-    editor_type_picker_pending: Option<u32>,
+    /// breadcrumbsControl.ts `_updateEditorTypeControl` per group: computed when the group's active editor (or the
+    /// two settings) changes, keyed by that state, never when extensions register editors afterwards.
+    editor_type_controls: std::cell::RefCell<HashMap<u32, (String, Option<editor_type_picker::EditorTypes>)>>,
     pub scm: scm_view::ScmView,
     timeline: timeline_view::TimelineView,
     scm_graph: scm_graph_view::ScmGraph,
@@ -679,7 +679,7 @@ impl Workbench {
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
             notebook_views: notebook_editor::NotebookViews::new(cx),
-            editor_type_picker_pending: None,
+            editor_type_controls: Default::default(),
             scm: scm_view::ScmView::new(cx),
             timeline: timeline_view::TimelineView::new(cx),
             scm_graph: Default::default(),
@@ -953,9 +953,6 @@ impl Workbench {
 
     /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
-        if self.editor_type_picker_pending.is_some() && self.editor_type_picker_pending != self.editors.active_tab().map(|tab| tab.model_id) {
-            self.editor_type_picker_pending = None;
-        }
         if std::mem::take(&mut self.editors.closed_last_editor) {
             self.close_group_if_empty(self.editors.id);
         }

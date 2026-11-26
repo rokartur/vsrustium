@@ -25,7 +25,8 @@ const OPEN_ORIGINAL: &str = "editorType.openOriginal";
 const OPEN_MODIFIED: &str = "editorType.openModified";
 
 /// `IAvailableEditorTypes`: the editors (id, label, provider) when there is more than one to switch between.
-struct EditorTypes {
+#[derive(Clone)]
+pub(super) struct EditorTypes {
     resource: Value,
     /// A diff editor's original and modified resources; `resource` is the modified one.
     diff: Option<(Value, Value)>,
@@ -47,7 +48,7 @@ impl Workbench {
     /// `getAvailableEditorTypes` of the active editor, with `breadcrumbs.showEditorType` and
     /// `workbench.editor.hiddenEditorTypes`.
     fn available_editor_types(&self) -> Option<EditorTypes> {
-        if self.setting("breadcrumbs.showEditorType") == false || self.editor_type_picker_pending.is_some() {
+        if self.setting("breadcrumbs.showEditorType") == false {
             return None;
         }
         let hidden = self.setting("workbench.editor.hiddenEditorTypes");
@@ -78,7 +79,7 @@ impl Workbench {
 
     /// The dropdown at the breadcrumbs' right: the current editor's label and a chevron.
     pub(super) fn editor_type_picker(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        let types = self.available_editor_types()?;
+        let types = self.editor_type_control()?;
         let label = types.editors.iter().find(|(id, _, _)| *id == types.current).map_or(types.current.clone(), |(id, label, _)| types.label(id, label));
         let bounds: Rc<Cell<Bounds<Pixels>>> = Rc::default();
         let foreground = self.color("breadcrumb.foreground");
@@ -109,6 +110,40 @@ impl Workbench {
                     workbench.show_editor_type_menu(bounds.get(), window, cx);
                 })),
         )
+    }
+
+    /// The active group's control as breadcrumbsControl.ts last computed it: anew once its active editor or the settings
+    /// changed, else as it was, so an editor opened before the extensions registered their editors keeps none.
+    fn editor_type_control(&self) -> Option<EditorTypes> {
+        let key = self.editor_type_control_key();
+        let mut controls = self.editor_type_controls.borrow_mut();
+        if let Some((computed, types)) = controls.get(&self.editors.id)
+            && *computed == key
+        {
+            return types.clone();
+        }
+        let types = self.available_editor_types();
+        controls.insert(self.editors.id, (key, types.clone()));
+        types
+    }
+
+    fn editor_type_control_key(&self) -> String {
+        let active = self.editors.active().map(|editor| (editor.model_id, self.active_editor_type().map(|(_, current)| current), self.editors.active_diff().is_some()));
+        format!("{active:?} {} {}", self.setting("breadcrumbs.showEditorType"), self.setting("workbench.editor.hiddenEditorTypes"))
+    }
+
+    /// The active group's editor opened before the extensions registered their editors (editorResolverService.ts):
+    /// only the text editor matched, so its control is hidden until the active editor changes.
+    pub(super) fn set_editor_type_control_before_registration(&self) {
+        let key = self.editor_type_control_key();
+        self.editor_type_controls.borrow_mut().insert(self.editors.id, (key, None));
+    }
+
+    /// Every group's restored editor, also opened before the extensions registered their editors.
+    pub fn set_restored_editor_type_controls(&mut self) {
+        for group in self.groups_in_grid_order() {
+            self.with_group(group, |workbench| workbench.set_editor_type_control_before_registration());
+        }
     }
 
     /// `createEditorTypeActions`: one action per editor (the current one checked) that reopens with it, with Alt opens

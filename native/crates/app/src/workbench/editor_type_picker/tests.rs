@@ -72,5 +72,15 @@ fn markdown_editor_files_offer_their_editors_in_the_breadcrumbs(cx: &mut TestApp
     let (label, actions) = menu(cx);
     assert_eq!(label.as_deref(), Some("Text Diff Editor"));
     assert_eq!(actions, ["Text Diff Editor *", "Markdown Editor", "-", "Set Default (Diff Only) for '*.txt' [Text Diff Editor *, Markdown Editor]", "-", "Open Original", "Open Modified"]);
+
+    // breadcrumbsControl.ts: the control is computed per group when its active editor changes. An editor opened before
+    // the extensions registered (the command line's file) keeps none; a split's new group computes its own.
+    let shown = |cx: &mut gpui::VisualTestContext| workbench.update_in(cx, |workbench, _, cx| workbench.editor_type_picker(cx).is_some());
+    workbench.update_in(cx, |workbench, window, cx| workbench.open_startup_file(b.clone(), &[], window, cx));
+    assert!(!shown(cx));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.splitEditor", Vec::new(), window, cx)));
+    assert!(shown(cx));
+    let first = workbench.update(cx, |workbench, _| workbench.groups_in_grid_order()[0]);
+    assert!(!workbench.update(cx, |workbench, _| workbench.with_group(first, |workbench| workbench.editor_type_control().is_some())));
     std::fs::remove_dir_all(dir).unwrap();
 }

@@ -46,7 +46,9 @@ impl Workbench {
             .text_color(self.color("foreground"))
             // The codicon's 48px font line box is 4px taller than the glyph (measured against the reference).
             .child(div().h(px(52.)).child(self.icon(icon, 48., 48., self.color(color))))
-            .child(div().max_w(px(450.)).text_size(px(14.)).line_height(px(18.)).text_center().child(label))
+            // shortcut: max-width 450px plus a 14px space: GPUI's wrapper counts the space before a break, Chrome hangs it
+            // ("binary or" fits the reference's first line); a line of 450 to 454px without a space there stays unwrapped.
+            .child(div().max_w(px(454.)).text_size(px(14.)).line_height(px(18.)).text_center().child(label))
             .child(bar)
     }
 

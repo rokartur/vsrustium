@@ -170,7 +170,7 @@ impl Workbench {
             true => self.open_file(path, true, window, cx),
             false => {
                 self.open_text_file(path, true, window, cx);
-                self.editor_type_picker_pending = self.editors.active_tab().map(|tab| tab.model_id);
+                self.set_editor_type_control_before_registration();
             }
         }
     }
