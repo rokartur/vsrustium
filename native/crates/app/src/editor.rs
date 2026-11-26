@@ -560,6 +560,8 @@ pub struct TextModel {
     pub markers_truncated: bool,
     /// Each replace as (version it applied to, start, end, new end), for the model's other editors to follow.
     pub(crate) edits: Vec<(u32, Position, Position, Position)>,
+    /// The placeholder model of a custom document's webview editor: whether the document is dirty.
+    pub custom_document_dirty: bool,
 }
 
 /// One model shared by the editors of its resource in every group.
@@ -633,7 +635,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let model = TextModel { document, version_id: 1, history: History::default(), guides, host_reference: None, associated_file: false, markers: Vec::new(), markers_truncated: false, edits: Vec::new() };
+        let model = TextModel { document, version_id: 1, history: History::default(), guides, host_reference: None, associated_file: false, markers: Vec::new(), markers_truncated: false, edits: Vec::new(), custom_document_dirty: false };
         Self::of_model(Rc::new(RefCell::new(model)), preview, model_id)
     }
 

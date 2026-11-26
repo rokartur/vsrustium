@@ -17,7 +17,7 @@ for app in ${APP:-reference port}; do
     VSCODE_DEV=1 NODE_ENV=development timeout 180 "$REF/.build/electron/Code - OSS.app/Contents/MacOS/Code - OSS" "$REF" "${args[@]}" \
       --disable-extension GitHub.copilot-chat >"$out/log" 2>&1
   else
-    VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 180 native/target/release/code-gpui "${args[@]}" >"$out/log" 2>&1
+    VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 180 native/target/release/vsrustium "${args[@]}" >"$out/log" 2>&1
   fi
   code=$?
   echo "== $app"

@@ -8,10 +8,12 @@ use std::hash::BuildHasher;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use futures::channel::oneshot;
 use gpui::{Context, Task};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::custom_documents::CUSTOM_EDITOR_SCHEME;
 use super::lifecycle::ShutdownReason;
 use crate::backups;
 use crate::editor::{OpenEditor, TextDocument};
@@ -30,6 +32,9 @@ pub struct BackupTracker {
     pending: HashMap<(String, PathBuf), (u32, Task<()>)>,
     /// `suspendBackupOperations` while the shutdown handles modified working copies.
     suspended: bool,
+    /// The version each backed up custom document had, by its resource as JSON and view type.
+    custom_backed_up: HashMap<(String, String), u64>,
+    custom_pending: HashMap<(String, String), (u64, Task<()>)>,
 }
 
 /// What the window's backup folder is: its workspace, its folder, or an empty window's folder.
@@ -96,6 +101,13 @@ impl Workbench {
         let mut restored = false;
         for path in backups::list(&home) {
             let Some(backup) = backups::resolve(&path) else { continue };
+            if backup.resource.scheme == CUSTOM_EDITOR_SCHEME {
+                if let Some(meta) = &backup.meta {
+                    self.restore_custom_document(meta);
+                    restored = true;
+                }
+                continue;
+            }
             let scheme = backup.resource.scheme.clone();
             let model_path = PathBuf::from(&backup.resource.path);
             if self.editors.model(&scheme, &model_path).is_some() {
@@ -127,6 +139,7 @@ impl Workbench {
             self.editors.activate(index);
         }
         self.editors_changed(cx);
+        self.resolve_custom_editors(cx);
     }
 
     /// Runs from every frame: a changed dirty model schedules its backup, a model no longer dirty (saved, reverted,
@@ -160,6 +173,57 @@ impl Workbench {
             });
             self.lifecycle.backups.pending.insert(key, (version, task));
         }
+        self.backup_custom_documents_changed(cx);
+    }
+
+    /// The same for custom documents: a dirty one backs up a second after its last change, a clean or closed one
+    /// loses its backup.
+    fn backup_custom_documents_changed(&mut self, cx: &mut Context<Self>) {
+        let documents = &self.webview_panels.custom_editors.documents;
+        let dirty: Vec<((String, String), u64)> = documents.iter().filter(|document| document.is_dirty()).map(|document| (custom_key(&document.resource, &document.view_type), document.version)).collect();
+        let tracker = &mut self.lifecycle.backups;
+        let gone: Vec<(String, String)> = tracker.custom_backed_up.keys().chain(tracker.custom_pending.keys()).filter(|key| !dirty.iter().any(|(dirty, _)| dirty == *key)).cloned().collect();
+        for key in gone {
+            self.lifecycle.backups.custom_pending.remove(&key);
+            self.lifecycle.backups.custom_backed_up.remove(&key);
+            if let Ok(resource) = serde_json::from_str::<Value>(&key.0) {
+                self.discard_custom_document_backup(&resource, &key.1);
+            }
+        }
+        for (key, version) in dirty {
+            let tracker = &self.lifecycle.backups;
+            if tracker.custom_backed_up.get(&key) == Some(&version) || tracker.custom_pending.get(&key).is_some_and(|(pending, _)| *pending == version) {
+                continue;
+            }
+            let scheduled = key.clone();
+            let task = cx.spawn(async move |workbench, cx| {
+                cx.background_executor().timer(BACKUP_DELAY).await;
+                let Ok(Some(backup)) = workbench.update(cx, |workbench, cx| {
+                    workbench.lifecycle.backups.custom_pending.remove(&scheduled);
+                    let index = workbench.webview_panels.custom_editors.documents.iter().position(|document| custom_key(&document.resource, &document.view_type) == scheduled)?;
+                    Some(workbench.backup_custom_document(index, cx))
+                }) else {
+                    return;
+                };
+                if let Ok(Some(version)) = backup.await {
+                    let _ = workbench.update(cx, |workbench, _| workbench.lifecycle.backups.custom_backed_up.insert(scheduled, version));
+                }
+            });
+            self.lifecycle.backups.custom_pending.insert(key, (version, task));
+        }
+    }
+
+    /// `backupBeforeShutdown` of the custom documents not backed up at their version: answers whether each worked.
+    pub(super) fn backup_custom_documents_before_shutdown(&mut self, cx: &mut Context<Self>) -> Vec<oneshot::Receiver<Option<u64>>> {
+        self.lifecycle.backups.custom_pending.clear();
+        if self.lifecycle.backups.home.is_none() {
+            return Vec::new();
+        }
+        let documents = &self.webview_panels.custom_editors.documents;
+        let stale: Vec<usize> = (0..documents.len())
+            .filter(|index| documents[*index].is_dirty() && self.lifecycle.backups.custom_backed_up.get(&custom_key(&documents[*index].resource, &documents[*index].view_type)) != Some(&documents[*index].version))
+            .collect();
+        stale.into_iter().map(|index| self.backup_custom_document(index, cx)).collect()
     }
 
     /// `doBackup` of one model: its text and, for a file, the stat it was read with.
@@ -231,6 +295,8 @@ impl Workbench {
         let tracker = &mut self.lifecycle.backups;
         tracker.pending.clear();
         tracker.backed_up.clear();
+        tracker.custom_pending.clear();
+        tracker.custom_backed_up.clear();
         if let Some(home) = &tracker.home {
             for backup in backups::list(home) {
                 let _ = std::fs::remove_file(backup);
@@ -243,11 +309,16 @@ impl Workbench {
         self.lifecycle.backups.suspended = suspended;
         if suspended {
             self.lifecycle.backups.pending.clear();
+            self.lifecycle.backups.custom_pending.clear();
         }
     }
 }
 
-/// The working copies the port backs up: text files and untitled editors.
+fn custom_key(resource: &Value, view_type: &str) -> (String, String) {
+    (resource.to_string(), view_type.to_owned())
+}
+
+/// The text working copies the port backs up: text files and untitled editors.
 fn tracked(model: &OpenEditor) -> bool {
     matches!(model.document().scheme.as_str(), "file" | "untitled")
 }

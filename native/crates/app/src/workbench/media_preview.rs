@@ -111,7 +111,7 @@ impl Workbench {
                 let roots = json!({ "enableScripts": true, "localResourceRoots": [{ "scheme": "file", "path": path.parent().unwrap_or(Path::new("/")) }] });
                 // mediaPlayerEditorInput.ts keeps the webview while hidden, so playback goes on.
                 let retain = kind != MediaKind::Image;
-                let custom = Some(CustomEditor { resource: resource.clone(), resolved: true });
+                let custom = Some(CustomEditor { resource: resource.clone(), resolved: true, backup_id: None });
                 let mut panel = WebviewPanel::new(handle.clone(), WEBVIEW_PANEL_SCHEME.into(), placeholder, view_type, title, &Value::Null, roots, retain, custom);
                 let file_size = std::fs::metadata(&path).ok().map(|metadata| metadata.len());
                 let media = MediaPreview { kind, path, file_size, scale: Value::Null, dimensions: None, view_state: Value::Null };

@@ -182,6 +182,9 @@ impl Workbench {
         if scheme == super::url_actions::TRUSTED_DOMAINS_SCHEME {
             return self.save_trusted_domains(&path, cx);
         }
+        if scheme == super::webview_panels::WEBVIEW_PANEL_SCHEME {
+            return self.save_custom_document(&path, cx);
+        }
         let (sender, receiver) = oneshot::channel();
         let Some(model) = self.editors.model_mut(&scheme, &path) else {
             let _ = sender.send(false);

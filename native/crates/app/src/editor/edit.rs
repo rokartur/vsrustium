@@ -191,6 +191,9 @@ impl OpenEditor {
         if self.document().scheme == crate::notebook::CELL_SCHEME {
             return false;
         }
+        if self.document().scheme == crate::workbench::webview_panels::WEBVIEW_PANEL_SCHEME {
+            return self.text_model().custom_document_dirty;
+        }
         self.text_model().history.alternative_version_id != self.text_model().history.saved_alternative_version_id
     }
 
