@@ -268,8 +268,7 @@ impl Workbench {
         let resource = (document.scheme == "file").then_some(document.path.as_path());
         let configured = encoding::configured(&settings, resource);
         // `readStream` with `autoGuessEncoding`.
-        // shortcut: the guess is the BOM and UTF-16 detection only; jschardet is not ported (files crate `detect`).
-        let guessed = resource.and_then(|path| std::fs::read(path).ok()).map(|bytes| encoding::read_encoding(&settings, resource, None, encoding::detect(&bytes).encoding));
+        let guessed = resource.and_then(|path| std::fs::read(path).ok()).map(|bytes| encoding::read_encoding(&settings, resource, None, crate::encoding_guess::detect(&bytes, &settings, resource, true).as_deref()));
         drop(settings);
         let mut sorted: Vec<_> = SUPPORTED_ENCODINGS.iter().collect();
         sorted.sort_by_key(|supported| supported.id != configured);

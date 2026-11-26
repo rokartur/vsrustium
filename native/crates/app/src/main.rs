@@ -92,6 +92,7 @@ mod semantic_tokens;
 mod default_document_colors;
 mod ghost_text;
 mod language_detection;
+mod encoding_guess;
 mod settings_editor;
 mod shell_env;
 mod settings_import;
@@ -176,6 +177,7 @@ fn main() -> anyhow::Result<()> {
     let working_dir = std::env::current_dir()?;
     let app_root = bundled.unwrap_or_else(|| working_dir.clone());
     product::load(&app_root);
+    encoding_guess::set_app_root(&app_root);
     let socket = launch::socket_path(&user_data);
     if args.iter().any(|arg| arg == "--status" || arg == "-s") {
         diagnostics::print_status(&socket);
@@ -529,8 +531,9 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.show_trust_modal_on_start(window, cx);
                 workbench.start_backups(&user_data, backup_folder, cx);
                 perf::mark("code/willRestoreEditors");
+                let resolver_cache = workbench.take_editor_resolver_cache();
                 if let Some(file) = file {
-                    workbench.open_file(file, true, window, cx);
+                    workbench.open_startup_file(file, &resolver_cache, window, cx);
                 } else if workbench.editors.active().is_some() && window.focused(cx).is_none() {
                     // editorGroupView.ts `restoreEditors`: the active group's restored editor takes the focus unless
                     // something else took it meanwhile.

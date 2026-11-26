@@ -46,8 +46,11 @@ fn markdown_editor_files_offer_their_editors_in_the_breadcrumbs(cx: &mut TestApp
     });
     let menu = |cx: &mut gpui::VisualTestContext| {
         workbench.update_in(cx, |workbench, window, cx| {
-            let available = workbench.available_editor_types().map(|available| available.current_label());
-            workbench.show_editor_type_picker(gpui::Bounds::default(), window, cx);
+            let available = workbench.available_editor_types().map(|types| {
+                let (id, label, _) = types.editors.iter().find(|(id, _, _)| *id == types.current).unwrap();
+                types.label(id, label)
+            });
+            workbench.show_editor_type_menu(gpui::Bounds::default(), window, cx);
             let actions = workbench.context_menu.as_ref().map(|menu| titles(&menu.levels[0].actions)).unwrap_or_default();
             workbench.hide_context_menu(window, cx);
             (available, actions)

@@ -48,12 +48,12 @@ pub(super) struct WebviewPanel {
     /// The extension's view type; the editor id is `mainThreadWebview-<viewType>` (`WebviewViewTypeTransformer`).
     pub(super) view_type: String,
     pub(super) title: String,
-    extension_id: String,
+    pub(super) extension_id: String,
     /// `webviewOriginStore.getOrigin`: one origin per view type and extension, so its storage persists.
-    origin: String,
+    pub(super) origin: String,
     pub(super) html: String,
     /// `IWebviewContentOptions`.
-    content_options: Value,
+    pub(super) content_options: Value,
     retain_context_when_hidden: bool,
     /// `do-update-state`: what `vscode.setState` stored, given back when a released webview loads again.
     pub(super) state: Value,
@@ -263,7 +263,8 @@ impl Workbench {
                 true => visible_views.contains(&panel.path),
                 false => visible_editors.iter().any(|(scheme, path)| panel.scheme == *scheme && panel.path == *path),
             };
-            if shown && panel.webview.is_none() {
+            // WKWebView needs the main thread, which cargo test threads are not.
+            if shown && panel.webview.is_none() && !cfg!(test) {
                 created.push(panel.handle.clone());
             }
             match (&panel.webview, shown) {
@@ -462,6 +463,7 @@ impl Workbench {
             let Some(custom) = panel.custom.filter(|custom| custom.resolved && panel.scheme == WEBVIEW_PANEL_SCHEME) else { continue };
             let open = self.webview_panels.panels.iter().any(|other| other.view_type == panel.view_type && other.custom.as_ref().is_some_and(|other| other.resource == custom.resource));
             if !open {
+                self.custom_document_disposed(&custom.resource, &panel.view_type);
                 self.host.send("ExtHostCustomEditors", "$disposeCustomDocument", vec![custom.resource, json!(panel.view_type)]);
             }
         }

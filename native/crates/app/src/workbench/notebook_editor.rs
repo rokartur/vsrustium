@@ -8,7 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use gpui::{Bounds, ClickEvent, Context, Div, MouseButton, MouseDownEvent, Pixels, ScrollWheelEvent, Window, canvas, div, point, prelude::*, px, size};
+use gpui::{Bounds, ClickEvent, Context, Div, FocusHandle, MouseButton, MouseDownEvent, Pixels, ScrollWheelEvent, Window, canvas, div, point, prelude::*, px, size};
 use objc2::rc::Retained;
 use serde_json::{Value, json};
 
@@ -18,6 +18,7 @@ use super::host_requests::uri_parts;
 use crate::editor::{LINE_HEIGHT, OpenEditor};
 use crate::notebook::kernels::ExecutionState;
 use crate::notebook::layout::{self, CellInput, CellLayout};
+use crate::notebook::outline;
 use crate::notebook::renderers::{self, Renderer};
 use crate::notebook::{self, CODE, NOTEBOOK_EDITOR_SCHEME, NotebookModel};
 use crate::webview::{ClipView, Webview};
@@ -86,9 +87,17 @@ const THEME_VARIABLES: [(&str, &str); 50] = [
 ];
 
 /// The notebook editor views by their tab's model id.
-#[derive(Default)]
 pub struct NotebookViews {
     views: HashMap<u32, NotebookView>,
+    pub(super) status_bars: super::notebook_status_bar::CellStatusBars,
+    /// The cell list of the active notebook editor (notebookCellList.ts), focused when no cell editor is.
+    pub(super) list_focus: FocusHandle,
+}
+
+impl NotebookViews {
+    pub(super) fn new(cx: &mut Context<Workbench>) -> Self {
+        NotebookViews { views: HashMap::new(), status_bars: Default::default(), list_focus: cx.focus_handle() }
+    }
 }
 
 /// One notebook editor's list and its back layer webview.
@@ -117,12 +126,26 @@ struct BackLayer {
     previews: HashMap<u64, String>,
     hidden_previews: HashSet<u64>,
     last_scroll: Value,
+    /// `_getResourceRootsCache`, to which the bound kernel's extension folder is added.
+    resource_roots: Vec<std::path::PathBuf>,
+    /// backLayerWebView.ts `_currentKernel` (its id) and `_preloadsCache` (webview URIs).
+    kernel: Option<String>,
+    preloaded: HashSet<String>,
 }
 
 impl Drop for BackLayer {
     fn drop(&mut self) {
         self.clip.removeFromSuperview();
     }
+}
+
+/// How a cell range is brought into the list's viewport (`NotebookEditorRevealType`).
+#[derive(Clone, Copy)]
+pub(super) enum CellReveal {
+    InView,
+    Center,
+    CenterIfOutside,
+    Top,
 }
 
 /// A cell as the list draws it.
@@ -162,6 +185,11 @@ impl Workbench {
             let back_layer = self.create_back_layer(tab, &notebook, window, cx);
             self.notebook_views.views.entry(tab).or_default().webview = Some(back_layer);
         }
+        if !self.load_kernel_preloads(tab, &notebook) {
+            let back_layer = self.create_back_layer(tab, &notebook, window, cx);
+            self.notebook_views.views.entry(tab).or_default().webview = Some(back_layer);
+            self.load_kernel_preloads(tab, &notebook);
+        }
         self.sync_back_layer(tab, &notebook);
     }
 
@@ -179,7 +207,7 @@ impl Workbench {
         roots.extend(self.workspace().into_iter().flat_map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone())));
         roots.extend(base.clone());
         let id = format!("{WEBVIEW_ID_PREFIX}{tab}");
-        let mut webview = Webview::new(window, &id, &format!("notebook-{}", model.view_type), "", pre, roots, events);
+        let mut webview = Webview::new(window, &id, &format!("notebook-{}", model.view_type), "", pre, roots.clone(), events);
         let styles = self.notebook_webview_styles();
         webview.send("styles", styles);
         let html = self.back_layer_html(&renderers, &preloads, base.as_deref());
@@ -195,7 +223,45 @@ impl Workbench {
             }),
         );
         let clip = ClipView::new(window, &webview);
-        BackLayer { webview, clip, initialized: false, output_heights: HashMap::new(), preview_heights: HashMap::new(), outputs: HashMap::new(), previews: HashMap::new(), hidden_previews: HashSet::new(), last_scroll: Value::Null }
+        BackLayer { webview, clip, initialized: false, output_heights: HashMap::new(), preview_heights: HashMap::new(), outputs: HashMap::new(), previews: HashMap::new(), hidden_previews: HashSet::new(), last_scroll: Value::Null, resource_roots: roots, kernel: None, preloaded: HashSet::new() }
+    }
+
+    /// notebookEditorWidget.ts `_loadKernelPreloads` with backLayerWebView.ts `updateKernelPreloads`: the bound
+    /// kernel's preloads load into the webview with its extension folder as a resource root; leaving a kernel that had
+    /// preloads reloads the webview (the back layer is made again). Whether the back layer stays.
+    fn load_kernel_preloads(&mut self, tab: u32, notebook: &str) -> bool {
+        let Some(model) = self.host.notebooks.model(notebook) else { return true };
+        let kernel = self.host.notebooks.kernels.matching(&model.view_type, notebook).1.cloned();
+        let had_preloads = |id: &str| self.host.notebooks.kernels.kernels.iter().any(|kernel| kernel.id == id && !kernel.preloads.is_empty());
+        let Some(view) = self.notebook_views.views.get_mut(&tab) else { return false };
+        let Some(back_layer) = view.webview.as_mut() else { return false };
+        if back_layer.kernel == kernel.as_ref().map(|kernel| kernel.id.clone()) {
+            return true;
+        }
+        if back_layer.kernel.as_deref().is_some_and(had_preloads) {
+            view.webview = None;
+            return false;
+        }
+        back_layer.kernel = kernel.as_ref().map(|kernel| kernel.id.clone());
+        let Some(kernel) = kernel else { return true };
+        let mut roots = back_layer.resource_roots.clone();
+        roots.extend(uri_parts(&kernel.extension_location).ok().map(|(_, path)| path));
+        back_layer.webview.set_local_resource_roots(roots);
+        let mut resources = Vec::new();
+        for preload in &kernel.preloads {
+            let Ok((scheme, path)) = uri_parts(preload) else { continue };
+            let uri = match scheme {
+                "http" | "https" => notebook::uri_string(preload),
+                _ => webview_uri(&path),
+            };
+            if back_layer.preloaded.insert(uri.clone()) {
+                resources.push(json!({ "uri": uri, "originalUri": notebook::uri_string(preload) }));
+            }
+        }
+        if !resources.is_empty() {
+            back_layer.post(json!({ "type": "preload", "resources": resources }));
+        }
+        true
     }
 
     /// The webview's theme with `transformWebviewThemeVars`.
@@ -386,10 +452,126 @@ impl Workbench {
         notebook_editor.focus = index;
         notebook_editor.selections = vec![(index, index + 1)];
         self.editors_changed(cx);
-        if editor {
-            window.focus(&self.editor_focus, cx);
+        match editor {
+            true => window.focus(&self.editor_focus, cx),
+            false => window.focus(&self.notebook_views.list_focus, cx),
         }
         cx.notify();
+    }
+
+    /// listCommands.ts focus moves while the cell list has the focus; whether the list took the command.
+    pub(super) fn notebook_list_command(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if !self.notebook_views.list_focus.is_focused(window) {
+            return false;
+        }
+        let delta = match id {
+            "list.focusDown" | "list.focusAnyDown" => 1,
+            "list.focusUp" | "list.focusAnyUp" => -1,
+            "list.focusPageDown" => 10,
+            "list.focusPageUp" => -10,
+            "list.focusFirst" | "list.focusAnyFirst" => isize::MIN,
+            "list.focusLast" | "list.focusAnyLast" => isize::MAX,
+            _ => return true,
+        };
+        self.move_notebook_focus(delta, false, window, cx);
+        true
+    }
+
+    /// The notebook's own navigation (arrow.ts `FocusNextCellAction`, `FocusPreviousCellAction`,
+    /// `NOTEBOOK_FOCUS_TOP`/`BOTTOM`, editActions.ts `EditCellAction`, `QuitEditCellAction`).
+    pub(super) fn register_notebook_list_commands(&mut self) {
+        self.commands.register("notebook.focusTop", |workbench, _, window, cx| {
+            workbench.move_notebook_focus(isize::MIN, false, window, cx);
+            crate::commands::Outcome::done()
+        });
+        self.commands.register("notebook.focusBottom", |workbench, _, window, cx| {
+            workbench.move_notebook_focus(isize::MAX, false, window, cx);
+            crate::commands::Outcome::done()
+        });
+        self.commands.register("notebook.focusNextEditor", |workbench, _, window, cx| {
+            workbench.move_notebook_focus(1, true, window, cx);
+            crate::commands::Outcome::done()
+        });
+        self.commands.register("notebook.focusPreviousEditor", |workbench, _, window, cx| {
+            workbench.move_notebook_focus(-1, true, window, cx);
+            crate::commands::Outcome::done()
+        });
+        self.commands.register("notebook.cell.edit", |workbench, _, window, cx| {
+            let Some((tab, handle, _)) = workbench.focused_notebook_cell() else { return crate::commands::Outcome::done() };
+            workbench.notebook_views.views.entry(tab).or_default().editing.insert(handle);
+            workbench.focus_notebook_cell(tab, handle, true, window, cx);
+            crate::commands::Outcome::done()
+        });
+        self.commands.register("notebook.cell.quitEdit", |workbench, _, window, cx| {
+            let Some((tab, handle, _)) = workbench.focused_notebook_cell() else { return crate::commands::Outcome::done() };
+            if let Some(view) = workbench.notebook_views.views.get_mut(&tab) {
+                view.editing.remove(&handle);
+            }
+            workbench.focus_notebook_cell(tab, handle, false, window, cx);
+            crate::commands::Outcome::done()
+        });
+    }
+
+    /// notebookContextKeys.ts and notebookCellList.ts keys of the active notebook editor: focus in the list or a cell
+    /// editor, the focused cell's type and edit mode, and where the cell editor's cursor sits.
+    pub(super) fn notebook_context(&self, cell_editor: &OpenEditor, editor_focused: bool, window: &Window, context: &mut HashMap<String, Value>) {
+        let list_focused = self.notebook_views.list_focus.is_focused(window);
+        context.insert("notebookEditorFocused".into(), json!(list_focused || editor_focused));
+        context.insert("notebookCellListFocused".into(), json!(list_focused || editor_focused));
+        context.insert("notebookCellEditorFocused".into(), json!(editor_focused));
+        if editor_focused {
+            // contextkeys.ts `InputFocusedContext`: the editor's textarea is an editable element.
+            context.insert("inputFocus".into(), json!(true));
+        }
+        let Some(editor) = self.active_notebook_editor() else { return };
+        let Some(model) = self.host.notebooks.model(&editor.notebook) else { return };
+        context.insert("notebookType".into(), json!(model.view_type));
+        let Some(cell) = model.cells.get(editor.focus) else { return };
+        context.insert("notebookCellType".into(), json!(if cell.kind == MARKUP { "markup" } else { "code" }));
+        let editing = self.notebook_views.views.get(&editor.tab_model_id).is_some_and(|view| view.editing.contains(&cell.handle));
+        context.insert("notebookCellMarkdownEditMode".into(), json!(cell.kind == MARKUP && editing));
+        let (boundary, line_boundary) = match editor_focused {
+            true => cursor_boundaries(cell_editor),
+            false => ("none", "none"),
+        };
+        context.insert("notebookEditorCursorAtBoundary".into(), json!(boundary));
+        context.insert("notebookEditorCursorAtLineBoundary".into(), json!(line_boundary));
+    }
+
+    /// The active notebook editor's tab, focused cell handle and kind.
+    fn focused_notebook_cell(&self) -> Option<(u32, u64, u64)> {
+        let editor = self.active_notebook_editor()?;
+        let cell = self.host.notebooks.model(&editor.notebook)?.cells.get(editor.focus)?;
+        Some((editor.tab_model_id, cell.handle, cell.kind))
+    }
+
+    /// Moves the focused cell by `delta` (clamped, `isize::MIN`/`MAX` for the first and last) and reveals it; with
+    /// `editor` the new cell's editor takes the keyboard, its cursor on the line next to the cell left
+    /// (`focusEditorLine`), unless it is a markup preview.
+    fn move_notebook_focus(&mut self, delta: isize, editor: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(notebook_editor) = self.active_notebook_editor() else { return };
+        let (tab, focus) = (notebook_editor.tab_model_id, notebook_editor.focus);
+        let Some(model) = self.host.notebooks.model(&notebook_editor.notebook) else { return };
+        if model.cells.is_empty() {
+            return;
+        }
+        let last = model.cells.len() - 1;
+        let target = (focus as isize).saturating_add(delta).clamp(0, last as isize) as usize;
+        if editor && target == focus {
+            return;
+        }
+        let cell = &model.cells[target];
+        let (handle, kind, uri) = (cell.handle, cell.kind, cell.uri.clone());
+        let preview = kind == MARKUP && !self.notebook_views.views.get(&tab).is_some_and(|view| view.editing.contains(&handle));
+        self.focus_notebook_cell(tab, handle, editor && !preview, window, cx);
+        self.reveal_notebook_cells(tab, target, target + 1, CellReveal::InView);
+        if editor && !preview && let Some((scheme, path)) = uri_parts(&uri).ok().map(|(scheme, path)| (scheme.to_owned(), path)) {
+            let line = if delta > 0 { 0 } else { self.editors.model(&scheme, &path).map_or(0, |model| model.document().lines.len() - 1) };
+            if let Some(model) = self.editors.model_mut(&scheme, &path) {
+                let position = crate::editor::Position { line, column: 0 };
+                model.set_selections(vec![crate::editor::Selection { anchor: position, head: position }]);
+            }
+        }
     }
 
     /// Brings the webview up to date with the model: previews of markup cells not being edited, the outputs of code
@@ -523,6 +705,73 @@ impl Workbench {
             .collect()
     }
 
+    /// Scrolls the list of the notebook editor of `tab` to cells `start..end` (notebookEditorWidget.ts
+    /// `revealCellRangeInView`, `revealInCenter`, `revealInCenterIfOutsideViewport`, `revealInViewAtTop`).
+    pub(super) fn reveal_notebook_cells(&mut self, tab: u32, start: usize, end: usize, reveal: CellReveal) {
+        let Some(model) = self.host.notebooks.editor(tab).and_then(|editor| self.host.notebooks.model(&editor.notebook)) else { return };
+        let rows = self.notebook_rows(tab, model);
+        let (Some(first), Some(last)) = (rows.get(start), rows.get(end.max(start + 1) - 1)) else { return };
+        let content_height = rows.last().map_or(0., |row| row.layout.top + row.layout.height);
+        let (top, bottom) = (first.layout.top, last.layout.top + last.layout.height);
+        let view = self.notebook_views.views.entry(tab).or_default();
+        let height = f32::from(view.bounds.get().size.height);
+        let center = |top: f32, bottom: f32| (top + bottom) / 2. - height / 2.;
+        let scroll_top = match reveal {
+            CellReveal::InView if top < view.scroll_top || bottom - top > height => top,
+            CellReveal::InView if bottom > view.scroll_top + height => bottom - height,
+            CellReveal::InView => view.scroll_top,
+            CellReveal::Center => center(top, first.layout.top + first.layout.height),
+            CellReveal::CenterIfOutside if top < view.scroll_top || top > view.scroll_top + height => center(top, first.layout.top + first.layout.height),
+            CellReveal::CenterIfOutside => view.scroll_top,
+            CellReveal::Top => top,
+        };
+        view.scroll_top = scroll_top.clamp(0., (content_height - height).max(0.));
+    }
+
+    /// The outline entries of a notebook's cells (`NotebookCellOutlineDataSource.recomputeState`).
+    pub(super) fn notebook_outline(&self, model: &NotebookModel) -> Vec<outline::Entry> {
+        let key = model.uri_string();
+        let texts: Vec<String> = model.cells.iter().map(|cell| self.cell_text(&cell.uri)).collect();
+        let cells: Vec<outline::CellSource> = model
+            .cells
+            .iter()
+            .zip(&texts)
+            .map(|(cell, text)| outline::CellSource { markup: cell.kind == MARKUP, text, executing: cell.kind == CODE && self.host.notebooks.kernels.state(&key, cell.handle).is_some() })
+            .collect();
+        outline::entries(&cells)
+    }
+
+    /// The active notebook editor's resource and its breadcrumb outline elements (icon, label), with
+    /// `breadcrumbs.symbolPath`.
+    pub(super) fn notebook_breadcrumbs(&self, foreground: gpui::Rgba, line_height: f32) -> Option<(std::path::PathBuf, Vec<(Option<Div>, String)>)> {
+        let editor = self.active_notebook_editor()?;
+        let model = self.host.notebooks.model(&editor.notebook)?;
+        let (_, path) = uri_parts(&model.uri).ok()?;
+        let symbol_path = self.setting("breadcrumbs.symbolPath");
+        if symbol_path == "off" {
+            return Some((path, Vec::new()));
+        }
+        let entries = self.notebook_outline(model);
+        let active = outline::active(&entries, editor.focus);
+        let mut chain = outline::breadcrumbs(&entries, active, self.setting("notebook.breadcrumbs.showCodeCells") != false);
+        if symbol_path == "last" {
+            chain.drain(..chain.len().saturating_sub(1));
+        }
+        let show_icons = self.setting("breadcrumbs.icons") != false;
+        let items = chain.into_iter().map(|entry| (show_icons.then(|| self.outline_entry_icon(model, entry, foreground, line_height)).flatten(), entry.label.clone())).collect();
+        Some((path, items))
+    }
+
+    /// `NotebookOutlineRenderer.renderElement`: a code cell that is not running shows its language's file icon when
+    /// the file icon theme has file icons, every other entry its codicon.
+    pub(super) fn outline_entry_icon(&self, model: &NotebookModel, entry: &outline::Entry, foreground: gpui::Rgba, line_height: f32) -> Option<Div> {
+        let language = &model.cells[entry.cell].language;
+        if !entry.markup && entry.icon == "code" && let Some(icon) = self.file_icons.as_ref().and_then(|icons| icons.language_icon(language, self.theme.kind, 13., line_height, foreground)) {
+            return Some(icon);
+        }
+        Some(self.icon(entry.icon, 16., 16., foreground).flex_none())
+    }
+
     fn notebook_line_height(&self) -> f32 {
         LINE_HEIGHT * self.editor_zoom.multiplier()
     }
@@ -604,6 +853,7 @@ impl Workbench {
         }
         let mut list = div()
             .id(("notebook-list", tab as usize))
+            .track_focus(&self.notebook_views.list_focus)
             .flex_1()
             .min_h_0()
             .relative()
@@ -679,7 +929,7 @@ impl Workbench {
             .bg(self.theme.color("notebook.cellEditorBackground").unwrap_or(self.color("editor.background")))
             .overflow_hidden()
             .child(self.cell_editor(cell, row.layout.editor_height, window, cx))
-            .child(self.cell_status_bar(cell));
+            .child(self.cell_status_bar(model, row.index, focused, window, cx));
         container = container.child(editor_box);
         if row.kind == CODE {
             container = container.child(self.cell_run_gutter(tab, model, row, cx));
@@ -692,23 +942,6 @@ impl Workbench {
         let Some(editor) = self.cell_model(&cell.uri) else { return div() };
         let text_height = height - layout::EDITOR_TOP_PADDING - layout::EDITOR_BOTTOM_PADDING;
         div().absolute().left_0().right_0().top(px(layout::EDITOR_TOP_PADDING)).h(px(text_height)).flex().overflow_hidden().child(self.embedded_code_editor(editor, window, cx))
-    }
-
-    /// cellStatusPart.ts: the cell's language on the right of its status bar.
-    fn cell_status_bar(&self, cell: &notebook::Cell) -> Div {
-        div()
-            .absolute()
-            .left_0()
-            .right_0()
-            .bottom_0()
-            .h(px(layout::STATUS_BAR_HEIGHT))
-            .px(px(6.))
-            .flex()
-            .items_center()
-            .justify_end()
-            .text_size(px(12.))
-            .text_color(self.color("foreground"))
-            .child(self.languages.name(&cell.language).to_owned())
     }
 
     /// cellExecution.ts and the run toolbar: the run button over the gutter of a focused cell, the execution order
@@ -890,7 +1123,7 @@ impl Workbench {
     }
 
     /// A cell as `ICellDto2` data, its text included.
-    fn cell_data(&self, cell: &notebook::Cell) -> Value {
+    pub(super) fn cell_data(&self, cell: &notebook::Cell) -> Value {
         json!({
             "cellKind": cell.kind,
             "language": cell.language,
@@ -942,7 +1175,12 @@ impl Workbench {
                 let model = self.host.notebooks.model_mut(&notebook).expect("found above");
                 let entry = if redo { model.redo.pop() } else { model.undo.pop() }.expect("picked from the stack");
                 let edits = if redo { &entry.redo } else { &entry.undo };
-                let applied = self.apply_notebook_edits(&notebook, edits, cx);
+                // Inverse edits were computed one after another, so they apply one after another; a redo is the
+                // original batch.
+                let applied = match redo {
+                    true => self.apply_notebook_edits(&notebook, edits, cx).map(|_| ()),
+                    false => edits.iter().try_for_each(|edit| self.apply_notebook_edits(&notebook, std::slice::from_ref(edit), cx).map(|_| ())),
+                };
                 let model = self.host.notebooks.model_mut(&notebook).expect("found above");
                 match redo {
                     true => model.undo.push(entry),
@@ -967,6 +1205,30 @@ impl BackLayer {
         let buffer = base64::engine::general_purpose::STANDARD.encode(bytes);
         self.webview.send("message", json!({ "message": message.to_string(), "buffers": [buffer] }));
     }
+}
+
+/// baseCellViewModel.ts `cursorAtBoundary` and `cursorAtLineBoundary` of an empty primary selection.
+fn cursor_boundaries(editor: &OpenEditor) -> (&'static str, &'static str) {
+    let selection = editor.selection();
+    if !selection.is_empty() {
+        return ("none", "none");
+    }
+    let lines = &editor.document().lines;
+    let head = selection.head;
+    let boundary = match (head.line == 0, head.line + 1 == lines.len()) {
+        (true, true) => "both",
+        (true, false) => "top",
+        (false, true) => "bottom",
+        (false, false) => "none",
+    };
+    let length = lines[head.line].chars().count();
+    let line_boundary = match head.column {
+        _ if length == 0 => "both",
+        0 => "start",
+        column if column == length => "end",
+        _ => "none",
+    };
+    (boundary, line_boundary)
 }
 
 fn cell_id(handle: u64) -> String {

@@ -19,7 +19,6 @@ pub mod custom_editors;
 mod debug_commands;
 mod debug_console;
 mod problems_quick_fix;
-mod editor_type_picker;
 mod problems_table;
 mod modal_editor_group;
 mod problems_view;
@@ -104,7 +103,10 @@ pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
+mod editor_type_picker;
 mod notebook_editor;
+mod notebook_outline;
+mod notebook_status_bar;
 mod notebooks;
 pub(crate) use notebooks::notebook_cells;
 mod notifications_view;
@@ -217,7 +219,8 @@ mod webview_views;
 mod media_preview;
 mod editor_insets;
 mod image_carousel;
-mod webview_panels;
+pub(crate) mod webview_panels;
+mod custom_documents;
 mod url_actions;
 pub(crate) mod url_handler;
 mod workspace_actions;
@@ -393,6 +396,9 @@ pub struct Workbench {
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
     notebook_views: notebook_editor::NotebookViews,
+    /// The tab the command line opened before the editors registered (editorResolverService.ts): its breadcrumbs have
+    /// no editor type picker until the active editor changes, as breadcrumbsControl.ts computes it on that change.
+    editor_type_picker_pending: Option<u32>,
     pub scm: scm_view::ScmView,
     timeline: timeline_view::TimelineView,
     scm_graph: scm_graph_view::ScmGraph,
@@ -453,7 +459,6 @@ pub struct Workbench {
     debug_console: debug_console::DebugConsole,
     problems: problems_view::ProblemsView,
     problems_quick_fixes: problems_quick_fix::ProblemsQuickFixes,
-    editor_type_picker: editor_type_picker::EditorTypePicker,
     comments: comments::Comments,
     problems_focus: FocusHandle,
     refactor_preview: refactor_preview::RefactorPreview,
@@ -672,7 +677,8 @@ impl Workbench {
             search_editors: HashMap::new(),
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
-            notebook_views: Default::default(),
+            notebook_views: notebook_editor::NotebookViews::new(cx),
+            editor_type_picker_pending: None,
             scm: scm_view::ScmView::new(cx),
             timeline: timeline_view::TimelineView::new(cx),
             scm_graph: Default::default(),
@@ -718,7 +724,6 @@ impl Workbench {
             debug_console: debug_console::DebugConsole::new(cx),
             problems: problems_view::ProblemsView::new(cx),
             problems_quick_fixes: Default::default(),
-            editor_type_picker: Default::default(),
             comments: comments::Comments::new(cx),
             problems_focus: cx.focus_handle(),
             refactor_preview: Default::default(),
@@ -868,12 +873,14 @@ impl Workbench {
         cx.on_app_quit(|workbench, _| {
             workbench.store_explorer_view_state();
             workbench.store_editor_view_states();
+            workbench.store_editor_resolver_cache();
             async {}
         })
         .detach();
         cx.on_release(|workbench, _| {
             workbench.store_explorer_view_state();
             workbench.store_editor_view_states();
+            workbench.store_editor_resolver_cache();
         })
         .detach();
         workbench.customize_theme();
@@ -914,6 +921,11 @@ impl Workbench {
             drop(self.open_with_resolver(&exthost::scan::file_uri(&path), Some(&view_type), options, window, cx));
             return;
         }
+        self.open_text_file(path, pinned, window, cx);
+    }
+
+    /// Opens or activates the file in the text editor, whatever editor its resource resolves to.
+    pub(super) fn open_text_file(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         match self.editors.find(&path) {
             Some(index) => {
                 self.editors.activate(index);
@@ -941,6 +953,9 @@ impl Workbench {
 
     /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
+        if self.editor_type_picker_pending.is_some() && self.editor_type_picker_pending != self.editors.active_tab().map(|tab| tab.model_id) {
+            self.editor_type_picker_pending = None;
+        }
         if std::mem::take(&mut self.editors.closed_last_editor) {
             self.close_group_if_empty(self.editors.id);
         }

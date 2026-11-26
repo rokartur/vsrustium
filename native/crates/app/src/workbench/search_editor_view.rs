@@ -556,9 +556,11 @@ impl Workbench {
     /// locations come from the search-result extension's definition provider.
     pub(super) fn search_editor_mouse_up(&mut self, index: usize, visible: f32, click_count: usize, window: &mut Window, cx: &mut Context<Self>) {
         let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme == SEARCH_EDITOR_SCHEME) else { return };
-        let line = &editor.document().lines[index];
-        let column = crate::editor::column_at_visible(line, visible, editor.document().indentation.tab_size);
+        let document = editor.document();
+        let line = &document.lines[index];
+        let column = crate::editor::column_at_visible(line, visible, document.indentation.tab_size);
         let (file_line, result_line) = (FILE_LINE.is_match(line), RESULT_LINE.is_match(line));
+        drop(document);
         let command = match click_count {
             1 if self.setting("search.searchEditor.singleClickBehaviour") == "peekDefinition" && (file_line || result_line) => "editor.action.peekDefinition",
             2 => match self.setting("search.searchEditor.doubleClickBehaviour").as_str() {

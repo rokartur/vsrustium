@@ -1,129 +1,93 @@
-//! editorTypePicker.ts: the breadcrumbs' dropdown of the editors that can open the active editor's resource
-//! (`breadcrumbs.showEditorType`), and its menu: reopen with each, Set Default, and Open Original and Open Modified
-//! of a diff.
+//! editorTypePicker.ts with breadcrumbsControl.ts `_updateEditorTypeControl`: the breadcrumbs' dropdown of the editors
+//! that can open the active editor's resource, which reopens it with another one or sets the default; a diff editor's
+//! also opens either side.
 
 use std::cell::Cell;
 use std::rc::Rc;
 
-use gpui::{Bounds, Context, MouseButton, MouseDownEvent, Pixels, Stateful, Div, Window, div, prelude::*, px};
+use gpui::{Bounds, ClickEvent, Context, Div, Pixels, Stateful, Window, div, prelude::*, px};
 use serde_json::{Value, json};
 
 use super::Workbench;
-use super::custom_editors::EditorMatches;
+use super::custom_editors::RANK_EXCLUSIVE;
 use super::host_requests::uri_parts;
 use super::hover::{HoverContent, HoverOptions};
 use super::output_view::bounds_tracker;
-use crate::commands::Outcome;
 use crate::menus::MenuAction;
 
 #[cfg(test)]
 mod tests;
 
-const TEXT_EDITOR_ID: &str = "default";
+const REOPEN_PREFIX: &str = "editorType.reopen.";
+const SET_DEFAULT_PREFIX: &str = "editorType.setDefault.";
+const OPEN_TO_SIDE_PREFIX: &str = "editorType.openToSide.";
+const OPEN_ORIGINAL: &str = "editorType.openOriginal";
+const OPEN_MODIFIED: &str = "editorType.openModified";
 
-#[derive(Default)]
-pub struct EditorTypePicker {
-    /// Where the dropdown last painted, to anchor its menu.
-    bounds: Rc<Cell<Bounds<Pixels>>>,
-    /// The open menu's actions, run by `editorType.action.<index>`.
-    actions: Vec<PickerAction>,
-    /// How many `editorType.action.<index>` commands are registered.
-    commands: usize,
-}
-
-#[derive(Clone)]
-enum PickerAction {
-    Reopen(String),
-    OpenToSide(String),
-    SetDefault(String),
-    Open(Value),
-}
-
-/// `IAvailableEditorTypes`.
-pub(super) struct AvailableEditorTypes {
+/// `IAvailableEditorTypes`: the editors (id, label, provider) when there is more than one to switch between.
+struct EditorTypes {
     resource: Value,
-    /// The original and modified resources of a diff editor.
+    /// A diff editor's original and modified resources; `resource` is the modified one.
     diff: Option<(Value, Value)>,
     current: String,
-    matches: EditorMatches,
-    /// The matches' editors left after the filters: id, label and detail.
     editors: Vec<(String, String, String)>,
 }
 
-impl AvailableEditorTypes {
-    /// `editorTypeDisplayLabel`: the text editor of a diff is the "Text Diff Editor".
-    fn display_label(&self, id: &str, label: &str) -> String {
-        match self.diff.is_some() && id == TEXT_EDITOR_ID {
+impl EditorTypes {
+    /// `editorTypeDisplayLabel`: a diff's text editor is the "Text Diff Editor".
+    fn label(&self, id: &str, label: &str) -> String {
+        match self.diff.is_some() && id == "default" {
             true => "Text Diff Editor".to_owned(),
             false => label.to_owned(),
-        }
-    }
-
-    fn current_label(&self) -> String {
-        match self.editors.iter().find(|(id, _, _)| *id == self.current) {
-            Some((id, label, _)) => self.display_label(id, label),
-            None => self.current.clone(),
-        }
-    }
-
-    /// `labelWithSource`: the provider after the label, except for built-in ones.
-    fn label_with_source(&self, id: &str, label: &str, detail: &str) -> String {
-        let label = self.display_label(id, label);
-        match !detail.is_empty() && detail != "Built-in" {
-            true => format!("{label} - {detail}"),
-            false => label,
         }
     }
 }
 
 impl Workbench {
-    /// `getAvailableEditorTypes` of the active editor; None when there is nothing to switch between.
-    pub(super) fn available_editor_types(&self) -> Option<AvailableEditorTypes> {
+    /// `getAvailableEditorTypes` of the active editor, with `breadcrumbs.showEditorType` and
+    /// `workbench.editor.hiddenEditorTypes`.
+    fn available_editor_types(&self) -> Option<EditorTypes> {
+        if self.setting("breadcrumbs.showEditorType") == false || self.editor_type_picker_pending.is_some() {
+            return None;
+        }
+        let hidden = self.setting("workbench.editor.hiddenEditorTypes");
+        let hidden: Vec<&str> = hidden.as_array().into_iter().flatten().filter_map(|id| id.as_str()).collect();
         let (resource, diff, current) = match self.editors.active_diff() {
             Some(diff) => {
                 let modified = crate::editor::uri_value(&diff.modified.scheme, &diff.modified.path);
                 let original = crate::editor::uri_value(&diff.original.scheme, &diff.original.path);
-                (modified.clone(), Some((original, modified)), TEXT_EDITOR_ID.to_owned())
+                (modified.clone(), Some((original, modified)), "default".to_owned())
             }
             None => {
-                let (resource, current) = self.active_resource_and_editor_id()?;
+                let (resource, current) = self.active_editor_type()?;
                 (resource, None, current)
             }
         };
         let (scheme, path) = uri_parts(&resource).ok()?;
-        let matches = self.editor_matches(scheme, &path, diff.is_some());
-        let hidden = self.setting("workbench.editor.hiddenEditorTypes");
-        let hidden: Vec<&str> = hidden.as_array().into_iter().flatten().filter_map(Value::as_str).collect();
-        let editors: Vec<(String, String, String)> = matches
-            .editors
-            .iter()
-            .filter(|editor| !editor.universal_option || editor.id == current)
-            .filter(|editor| editor.id == current || !hidden.contains(&editor.id.as_str()))
-            .map(|editor| (editor.id.clone(), editor.label.clone(), editor.detail.clone()))
-            .collect();
-        if matches.has_exclusive_match() || editors.len() <= 1 {
+        let editors = self.resource_editors(scheme, &path, diff.is_some());
+        if editors.iter().any(|(_, _, _, rank, _)| *rank == RANK_EXCLUSIVE) {
             return None;
         }
-        Some(AvailableEditorTypes { resource, diff, current, matches, editors })
+        let editors: Vec<(String, String, String)> = editors
+            .into_iter()
+            .filter(|(id, _, _, _, universal_option)| *id == current || (!universal_option && !hidden.contains(&id.as_str())))
+            .map(|(id, label, provider, _, _)| (id, label, provider))
+            .collect();
+        (editors.len() > 1).then_some(EditorTypes { resource, diff, current, editors })
     }
 
-    /// breadcrumbsControl.ts `_createEditorTypeControl`: the current editor's label and a chevron at the end of the
-    /// breadcrumbs (breadcrumbscontrol.css `.breadcrumbs-editor-type`).
-    pub(super) fn editor_type_control(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
-        if self.setting("breadcrumbs.showEditorType") == false {
-            return None;
-        }
-        let available = self.available_editor_types()?;
-        let label = available.current_label();
+    /// The dropdown at the breadcrumbs' right: the current editor's label and a chevron.
+    pub(super) fn editor_type_picker(&self, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
+        let types = self.available_editor_types()?;
+        let label = types.editors.iter().find(|(id, _, _)| *id == types.current).map_or(types.current.clone(), |(id, label, _)| types.label(id, label));
+        let bounds: Rc<Cell<Bounds<Pixels>>> = Rc::default();
         let foreground = self.color("breadcrumb.foreground");
-        let hover_foreground = self.color("breadcrumb.focusForeground");
-        let bounds = self.editor_type_picker.bounds.clone();
+        let hover = self.color("breadcrumb.focusForeground");
         Some(
             div()
                 .id("breadcrumbs-editor-type")
-                .group("breadcrumbs-editor-type")
-                .relative()
                 .flex_none()
+                .ml_auto()
                 .max_w(gpui::relative(0.4))
                 .flex()
                 .items_center()
@@ -133,80 +97,73 @@ impl Workbench {
                 .text_size(px(11.))
                 .bg(self.color("breadcrumb.background"))
                 .text_color(foreground)
-                .hover(|control| control.text_color(hover_foreground))
-                .child(div().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label.clone()))
-                .child(self.icon("chevron-down", 13., 13., foreground).group_hover("breadcrumbs-editor-type", |icon| icon.text_color(hover_foreground)).ml(px(2.)))
+                .hover(move |picker| picker.text_color(hover))
+                .child(div().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label.clone()))
+                .child(self.icon("chevron-down", 15., 13., foreground).ml(px(2.)))
                 .child(bounds_tracker(bounds.clone()))
                 .child(self.hover_target("breadcrumbs-editor-type-hover", HoverContent::Text(format!("Editor: {label}")), HoverOptions::mouse()))
-                .on_mouse_down(MouseButton::Left, cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()))
-                .on_click(cx.listener(move |workbench, _: &gpui::ClickEvent, window, cx| {
+                // contextMenuHandler.ts anchors the menu to the element: below it, its right edge where the left overflows.
+                .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| {
                     cx.stop_propagation();
-                    workbench.show_editor_type_picker(bounds.get(), window, cx);
+                    workbench.show_editor_type_menu(bounds.get(), window, cx);
                 })),
         )
     }
 
-    /// `_showEditorTypePicker` with `createEditorTypeActions`.
-    fn show_editor_type_picker(&mut self, anchor: Bounds<Pixels>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(available) = self.available_editor_types() else { return };
-        let mut actions = Vec::new();
-        let mut menu = Vec::new();
-        let push = |action: PickerAction, actions: &mut Vec<PickerAction>| {
-            actions.push(action);
-            format!("editorType.action.{}", actions.len() - 1)
+    /// `createEditorTypeActions`: one action per editor (the current one checked) that reopens with it, with Alt opens
+    /// it to the side, then the "Set Default" submenu (the effective default checked).
+    fn show_editor_type_menu(&mut self, anchor: Bounds<gpui::Pixels>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(types) = self.available_editor_types() else { return };
+        let resource = types.resource.clone();
+        let diff = types.diff.is_some();
+        let Ok((scheme, path)) = uri_parts(&resource) else { return };
+        let (default_id, pattern) = self.default_editor(scheme, &path, true, diff);
+        let label_with_source = |label: &str, provider: &str| match provider {
+            "Built-in" => label.to_owned(),
+            provider => format!("{label} - {provider}"),
         };
-        let command = |action: PickerAction, title: String, checked: bool, actions: &mut Vec<PickerAction>| MenuAction::Command { id: push(action, actions), title, enabled: true, checked, alt: None };
-        for (id, label, detail) in &available.editors {
-            let title = available.label_with_source(id, label, detail);
-            let alt = Some((push(PickerAction::OpenToSide(id.clone()), &mut actions), format!("{title} (Open to the Side)")));
-            menu.push(MenuAction::Command { id: push(PickerAction::Reopen(id.clone()), &mut actions), title, enabled: true, checked: *id == available.current, alt });
-        }
-        menu.push(MenuAction::Separator);
+        let mut reopen = Vec::new();
         let mut set_default = Vec::new();
-        for (id, label, detail) in &available.editors {
-            let title = available.label_with_source(id, label, detail);
-            set_default.push(command(PickerAction::SetDefault(id.clone()), title, *id == available.matches.default_id, &mut actions));
+        for (id, label, provider) in &types.editors {
+            let title = label_with_source(&types.label(id, label), provider);
+            let reopen_id = format!("{REOPEN_PREFIX}{id}");
+            let editor_id = id.clone();
+            self.commands.register(&reopen_id, move |workbench, _, window, cx| workbench.reopen_active_editor_with(Some(editor_id.clone()), window, cx));
+            // The current editor of a singleton input (a notebook or custom editor) cannot open twice.
+            let alt = (*id != types.current || types.current == "default").then(|| {
+                let side_id = format!("{OPEN_TO_SIDE_PREFIX}{id}");
+                let (editor_id, side_resource) = (id.clone(), resource.clone());
+                self.commands.register(&side_id, move |workbench, _, window, cx| {
+                    workbench.activate_column(&serde_json::json!(-2));
+                    workbench.open_with_resolver(&side_resource, Some(&editor_id), serde_json::json!({ "pinned": true, "preserveFocus": false }), window, cx)
+                });
+                (side_id, format!("{title} (Open to the Side)"))
+            });
+            reopen.push(MenuAction::Command { id: reopen_id, title: title.clone(), enabled: true, checked: *id == types.current, alt });
+            let default_command = format!("{SET_DEFAULT_PREFIX}{id}");
+            let editor_id = id.clone();
+            let default_resource = resource.clone();
+            self.commands.register(&default_command, move |workbench, _, window, cx| {
+                workbench.set_default_editor(&default_resource, &editor_id, diff);
+                workbench.reopen_active_editor_with(Some(editor_id.clone()), window, cx)
+            });
+            set_default.push(MenuAction::Command { id: default_command, title, enabled: true, checked: *id == default_id, alt: None });
         }
-        let pattern = &available.matches.pattern;
-        let submenu_title = match available.diff.is_some() {
+        let mut actions = reopen;
+        actions.push(MenuAction::Separator);
+        let submenu_title = match diff {
             true => format!("Set Default (Diff Only) for '{pattern}'"),
             false => format!("Set Default for '{pattern}'"),
         };
-        menu.push(MenuAction::Submenu { title: submenu_title, actions: set_default, checked: false });
-        if let Some((original, modified)) = &available.diff {
-            menu.push(MenuAction::Separator);
-            menu.push(command(PickerAction::Open(original.clone()), "Open Original".into(), false, &mut actions));
-            menu.push(command(PickerAction::Open(modified.clone()), "Open Modified".into(), false, &mut actions));
+        actions.push(MenuAction::Submenu { title: submenu_title, actions: set_default, checked: false });
+        if let Some((original, modified)) = types.diff {
+            actions.push(MenuAction::Separator);
+            for (command, title, side) in [(OPEN_ORIGINAL, "Open Original", original), (OPEN_MODIFIED, "Open Modified", modified)] {
+                self.commands.register(command, move |workbench, _, window, cx| workbench.open_with_resolver(&side, None, json!({}), window, cx));
+                actions.push(MenuAction::Command { id: command.to_owned(), title: title.to_owned(), enabled: true, checked: false, alt: None });
+            }
         }
-        while self.editor_type_picker.commands < actions.len() {
-            let index = self.editor_type_picker.commands;
-            self.commands.register(format!("editorType.action.{index}"), move |workbench, _, window, cx| workbench.run_editor_type_action(index, window, cx));
-            self.editor_type_picker.commands += 1;
-        }
-        self.editor_type_picker.actions = actions;
-        // contextMenuHandler.ts anchors an element below its bottom left corner.
-        let anchor = Bounds { origin: gpui::point(anchor.origin.x, anchor.origin.y + anchor.size.height), size: Default::default() };
         let context = self.key_context(window);
-        self.show_context_menu_actions(menu, &context, anchor, Vec::new(), window, cx);
-    }
-
-    fn run_editor_type_action(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let Some(action) = self.editor_type_picker.actions.get(index).cloned() else { return Outcome::done() };
-        let Some(available) = self.available_editor_types() else { return Outcome::done() };
-        match action {
-            PickerAction::Reopen(editor_id) => self.reopen_active_editor_with(Some(editor_id), window, cx),
-            PickerAction::OpenToSide(editor_id) => {
-                let direction = self.side_by_side_direction();
-                let group = self.group_in_direction(direction).unwrap_or_else(|| self.add_group_beside(direction));
-                self.focus_group(group, window, cx);
-                self.open_with_resolver(&available.resource, Some(&editor_id), json!({ "pinned": true }), window, cx)
-            }
-            // "Setting a default also reopens the active editor with that type".
-            PickerAction::SetDefault(editor_id) => {
-                self.set_default_editor_for(&available.resource, &editor_id, available.diff.is_some());
-                self.reopen_active_editor_with(Some(editor_id), window, cx)
-            }
-            PickerAction::Open(resource) => self.open_with_resolver(&resource, None, json!({}), window, cx),
-        }
+        self.show_context_menu_actions(actions, &context, anchor, Vec::new(), window, cx);
     }
 }
