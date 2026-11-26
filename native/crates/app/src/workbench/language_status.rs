@@ -358,7 +358,8 @@ impl Workbench {
         let colors = only_shown(self.color_detector.limited.filter(|_| self.color_detector.model_id == Some(editor.model_id)));
         let folding = only_shown(editor.folding_limited);
         let source_truncated = self.diagnostics.service.is_source_truncated(&editor.document().uri_string());
-        let problems = match (source_truncated, editor.text_model().markers_truncated) {
+        let shown = !self.filters_validation_decorations();
+        let problems = match (shown && source_truncated, shown && editor.text_model().markers_truncated) {
             (true, true) => Some(format!("Some problems are not shown in the problems view, and only {MAX_MARKER_DECORATIONS} problems are rendered in the editor for performance reasons.")),
             (true, false) => Some("Some problems are not shown in the problems view for performance reasons.".to_string()),
             (false, true) => Some(format!("Only {MAX_MARKER_DECORATIONS} problems are rendered in the editor for performance reasons.")),
