@@ -308,7 +308,7 @@ impl Workbench {
         // shortcut: only the text edits of the workspace edit apply, as for code actions; file edits need the bulk
         // edit service on the workbench side.
         let text_edits: Vec<Value> = edit["edits"].as_array().into_iter().flatten().filter(|edit| edit.get("textEdit").is_some()).cloned().collect();
-        if self.apply_workspace_text_edits(&Value::Array(text_edits), &Value::Null, cx).is_err() {
+        if self.apply_workspace_text_edits(&Value::Array(text_edits), &Value::Null, files::operations::new_undo_group(), cx).is_err() {
             self.notify_error("Rename failed to apply edits");
         }
     }

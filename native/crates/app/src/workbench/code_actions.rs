@@ -476,7 +476,7 @@ impl Workbench {
             let command = window.update(cx, |_, window, cx| {
                 workbench.update(cx, |workbench, cx| {
                     let text_edits: Vec<Value> = action["edit"]["edits"].as_array().into_iter().flatten().filter(|edit| edit.get("textEdit").is_some()).cloned().collect();
-                    if !text_edits.is_empty() && workbench.apply_workspace_text_edits(&Value::Array(text_edits), &Value::Null, cx).is_err() {
+                    if !text_edits.is_empty() && workbench.apply_workspace_text_edits(&Value::Array(text_edits), &Value::Null, files::operations::new_undo_group(), cx).is_err() {
                         return None;
                     }
                     let command = action["command"]["id"].as_str()?;

@@ -113,7 +113,7 @@ impl Workbench {
                             "redo" => Some(crate::undo_redo::Direction::Redo),
                             _ => None,
                         };
-                        direction.and_then(|direction| workbench.workspace_text_undo(direction, window, cx)).unwrap_or_else(|| workbench.run_on_active_editor(command, cx))
+                        direction.and_then(|direction| workbench.workspace_undo(direction, window, cx)).unwrap_or_else(|| workbench.run_on_active_editor(command, cx))
                     }
                 },
                 // The implementations' priorities: DOM input 1000, explorer 110, custom editor 105.

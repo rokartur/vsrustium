@@ -42,6 +42,8 @@ pub struct CustomEditors {
     providers: HashMap<String, Provider>,
     /// Opens waiting for their view type's provider, which `onCustomEditor:<viewType>` registers.
     pending: Vec<PendingOpen>,
+    /// Opens answered once their editor's `$resolveCustomEditor` settles (WebviewEditor.setInput awaits `resolveWebview`).
+    opening: HashMap<String, Vec<oneshot::Sender<Result<Value, Value>>>>,
     next_handle: u64,
     /// The custom documents the host created, by resource and view type (custom_documents.rs).
     pub(super) documents: Vec<super::custom_documents::CustomDocument>,
@@ -410,15 +412,19 @@ impl Workbench {
             std::mem::take(&mut custom_editors.pending).into_iter().partition(|open| custom_editors.providers.contains_key(&open.view_type));
         custom_editors.pending = waiting;
         for open in ready {
-            let result = self.show_custom_editor(&open.view_type, &open.resource, &open.options, window, cx);
-            let _ = open.reply.send(result.map(|_| Value::Null));
+            match self.show_custom_editor(&open.view_type, &open.resource, &open.options, window, cx) {
+                Ok(handle) if self.webview_panel_mut(&handle).is_some_and(|panel| panel.custom.as_ref().is_some_and(|custom| !custom.resolved)) => {
+                    self.webview_panels.custom_editors.opening.entry(handle).or_default().push(open.reply);
+                }
+                result => _ = open.reply.send(result.map(|_| Value::Null)),
+            }
         }
         self.resolve_custom_editors(cx);
     }
 
     /// A custom text editor attaches a webview to the resource's text editor, opened or shown as `$tryShowTextDocument`
     /// does; a custom document gets a webview panel's editor of its own, one per resource and view type.
-    fn show_custom_editor(&mut self, view_type: &str, resource: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> Result<(), Value> {
+    fn show_custom_editor(&mut self, view_type: &str, resource: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> Result<String, Value> {
         let (scheme, path) = uri_parts(resource)?;
         let scheme = scheme.to_owned();
         let provider = &self.webview_panels.custom_editors.providers[view_type];
@@ -457,7 +463,7 @@ impl Workbench {
         if options["preserveFocus"] != true {
             self.focus_webview_panel(&handle, window, cx);
         }
-        Ok(())
+        Ok(handle)
     }
 
     /// A custom document's own editor: a webview panel with the placeholder model `webview-panel/webview-<viewType>-<handle>`.
@@ -517,7 +523,8 @@ impl Workbench {
         for (handle, view_type, create, resolve) in resolves {
             let document = create.as_ref().map(|args| (args[0].clone(), args[2].is_string()));
             let created = create.map(|args| self.host.call("ExtHostCustomEditors", "$createCustomDocument", args));
-            let resolved = self.host.call("ExtHostCustomEditors", "$resolveCustomEditor", resolve);
+            // mainThreadCustomEditors.ts resolves the editor once `$createCustomDocument` answered: the host's
+            // `$resolveCustomEditor` looks the document up.
             cx.spawn(async move |workbench, cx| {
                 let canceled = |_| Err(serialized_error("Canceled"));
                 let result = match created {
@@ -530,13 +537,21 @@ impl Workbench {
                     let _ = workbench.update(cx, |workbench, cx| workbench.custom_document_created(resource, view_type, editable, from_backup, cx));
                 }
                 let result = match result {
-                    Ok(_) => resolved.await.unwrap_or_else(canceled),
+                    Ok(_) => match workbench.update(cx, |workbench, _| workbench.host.call("ExtHostCustomEditors", "$resolveCustomEditor", resolve)) {
+                        Ok(resolved) => resolved.await.unwrap_or_else(canceled),
+                        Err(_) => return,
+                    },
                     Err(error) => Err(error),
                 };
-                if let Err(error) = result {
-                    eprintln!("[custom editor] {view_type}: {error}");
-                    let _ = workbench.update(cx, |workbench, _| workbench.show_resolve_failure(&handle, &view_type));
-                }
+                let _ = workbench.update(cx, |workbench, _| {
+                    if let Err(error) = result {
+                        eprintln!("[custom editor] {view_type}: {error}");
+                        workbench.show_resolve_failure(&handle, &view_type);
+                    }
+                    for reply in workbench.webview_panels.custom_editors.opening.remove(&handle).unwrap_or_default() {
+                        let _ = reply.send(Ok(Value::Null));
+                    }
+                });
             })
             .detach();
         }

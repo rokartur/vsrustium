@@ -1,0 +1,7 @@
+{
+	"name": "encoding-guess-tests",
+	"publisher": "port",
+	"version": "0.0.1",
+	"engines": { "vscode": "^1.90.0" },
+	"main": "./extension.js"
+}

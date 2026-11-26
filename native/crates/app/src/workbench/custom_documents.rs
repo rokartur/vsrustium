@@ -89,7 +89,9 @@ impl Workbench {
     }
 
     fn custom_document_index(&self, resource: &Value, view_type: &str) -> Option<usize> {
-        self.webview_panels.custom_editors.documents.iter().position(|document| document.resource == *resource && document.view_type == view_type)
+        // The host's `UriComponents` carry `external` and `$mid` the stored resource may lack.
+        let key = crate::references_model::uri_key(resource);
+        self.webview_panels.custom_editors.documents.iter().position(|document| crate::references_model::uri_key(&document.resource) == key && document.view_type == view_type)
     }
 
     /// The document a custom editor's placeholder model shows.

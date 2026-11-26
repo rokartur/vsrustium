@@ -71,7 +71,7 @@ impl FileWork {
         let result = match self.job {
             FileJob::Apply(edits) => operations::apply(fs, edits, None),
             FileJob::Reverse(mut undo) => undo.reverse(fs).map(|()| undo),
-            FileJob::Write(resource, bytes) => files::write_file(fs, &resource, &bytes).map(|()| FileUndo { operations: Vec::new() }),
+            FileJob::Write(resource, bytes) => files::write_file(fs, &resource, &bytes).map(|()| FileUndo::default()),
         };
         let _ = self.reply.send(result);
     }

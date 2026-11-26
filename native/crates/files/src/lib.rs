@@ -123,7 +123,7 @@ pub fn handle_error(mut error: FileError) -> FileError {
 }
 
 /// The parts of a `URI` the file service looks at.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Resource {
     pub scheme: String,
     pub authority: String,

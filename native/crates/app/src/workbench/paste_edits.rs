@@ -360,7 +360,7 @@ impl Workbench {
         let Some(editor) = self.editors.active() else { return };
         let length_before = document_length(&editor.document().lines);
         let edits = combined_workspace_edit(editor, ranges, edit);
-        if let Err(error) = self.apply_workspace_text_edits(&Value::Array(edits), &Value::Null, cx) {
+        if let Err(error) = self.apply_workspace_text_edits(&Value::Array(edits), &Value::Null, files::operations::new_undo_group(), cx) {
             self.notify_error(format!("Error applying edit '{}':\n{}", edit.title, error["message"].as_str().unwrap_or_default()));
         }
         if let Some(widget) = self.paste_edits.widget.as_mut()
