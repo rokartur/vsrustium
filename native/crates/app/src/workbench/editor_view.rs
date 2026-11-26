@@ -623,6 +623,7 @@ impl Workbench {
                     .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.find_options_widget(minimap_width, cx))
                     .children(self.floating_menu(editor, viewport.height, minimap_width, window, cx))
+                    .children(self.whitespace_hint_widget(minimap_width, cx))
                     .children(self.define_keybinding_overlay(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, window, cx))
                     .children(self.breakpoint_widget_element(editor, metrics.content_left(), window, cx))
                     .children(self.exception_widget_element(editor, metrics.content_left(), cx))

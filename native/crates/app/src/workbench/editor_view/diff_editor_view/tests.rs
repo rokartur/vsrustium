@@ -214,3 +214,22 @@ fn a_diff_stopped_early_offers_to_remove_the_limit(cx: &mut TestAppContext) {
     workbench.read_with(cx, |workbench, _| assert_eq!(workbench.setting("diffEditor.maxComputationTime"), json!(0)));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// diffEditorHelper.ts `hintWhitespace`: only a diff of trimmed whitespace shows the button.
+#[gpui::test]
+fn a_whitespace_only_diff_offers_to_show_whitespace(cx: &mut TestAppContext) {
+    let (dir, workbench, _receiver, cx) = workbench_in("diff-whitespace", cx);
+    std::fs::write(dir.join("c.txt"), "one  \ntwo\nthree\nfour").unwrap();
+    let hint_after = |other: &str, cx: &mut VisualTestContext| {
+        let (a, other) = (file_uri(&dir.join("a.txt")), file_uri(&dir.join(other)));
+        workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("_workbench.diff", vec![a, other], window, cx)));
+        cx.run_until_parked();
+        workbench.update(cx, |workbench, cx| {
+            workbench.update_diff_editor();
+            workbench.whitespace_hint_widget(0., cx).is_some()
+        })
+    };
+    assert!(!hint_after("b.txt", cx), "a diff with changes");
+    assert!(hint_after("c.txt", cx), "trailing whitespace only");
+    std::fs::remove_dir_all(dir).unwrap();
+}

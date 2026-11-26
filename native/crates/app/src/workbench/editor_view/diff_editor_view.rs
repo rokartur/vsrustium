@@ -253,6 +253,40 @@ impl Workbench {
         configured && !(limited && self.diff_part_width.get() > 0. && self.diff_part_width.get() < INLINE_BREAKPOINT)
     }
 
+    /// diffEditorHelper.ts `hintWhitespace`: a diff whose only differences are trimmed whitespace shows a
+    /// `FloatingEditorClickWidget` at the modified editor's bottom right corner that stops ignoring them.
+    pub(in crate::workbench) fn whitespace_hint_widget(&self, minimap_width: f32, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let input = self.editors.active_diff()?;
+        let computed = input.diff.as_ref()?;
+        let model = |side: &Side| self.editors.model(&side.scheme, &side.path);
+        let (original, modified) = (model(&input.original)?, model(&input.modified)?);
+        if !computed.diff.changes.is_empty() || original.document().lines == modified.document().lines {
+            return None;
+        }
+        let background = self.theme.color("button.background").unwrap_or_else(|| self.color("editor.background"));
+        let foreground = self.theme.color("button.foreground").unwrap_or_else(|| self.color("editor.foreground"));
+        let widget = div()
+            .id("diff-whitespace-hint")
+            .absolute()
+            .right(px(2. * crate::editor::VERTICAL_SCROLLBAR_WIDTH + minimap_width))
+            .bottom(px(2. * crate::editor::HORIZONTAL_SCROLLBAR_HEIGHT))
+            .px(px(11.))
+            .py(px(6.))
+            .rounded(px(2.))
+            .cursor_pointer()
+            .font_family(".SystemUIFont")
+            .text_size(px(13.))
+            .bg(background)
+            .text_color(foreground)
+            .when_some(self.theme.color("contrastBorder"), |widget, border| widget.border_1().border_color(border))
+            .child("Show Whitespace Differences")
+            .on_click(cx.listener(|workbench, _, _, cx| {
+                workbench.update_setting("diffEditor.ignoreTrimWhitespace", json!(false));
+                cx.notify();
+            }));
+        Some(widget.into_any_element())
+    }
+
     /// diffEditorHelper.ts `hintTimeout`: Remove Limit sets `diffEditor.maxComputationTime` to 0.
     fn prompt_diff_quit_early(&mut self, max_computation_time_ms: u64) {
         let mut notification = Notification::new(Severity::Warning, format!("The diff algorithm was stopped early (after {max_computation_time_ms} ms.)"));
