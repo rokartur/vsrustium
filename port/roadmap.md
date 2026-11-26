@@ -183,7 +183,7 @@ Done when: the ledger names 1.148.0. Every row the diff touches is `verified`, `
 
 ## 22. Split the port from the VS Code tree
 
-Artur: in the end the repository holds two code bases apart, `main` with the Rust port only and a `vscode` branch with upstream VS Code. Done before milestone 21, so the uplift becomes moving `vscode` to the new tag.
+Artur: in the end the repository holds two code bases apart, `main` with the Rust port only and a `vscode` branch with upstream VS Code. Order: milestones 11 to 20 finish, everything lands on `main` (after its full check), then this split, then milestone 21, which becomes moving `vscode` to the new tag.
 
 Today the port reads upstream from the same tree: the extension host is built from `src/` (`port/tools/build-exthost`) with 11 upstream files edited (288 lines: `src/bootstrap-exthost.ts`, `extHostExtensionService.ts`, `extensionHostProcess.ts`, `extHostInertModules.ts`, `extHostRequireInterceptor.ts`, `proxyResolver.ts`, `ipc.net.ts`, `product.json`, `extensions/configuration-editing/package.json`); the built-in extensions come from `extensions/`; `native/crates/app/build.rs` builds the NLS index from `src/vs`; `port/tools/package-app` copies media from `src/vs`; the tools (`gen-ledger.ts`, `gen-proxy-ids.ts`, `uplift-diff.ts`, `api-tests`, `extension-tests`, `ref-*`, `dump-settings`, `privacy-check`, `shipped-files.ts`) read `src/`, `extensions/` and `product.json`.
 
