@@ -81,6 +81,15 @@ fn the_interactive_window_executes_its_input_as_cells(cx: &mut TestAppContext) {
     assert_eq!(input_text(&workbench, cx), "1+1");
     run(&workbench, "interactive.history.next", Vec::new(), cx);
     assert_eq!(input_text(&workbench, cx), "");
+    receiver.try_iter().count();
+    run(&workbench, "interactive.history.focus", Vec::new(), cx);
+    let deltas: Vec<Value> = receiver.try_iter().filter(|message| message.method == "$acceptDocumentsAndEditorsDelta").map(|message| message.args[0].clone()).collect();
+    assert!(deltas.iter().any(|delta| delta.get("newActiveEditor").is_some()), "the cell's editor becomes active: {deltas:?}");
+    assert!(deltas.iter().all(|delta| delta.get("removedEditors").is_none()), "the input editor stays visible while a cell has the focus: {deltas:?}");
+    let saved = workbench.read_with(cx, |workbench, _| workbench.notebook_editor_input(workbench.editors.active_tab().unwrap()).unwrap());
+    assert_eq!(saved["id"], "workbench.input.interactive");
+    let value: Value = serde_json::from_str(saved["value"].as_str().unwrap()).unwrap();
+    assert_eq!((value["inputResource"]["path"].clone(), value["name"].clone()), (json!("/InteractiveInput-1"), json!("Interactive-1")));
 
     receiver.try_iter().count();
     run(&workbench, "workbench.action.closeActiveEditor", Vec::new(), cx);

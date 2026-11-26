@@ -73,6 +73,10 @@ pub enum MenuId {
     EditorTitle,
     /// `MenuId.InteractiveToolbar`: the interactive window's and REPL editor's toolbar.
     InteractiveToolbar,
+    /// `MenuId.NotebookOutputToolbar`: the `...` dropdown left of a notebook output.
+    NotebookOutputToolbar,
+    /// `MenuId.NotebookEditorLayoutConfigure`: the notebook editor title's Customize Notebook... submenu.
+    NotebookEditorLayoutConfigure,
     TimelineTitle,
     TimelineItemContext,
     /// timeline.contribution.ts "Filter Timeline": a toggle per timeline source.
@@ -420,6 +424,12 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::SearchContext, None, "search.action.copyPath", "Copy Path", "search_2", 2., Some("fileMatchOrFolderMatchWithResourceFocus"), None),
     (MenuId::SearchContext, None, "search.action.copyAll", "Copy All", "search_2", 3., Some("hasSearchResult"), None),
     (MenuId::SearchContext, None, "search.action.revealInSideBar", "Reveal in Explorer View", "search_3", 1., Some("fileMatchFocus && hasSearchResult"), None),
+    // editActions.ts and cellOutputActions.ts; "Open in Output Preview" needs `notebook.output.openInPreviewEditor.enabled`,
+    // a setting no build registers, and "Add Cell Output to Chat" needs chat.
+    (MenuId::NotebookOutputToolbar, None, "notebook.cell.clearOutputs", "Clear Cell Outputs", "", 0., Some("notebookCellHasOutputs && notebookEditable && notebookCellEditable && notebookCellIsFirstOutput && config.notebook.consolidatedOutputButton"), None),
+    (MenuId::NotebookOutputToolbar, None, "notebook.cellOuput.showEmptyOutputs", "Show Empty Outputs", "", 0., Some("notebookCellHasOutputs && notebookCellHasHiddenOutputs"), None),
+    (MenuId::NotebookOutputToolbar, None, "notebook.cellOutput.copy", "Copy Cell Output", "", 0., Some("notebookCellHasOutputs"), None),
+    (MenuId::NotebookOutputToolbar, None, "notebook.cellOutput.saveImage", "Save Image", "", 0., Some("notebookCellOutputMimetype =~ /^image\\//"), None),
 ];
 
 /// windowActions.ts, layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
@@ -487,6 +497,23 @@ pub fn workbench_menus() -> Vec<MenuItem> {
     // terminal.stickyScroll.contribution.ts: Toggle Sticky Scroll, checked by its setting.
     let entry = Entry::Command { id: "workbench.action.terminal.toggleStickyScroll".into(), precondition: None, toggled: Toggled::when(Expr::deserialize("config.terminal.integrated.stickyScroll.enabled == true")), alt: None };
     items.push(MenuItem { menu: MenuId::TerminalStickyScrollContext, entry, title: "Sticky Scroll".into(), group: String::new(), order: 0., when: None });
+    // layoutActions.ts: the notebook editor title's Customize Notebook... gear and its submenu, with the toggles'
+    // short titles (toolbar dropdowns render `shortTitle`). Not ported: Toggle Cell Toolbar Position (the cell
+    // toolbar is always on the right, `notebook.cellToolbarLocation` is not read).
+    let notebook = Expr::deserialize("activeEditor == 'workbench.editor.notebook'");
+    let entry = Entry::Submenu { submenu: MenuId::NotebookEditorLayoutConfigure, toggled: None };
+    items.push(MenuItem { menu: MenuId::EditorTitle, entry, title: "Customize Notebook...".into(), group: "navigation".into(), order: -1., when: notebook.clone() });
+    let entry = Entry::Command { id: "workbench.notebook.layout.configure.editorTitle".into(), precondition: None, toggled: None, alt: None };
+    items.push(MenuItem { menu: MenuId::NotebookEditorLayoutConfigure, entry, title: "Customize Notebook Layout".into(), group: "notebookLayout".into(), order: 1., when: notebook.clone() });
+    let toggles = [
+        ("notebook.toggleLineNumbersFromEditorTitle", "Line Numbers", "config.notebook.lineNumbers != 'off'", Some("notebookEditorFocused"), 1., notebook.clone()),
+        ("breadcrumbs.toggleFromEditorTitle", "Breadcrumbs", "config.breadcrumbs.enabled == true", None, 2., None),
+    ];
+    for (id, title, checked, precondition, order, when) in toggles {
+        let toggled = Toggled::when(Expr::deserialize(checked));
+        let entry = Entry::Command { id: id.into(), precondition: precondition.and_then(Expr::deserialize), toggled, alt: None };
+        items.push(MenuItem { menu: MenuId::NotebookEditorLayoutConfigure, entry, title: title.into(), group: "notebookLayoutDetails".into(), order, when });
+    }
     // toggleWordWrap.ts: checked while the active editor wraps, enabled while it can toggle.
     let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: Some(Expr::has("canToggleWordWrap")), toggled: Toggled::when(Some(Expr::has("editorWordWrap"))), alt: None };
     items.push(MenuItem { menu: MenuId::MenubarViewMenu, entry, title: "&&Word Wrap".into(), group: "6_editor".into(), order: 1., when: None });

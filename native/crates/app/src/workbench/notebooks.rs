@@ -190,6 +190,8 @@ impl Workbench {
         }
         self.commands.register("notebook.selectKernel", |workbench, _, window, cx| workbench.show_kernel_picker(window, cx));
         self.register_notebook_list_commands();
+        self.register_notebook_output_commands();
+        self.register_notebook_layout_commands();
         self.commands.register("notebook.cell.copyDown", |workbench, args, _, cx| {
             let Some((key, indices)) = workbench.cells_from_args(&args) else { return Outcome::done() };
             let Some(&index) = indices.first() else { return Outcome::done() };
@@ -591,7 +593,9 @@ impl Workbench {
     /// SimpleNotebookWorkingCopyEditorHandler `createEditor` for a backup without an open notebook: the notebook
     /// opens pinned in the background and resolves from its backup.
     pub(super) fn restore_notebook_backup(&mut self, uri: Value, view_type: String, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.is_notebook_type(&view_type) || self.host.notebooks.model(&notebook::uri_string(&uri)).is_some() {
+        let key = notebook::uri_string(&uri);
+        let restoring = self.notebook_views.restores.iter().any(|restore| notebook::uri_string(restore.input.resource()) == key);
+        if !self.is_notebook_type(&view_type) || self.host.notebooks.model(&key).is_some() || self.host.notebooks.held.contains(&key) || restoring {
             return;
         }
         drop(self.open_notebook(uri, view_type, json!({ "pinned": true, "preserveFocus": true, "inactive": true }), window, cx));
@@ -938,7 +942,7 @@ impl Workbench {
 
     /// `parseMultiCellExecutionArgs`: `{ ranges, document }`, a range and a document, else the active editor's
     /// selected cells.
-    fn cells_from_args(&self, args: &[Value]) -> Option<(String, Vec<usize>)> {
+    pub(super) fn cells_from_args(&self, args: &[Value]) -> Option<(String, Vec<usize>)> {
         let first = args.first().unwrap_or(&Value::Null);
         let (key, ranges) = if first["ranges"].is_array() {
             (self.notebook_from_args(first.get("document"))?, cell_ranges(&first["ranges"]))
@@ -1178,9 +1182,151 @@ impl Workbench {
 }
 
 /// The text models of the cells of a notebook tab, in order; none for another tab.
+/// The editor input of a notebook tab as the editor part saves it: NotebookEditorSerializer,
+/// InteractiveEditorSerializer and ReplEditorSerializer.
+pub(super) enum NotebookInput {
+    Notebook { resource: Value, view_type: String },
+    Interactive { resource: Value, input: Value, name: Option<String> },
+    Repl { resource: Value, label: Option<String> },
+}
+
+const NOTEBOOK_INPUT: &str = "workbench.input.notebook";
+const INTERACTIVE_INPUT: &str = "workbench.input.interactive";
+const REPL_INPUT: &str = "workbench.editorinputs.replEditorInput";
+
+impl NotebookInput {
+    /// `deserialize`: None without a resource URI or, for a notebook, a view type.
+    pub(super) fn parse(id: &str, value: &Value) -> Option<NotebookInput> {
+        let uri = |key: &str| Some(value[key].clone()).filter(|uri| uri["scheme"].is_string());
+        let text = |key: &str| value[key].as_str().map(str::to_owned);
+        let resource = uri("resource")?;
+        match id {
+            NOTEBOOK_INPUT => Some(NotebookInput::Notebook { resource, view_type: text("viewType")? }),
+            INTERACTIVE_INPUT => Some(NotebookInput::Interactive { resource, input: uri("inputResource")?, name: text("name") }),
+            REPL_INPUT => text("viewType").map(|_| NotebookInput::Repl { resource, label: text("label") }),
+            _ => None,
+        }
+    }
+
+    pub(super) fn resource(&self) -> &Value {
+        match self {
+            NotebookInput::Notebook { resource, .. } | NotebookInput::Interactive { resource, .. } | NotebookInput::Repl { resource, .. } => resource,
+        }
+    }
+}
+
+/// A notebook editor the editor part restores at `index` of `group`, once its notebook resolves.
+pub(super) struct NotebookRestore {
+    pub group: u32,
+    pub index: usize,
+    pub preview: bool,
+    /// The group's active editor.
+    pub active: bool,
+    pub input: NotebookInput,
+}
+
+impl Workbench {
+    /// `serialize` of the tab's editor input, as the editor part stores it; None for other tabs and a notebook still
+    /// resolving.
+    pub(super) fn notebook_editor_input(&self, tab: &OpenEditor) -> Option<Value> {
+        if tab.document().scheme != NOTEBOOK_EDITOR_SCHEME {
+            return None;
+        }
+        let model = self.host.notebooks.model(&tab.document().path.to_string_lossy())?;
+        let interactive = self.host.notebooks.interactives.iter().find(|interactive| interactive.notebook == model.uri_string());
+        let (id, value) = match interactive {
+            Some(interactive) if interactive.repl => {
+                let label = self.editor_name(tab);
+                (REPL_INPUT, json!({ "resource": model.uri, "preferredResource": model.uri, "viewType": model.view_type, "options": {}, "label": label }))
+            }
+            Some(interactive) => {
+                let language = self.interactive_language(&model.uri_string());
+                (INTERACTIVE_INPUT, json!({ "resource": model.uri, "inputResource": interactive.input, "name": notebook::interactive_name(&model.uri, interactive), "language": language }))
+            }
+            None => (NOTEBOOK_INPUT, json!({ "resource": model.uri, "preferredResource": model.uri, "viewType": model.view_type, "options": {} })),
+        };
+        Some(json!({ "id": id, "value": value.to_string() }))
+    }
+
+    /// editorPart.ts restores the notebook editors with the others; here each opens once its notebook resolves
+    /// (after its extension registers the serializer), one after the other, and moves to its place in its group.
+    pub fn restore_notebook_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.notebook_views.restores.is_empty() {
+            return;
+        }
+        let restore = self.notebook_views.restores.remove(0);
+        let options = json!({ "pinned": !restore.preview, "preserveFocus": true, "inactive": !restore.active });
+        let previous_group = self.editors.id;
+        if self.editors.group_ids_mru().contains(&restore.group) {
+            self.activate_group(restore.group);
+        }
+        let key = notebook::uri_string(restore.input.resource());
+        let opened = match &restore.input {
+            NotebookInput::Notebook { resource, view_type } => self.open_notebook(resource.clone(), view_type.clone(), options, window, cx),
+            NotebookInput::Interactive { resource, input, name } => {
+                self.host.notebooks.interactives.retain(|interactive| interactive.notebook != key);
+                self.host.notebooks.interactives.push(notebook::Interactive { notebook: key.clone(), input: input.clone(), title: name.clone(), history: notebook::History::new(""), shown: false, repl: false });
+                self.host.notebooks.interactive_window_open = true;
+                self.open_notebook(resource.clone(), super::interactive::VIEW_TYPE.into(), options, window, cx)
+            }
+            // ReplEditorInput: the notebook as `jupyter-notebook`, shown as a REPL editor.
+            NotebookInput::Repl { resource, label } => {
+                let (resource, mut options) = (resource.clone(), options);
+                options["label"] = json!(label);
+                self.host.notebooks.held.push(key.clone());
+                let held = key.clone();
+                let (sender, receiver) = oneshot::channel();
+                cx.spawn_in(window, async move |workbench, cx| {
+                    let resolved = resolve_notebook(&workbench, cx, resource.clone(), "jupyter-notebook".into(), None).await;
+                    let shown = workbench.update_in(cx, |workbench, window, cx| {
+                        let shown = match resolved {
+                            Ok(_) => match workbench.show_repl(resource, options, window, cx) {
+                                Outcome::Ready(shown) => shown,
+                                Outcome::Pending(_) => Err(Value::Null),
+                            },
+                            Err(error) => Err(error),
+                        };
+                        workbench.host.notebooks.held.retain(|key| *key != held);
+                        shown
+                    });
+                    let _ = sender.send(shown.unwrap_or(Err(Value::Null)));
+                })
+                .detach();
+                Outcome::Pending(receiver)
+            }
+        };
+        cx.spawn_in(window, async move |workbench, cx| {
+            let shown = match opened {
+                Outcome::Ready(shown) => shown,
+                Outcome::Pending(receiver) => receiver.await.unwrap_or(Err(Value::Null)),
+            };
+            let _ = workbench.update_in(cx, |workbench, window, cx| {
+                if shown.is_ok() {
+                    if matches!(restore.input, NotebookInput::Interactive { .. }) {
+                        workbench.create_interactive_input(&key, window, cx);
+                    }
+                    if let Some(from) = workbench.editors.editors.iter().position(|editor| editor.document().is(NOTEBOOK_EDITOR_SCHEME, Path::new(&key))) {
+                        workbench.editors.move_editor(from, restore.index);
+                        let to = restore.index.min(workbench.editors.editors.len() - 1);
+                        workbench.editors.editors[to].preview = restore.preview;
+                    }
+                }
+                if workbench.editors.group_ids_mru().contains(&previous_group) && !restore.active {
+                    workbench.activate_group(previous_group);
+                }
+                workbench.editors_changed(cx);
+                workbench.restore_notebook_editors(window, cx);
+            });
+        })
+        .detach();
+    }
+}
+
 pub(crate) fn notebook_cells<'a>(notebooks: &notebook::Notebooks, editors: &'a crate::editor::EditorGroup, tab: &OpenEditor) -> Vec<&'a OpenEditor> {
     let Some(model) = notebooks.editor(tab.model_id).and_then(|editor| notebooks.model(&editor.notebook)) else { return Vec::new() };
-    model.cells.iter().filter_map(|cell| uri_parts(&cell.uri).ok()).filter_map(|(scheme, path)| editors.model(scheme, &path)).collect()
+    // An interactive window's input editor is a code editor too (interactiveEditor.ts `_inputEditor`).
+    let input = notebooks.interactives.iter().find(|interactive| interactive.notebook == model.uri_string() && !interactive.repl).map(|interactive| &interactive.input);
+    model.cells.iter().map(|cell| &cell.uri).chain(input).filter_map(|uri| uri_parts(uri).ok()).filter_map(|(scheme, path)| editors.model(scheme, &path)).collect()
 }
 
 /// A contributed or registered notebook type (`NotebookProviderInfo`).

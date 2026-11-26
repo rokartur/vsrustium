@@ -140,7 +140,7 @@ impl Workbench {
 
     /// `resolveInput`: the input model in the kernel's first language (else plain text), the host told first
     /// (`$willAddInteractiveDocument`).
-    fn create_interactive_input(&mut self, key: &str, _window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn create_interactive_input(&mut self, key: &str, _window: &mut Window, cx: &mut Context<Self>) {
         let Some(interactive) = self.host.notebooks.interactives.iter().find(|interactive| interactive.notebook == key) else { return };
         let (input, notebook_uri) = (interactive.input.clone(), self.host.notebooks.model(key).map(|model| model.uri.clone()).unwrap_or_default());
         let (scheme, path) = uri_parts(&input).expect("an input URI");
@@ -155,7 +155,7 @@ impl Workbench {
     }
 
     /// The language of the input and of executed cells: the kernel's first supported language, else plain text.
-    fn interactive_language(&self, key: &str) -> String {
+    pub(super) fn interactive_language(&self, key: &str) -> String {
         let view_type = self.host.notebooks.model(key).map_or(VIEW_TYPE, |model| model.view_type.as_str());
         let kernel = self.host.notebooks.kernels.resolve(view_type, key);
         kernel.and_then(|kernel| kernel.supported_languages.first().cloned()).unwrap_or_else(|| crate::languages::PLAINTEXT.into())

@@ -2,14 +2,15 @@
 //! the workspace memento `memento/workbench.parts.editor` under `editorpart.state`, in upstream's shape
 //! (`ISerializedGrid` of `ISerializedEditorGroupModel` leaves, file editors as `workbench.editors.files.fileEditorInput`).
 //! Upstream saves on shutdown; the port saves on each editor change, as the editor history does.
-// Not ported yet: editors other than file, untitled text and webview panel editors (upstream serializes every
-// editor with a serializer), sticky editors, locked groups.
+// Not ported yet: editors other than file, untitled text, webview panel, notebook, interactive and REPL editors
+// (upstream serializes every editor with a serializer), sticky editors, locked groups.
 
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
 use super::super::Workbench;
+use super::super::notebooks::{NotebookInput, NotebookRestore};
 use super::super::webview_panels::WEBVIEW_INPUT;
 use crate::editor::MODAL_GROUP;
 use crate::editor_grid::{EditorGrid, Orientation, SerializedNode};
@@ -65,16 +66,20 @@ impl Workbench {
         let mut serialized = Vec::new();
         for editor in self.editors.group_tabs(group).0 {
             let document = editor.document();
-            let entry = match document.scheme.as_str() {
-                "file" => json!({ "id": FILE_EDITOR_INPUT, "value": json!({ "resourceJSON": exthost::scan::file_uri(&document.path) }).to_string() }),
-                "untitled" if untitled => {
-                    let resource = json!({ "$mid": 1, "scheme": "untitled", "path": document.path.to_string_lossy() });
-                    json!({ "id": UNTITLED_EDITOR_INPUT, "value": json!({ "resourceJSON": resource, "modeId": document.language_id }).to_string() })
+            let entry = if let Some(notebook) = self.notebook_editor_input(editor) {
+                notebook
+            } else {
+                match document.scheme.as_str() {
+                    "file" => json!({ "id": FILE_EDITOR_INPUT, "value": json!({ "resourceJSON": exthost::scan::file_uri(&document.path) }).to_string() }),
+                    "untitled" if untitled => {
+                        let resource = json!({ "$mid": 1, "scheme": "untitled", "path": document.path.to_string_lossy() });
+                        json!({ "id": UNTITLED_EDITOR_INPUT, "value": json!({ "resourceJSON": resource, "modeId": document.language_id }).to_string() })
+                    }
+                    _ => match self.serialized_webview_editor(editor) {
+                        Some(webview) => json!({ "id": WEBVIEW_INPUT, "value": webview.to_string() }),
+                        None => continue,
+                    },
                 }
-                _ => match self.serialized_webview_editor(editor) {
-                    Some(webview) => json!({ "id": WEBVIEW_INPUT, "value": webview.to_string() }),
-                    None => continue,
-                },
             };
             editors.push(editor);
             serialized.push(entry);
@@ -122,8 +127,15 @@ impl Workbench {
 
     fn restore_group(&mut self, group: &Value) {
         let mut opened = Vec::new();
+        let active = group["mru"][0].as_u64();
         for (index, editor) in group["editors"].as_array().into_iter().flatten().enumerate() {
             let value: Value = editor["value"].as_str().and_then(|value| serde_json::from_str(value).ok()).unwrap_or_default();
+            // Notebook, interactive and REPL editors resolve their notebook first (notebooks.rs).
+            if let Some(input) = NotebookInput::parse(editor["id"].as_str().unwrap_or_default(), &value) {
+                let preview = group["preview"].as_u64() == Some(index as u64);
+                self.notebook_views.restores.push(NotebookRestore { group: self.editors.id, index, preview, active: active == Some(index as u64), input });
+                continue;
+            }
             let path = value["resourceJSON"]["path"].as_str().map(PathBuf::from);
             let document = match (editor["id"].as_str(), path) {
                 // A file deleted since is left out, as `FileEditorInput` would show its error placeholder.
