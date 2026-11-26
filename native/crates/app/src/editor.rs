@@ -121,8 +121,9 @@ impl TextDocument {
     /// encoding, else the one its BOM or zero bytes show, else `files.encoding`.
     // shortcut: binary files open as text; upstream refuses them (FILE_IS_BINARY) and shows the binary editor.
     pub fn from_bytes(scheme: &str, path: &Path, bytes: &[u8], requested: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
-        let detected = encoding::detect(bytes).encoding;
-        let encoding = encoding::read_encoding(settings, (scheme == "file").then_some(path), requested, detected);
+        let resource = (scheme == "file").then_some(path);
+        let detected = crate::encoding_guess::detect(bytes, settings, resource, false);
+        let encoding = encoding::read_encoding(settings, resource, requested, detected.as_deref());
         let text = encoding::decode(bytes, &encoding);
         Self::from_text(scheme, path, &text, encoding, None, languages, settings)
     }
@@ -560,6 +561,8 @@ pub struct TextModel {
     pub markers_truncated: bool,
     /// Each replace as (version it applied to, start, end, new end), for the model's other editors to follow.
     pub(crate) edits: Vec<(u32, Position, Position, Position)>,
+    /// The placeholder model of a custom document's webview editor: whether the document is dirty.
+    pub custom_document_dirty: bool,
 }
 
 /// One model shared by the editors of its resource in every group.
@@ -633,7 +636,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let model = TextModel { document, version_id: 1, history: History::default(), guides, host_reference: None, associated_file: false, markers: Vec::new(), markers_truncated: false, edits: Vec::new() };
+        let model = TextModel { document, version_id: 1, history: History::default(), guides, host_reference: None, associated_file: false, markers: Vec::new(), markers_truncated: false, edits: Vec::new(), custom_document_dirty: false };
         Self::of_model(Rc::new(RefCell::new(model)), preview, model_id)
     }
 

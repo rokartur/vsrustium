@@ -316,6 +316,10 @@ impl Workbench {
                 self.revert_untitled(&path);
                 true
             }
+            super::webview_panels::WEBVIEW_PANEL_SCHEME => {
+                self.revert_custom_document(&path, cx);
+                false
+            }
             _ => {
                 if let Err(error) = self.revert_text_file(&scheme, &path, cx) {
                     self.notify_error(error);

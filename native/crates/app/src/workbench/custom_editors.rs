@@ -37,6 +37,8 @@ pub struct CustomEditors {
     /// Opens waiting for their view type's provider, which `onCustomEditor:<viewType>` registers.
     pending: Vec<PendingOpen>,
     next_handle: u64,
+    /// The custom documents the host created, by resource and view type (custom_documents.rs).
+    pub(super) documents: Vec<super::custom_documents::CustomDocument>,
 }
 
 struct Provider {
@@ -68,6 +70,8 @@ pub(super) struct CustomEditor {
     pub(super) resource: Value,
     /// `$resolveCustomEditor` was sent for the panel's handle.
     pub(super) resolved: bool,
+    /// The backup a restored editor creates its document from.
+    pub(super) backup_id: Option<String>,
 }
 
 impl Workbench {
@@ -86,6 +90,8 @@ impl Workbench {
             "$unregisterEditorProvider" => {
                 self.webview_panels.custom_editors.providers.remove(arg(0).as_str().unwrap_or_default());
             }
+            "$onDidEdit" => self.push_custom_document_edit(&arg(0), &view_type, arg(2).as_i64().unwrap_or_default(), cx),
+            "$onContentChange" => self.change_custom_document_content(&arg(0), &view_type, cx),
             _ => {}
         }
         Outcome::done()
@@ -154,13 +160,17 @@ impl Workbench {
         best.map_or(text_editor, |(_, pattern, view_type)| (view_type, pattern.to_owned()))
     }
 
-    /// customEditors.ts `UndoCommand` and `RedoCommand` implementations: a custom text editor's are its model's.
-    // shortcut: a custom document's `$undo` and `$redo` wait for its edits (`$onEdit`), which are not ported.
+    /// customEditors.ts `UndoCommand` and `RedoCommand` implementations: a custom text editor's are its model's, a
+    /// custom document's are its edits (`undoRedoService.undo(resource)`).
     pub(super) fn custom_text_editor_undo(&mut self, id: &str, command: fn(&mut OpenEditor) -> Option<ContentChanged>, cx: &mut Context<Self>) -> Option<Outcome> {
         if !matches!(id, "undo" | "redo") {
             return None;
         }
         let editor = self.editors.active()?;
+        if editor.document().scheme == WEBVIEW_PANEL_SCHEME {
+            let path = editor.document().path.clone();
+            return Some(self.undo_custom_document(&path, id == "redo", cx));
+        }
         let custom_text = self.webview_panels.panels.iter().any(|panel| panel.custom.is_some() && panel.scheme != WEBVIEW_PANEL_SCHEME && editor.document().is(&panel.scheme, &panel.path));
         custom_text.then(|| self.run_on_active_editor(command, cx))
     }
@@ -332,7 +342,8 @@ impl Workbench {
         let (text, extension, retain) = (provider.text, provider.extension.clone(), provider.options["retainContextWhenHidden"] == true);
         let find_enabled = provider.options["enableFindWidget"] == true;
         let title = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
-        let custom = Some(CustomEditor { resource: resource.clone(), resolved: false });
+        let backup_id = options["backupId"].as_str().map(str::to_owned);
+        let custom = Some(CustomEditor { resource: resource.clone(), resolved: false, backup_id });
         let shows = |panel: &WebviewPanel| panel.view_type == view_type && panel.custom.as_ref().is_some_and(|custom| custom.resource == *resource);
         let handle = match self.webview_panels.panels.iter().find(|panel| shows(panel)) {
             Some(panel) => panel.handle.clone(),
@@ -342,14 +353,7 @@ impl Workbench {
                 self.webview_panels.panels.push(WebviewPanel::new(handle.clone(), scheme, path, view_type, title, &extension, Value::Null, retain, custom));
                 handle
             }
-            None => {
-                let handle = self.next_custom_editor_handle();
-                let placeholder = PathBuf::from(format!("webview-panel/webview-{view_type}-{handle}"));
-                let document = TextDocument::from_text(WEBVIEW_PANEL_SCHEME, &placeholder, "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
-                self.webview_panels.panels.push(WebviewPanel::new(handle.clone(), WEBVIEW_PANEL_SCHEME.into(), placeholder, view_type, title, &extension, Value::Null, retain, custom));
-                self.editors.open(document, options["pinned"] != true);
-                handle
-            }
+            None => self.add_custom_document_editor(view_type, title, &extension, retain, custom, options["pinned"] != true),
         };
         if let Some(panel) = self.webview_panel_mut(&handle) {
             panel.find_enabled = find_enabled;
@@ -373,6 +377,22 @@ impl Workbench {
         Ok(())
     }
 
+    /// A custom document's own editor: a webview panel with the placeholder model `webview-panel/webview-<viewType>-<handle>`.
+    pub(super) fn add_custom_document_editor(&mut self, view_type: &str, title: String, extension: &Value, retain: bool, custom: Option<CustomEditor>, preview: bool) -> String {
+        let handle = self.next_custom_editor_handle();
+        let placeholder = PathBuf::from(format!("webview-panel/webview-{view_type}-{handle}"));
+        let document = TextDocument::from_text(WEBVIEW_PANEL_SCHEME, &placeholder, "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
+        self.webview_panels.panels.push(WebviewPanel::new(handle.clone(), WEBVIEW_PANEL_SCHEME.into(), placeholder, view_type, title, extension, Value::Null, retain, custom));
+        self.editors.open(document, preview);
+        handle
+    }
+
+    /// The registered provider's extension description and whether it retains hidden webviews.
+    pub(super) fn custom_editor_provider(&self, view_type: &str) -> Option<(Value, bool)> {
+        let provider = self.webview_panels.custom_editors.providers.get(view_type)?;
+        Some((provider.extension.clone(), provider.options["retainContextWhenHidden"] == true))
+    }
+
     /// Removes the custom text editors of `resource` other than `keep`, as reopening it with another editor does.
     fn detach_custom_editors(&mut self, resource: &Value, keep: Option<&str>) {
         let panels = std::mem::take(&mut self.webview_panels.panels);
@@ -385,7 +405,7 @@ impl Workbench {
         }
     }
 
-    fn next_custom_editor_handle(&mut self) -> String {
+    pub(super) fn next_custom_editor_handle(&mut self) -> String {
         self.webview_panels.custom_editors.next_handle += 1;
         format!("custom-editor-{}", self.webview_panels.custom_editors.next_handle)
     }
@@ -404,7 +424,7 @@ impl Workbench {
             let document_open = self.webview_panels.panels.iter().any(|other| {
                 other.view_type == panel.view_type && other.custom.as_ref().is_some_and(|other| other.resolved && other.resource == custom.resource)
             });
-            let create = (!provider.text && !document_open).then(|| vec![custom.resource.clone(), json!(panel.view_type)]);
+            let create = (!provider.text && !document_open).then(|| vec![custom.resource.clone(), json!(panel.view_type), json!(custom.backup_id), Value::Null]);
             let init = json!({ "title": panel.title, "contentOptions": {}, "options": provider.options, "active": active == Some(index) });
             // EditorGroupColumn 0, the one group.
             let resolve = vec![custom.resource.clone(), json!(panel.handle), json!(panel.view_type), init, json!(0)];
@@ -412,6 +432,7 @@ impl Workbench {
             self.webview_panels.panels[index].custom.as_mut().expect("checked above").resolved = true;
         }
         for (handle, view_type, create, resolve) in resolves {
+            let document = create.as_ref().map(|args| (args[0].clone(), args[2].is_string()));
             let created = create.map(|args| self.host.call("ExtHostCustomEditors", "$createCustomDocument", args));
             let resolved = self.host.call("ExtHostCustomEditors", "$resolveCustomEditor", resolve);
             cx.spawn(async move |workbench, cx| {
@@ -420,6 +441,11 @@ impl Workbench {
                     Some(created) => created.await.unwrap_or_else(canceled),
                     None => Ok(Value::Null),
                 };
+                if let (Ok(created), Some((resource, from_backup))) = (&result, document) {
+                    let editable = created["editable"] == true;
+                    let view_type = view_type.clone();
+                    let _ = workbench.update(cx, |workbench, cx| workbench.custom_document_created(resource, view_type, editable, from_backup, cx));
+                }
                 let result = match result {
                     Ok(_) => resolved.await.unwrap_or_else(canceled),
                     Err(error) => Err(error),
