@@ -123,6 +123,16 @@ fn resize_column_sets_the_picked_column_to_a_percentage_of_the_table(cx: &mut Te
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.keybindings_editor.table_focus.is_focused(window)), "focus goes back to the table");
 }
 
+#[gpui::test]
+fn reduced_motion_shows_the_column_borders_without_hover(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = keybindings_editor_window(cx, "reduce-motion", "");
+    let border_alpha = |cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, _| workbench.table_columns_border(window).a);
+    workbench.update(cx, |workbench, _| workbench.update_setting("workbench.reduceMotion", json!("off")));
+    assert_eq!(border_alpha(cx), 0.);
+    workbench.update(cx, |workbench, _| workbench.update_setting("workbench.reduceMotion", json!("on")));
+    assert!(border_alpha(cx) > 0.);
+}
+
 fn keybindings_editor_window<'a>(cx: &'a mut TestAppContext, name: &str, content: &str) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext, std::path::PathBuf) {
     let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
