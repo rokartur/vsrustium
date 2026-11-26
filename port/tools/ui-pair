@@ -7,7 +7,7 @@
 // env SETTINGS = a JSON object of user settings for both)
 // Steps, in window points (both windows are 1024x768):
 //   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y], "foreground": true}  {"key": "return"}  {"key": "escape", "foreground": true} (a real HID key down and up, the window brought to front and left there; also on hotkey)
-//   {"scroll": [x, y], "amount": notches} (real wheel notches down, the pointer left there)  {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
+//   {"scroll": [x, y], "amount": notches} (real wheel notches down, the pointer left there)  {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"type": "Text", "foreground": true} (capitals as shift plus the letter)  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"], "button": "middle"}: a slow drag, captured while held
 //   {"restart": true}: after the app quit (a Cmd+Q step), start it again on the same user data and folder
 //   {"launch": ["docs/guide.md"]}: start the app a second time with these paths (relative to the folder), as a command line would
@@ -133,11 +133,16 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 			// Key by key: type_text refuses windows without an accessible text field, as GPUI's.
 			// press_key knows no shifted symbols: they go as shift plus the US layout's base key.
 			const shifted: Record<string, string> = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0', '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
+			if (step.foreground) {
+				await cua('bring_to_front', target);
+			}
+			const delivery_mode = step.foreground ? 'foreground' : undefined;
 			for (const key of step.type) {
-				if (shifted[key]) {
-					await cua('press_key', { ...target, key: shifted[key], modifiers: ['shift'] });
+				const upper = key !== key.toLowerCase();
+				if (shifted[key] || upper) {
+					await cua('press_key', { ...target, key: shifted[key] ?? key.toLowerCase(), modifiers: ['shift'], delivery_mode });
 				} else {
-					await cua('press_key', { ...target, key: key === ' ' ? 'space' : key });
+					await cua('press_key', { ...target, key: key === ' ' ? 'space' : key, delivery_mode });
 				}
 			}
 		} else if (step.wait) {

@@ -1,11 +1,11 @@
 [
-	{ "hotkey": ["cmd", "shift", "h"] },
+	{ "hotkey": ["cmd", "shift", "h"], "foreground": true },
 	{ "wait": 800 },
-	{ "type": "the" },
+	{ "type": "the", "foreground": true },
 	{ "wait": 2000 },
 	{ "shot": "replace-query" },
-	{ "click": [90, 59] },
-	{ "type": "THE" },
+	{ "click": [110, 120], "foreground": true },
+	{ "type": "THE", "foreground": true },
 	{ "wait": 2000 },
 	{ "shot": "replace-preview" }
 ]
