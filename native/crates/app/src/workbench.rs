@@ -19,6 +19,7 @@ pub mod custom_editors;
 mod debug_commands;
 mod debug_console;
 mod problems_quick_fix;
+mod editor_type_picker;
 mod problems_table;
 mod modal_editor_group;
 mod problems_view;
@@ -452,6 +453,7 @@ pub struct Workbench {
     debug_console: debug_console::DebugConsole,
     problems: problems_view::ProblemsView,
     problems_quick_fixes: problems_quick_fix::ProblemsQuickFixes,
+    editor_type_picker: editor_type_picker::EditorTypePicker,
     comments: comments::Comments,
     problems_focus: FocusHandle,
     refactor_preview: refactor_preview::RefactorPreview,
@@ -716,6 +718,7 @@ impl Workbench {
             debug_console: debug_console::DebugConsole::new(cx),
             problems: problems_view::ProblemsView::new(cx),
             problems_quick_fixes: Default::default(),
+            editor_type_picker: Default::default(),
             comments: comments::Comments::new(cx),
             problems_focus: cx.focus_handle(),
             refactor_preview: Default::default(),

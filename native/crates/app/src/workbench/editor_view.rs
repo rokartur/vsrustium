@@ -80,8 +80,9 @@ impl Workbench {
             .flex_col()
             .child(self.tab_strip(window, cx))
             .map(|part| match editor.document().scheme.as_str() {
-                // A webview editor has no breadcrumbs: its resource has no file system provider.
-                WEBVIEW_PANEL_SCHEME => part,
+                // A webview panel's resource has no file system provider: no breadcrumbs, unless it is a custom
+                // editor's.
+                WEBVIEW_PANEL_SCHEME if self.webview_resource(&editor.document().path).is_none() => part,
                 // shortcut: a notebook editor has no breadcrumbs yet (the notebook and its outline upstream).
                 crate::notebook::CELL_SCHEME | crate::notebook::NOTEBOOK_EDITOR_SCHEME => part,
                 super::extension_editor::EXTENSION_EDITOR_SCHEME => part.child(self.extension_editor_body(&editor.document().path, cx)),
@@ -95,7 +96,7 @@ impl Workbench {
                 // mergeEditor.ts: the merge editor has no breadcrumbs.
                 _ if self.editors.active_merge().is_some() => part,
                 _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
-                _ => part.child(self.breadcrumbs(editor).opacity(self.unfocused_editor_opacity(window))),
+                _ => part.child(self.breadcrumbs(editor, cx).opacity(self.unfocused_editor_opacity(window))),
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
@@ -342,8 +343,9 @@ impl Workbench {
 
     /// The file's path below its workspace folder, one item per segment (breadcrumbs.filePath relative), after the
     /// folder's name in a workspace (`BreadcrumbsModel._initFilePathInfo`).
-    pub(super) fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
-        let path = &editor.document().path;
+    pub(super) fn breadcrumbs(&self, editor: &OpenEditor, cx: &mut Context<Self>) -> Div {
+        // A custom editor's breadcrumbs are its resource's (`EditorResourceAccessor.getOriginalUri`).
+        let path = &self.webview_resource(&editor.document().path).unwrap_or_else(|| editor.document().path.clone());
         let workspace = self.workspace();
         let folder = workspace.and_then(|workspace| workspace.folder_of(path));
         let relative: PathBuf = match folder {
@@ -388,12 +390,12 @@ impl Workbench {
             .flex_none()
             // shortcut: clips a long path at the right, where breadcrumbsWidget.ts reveals the last item; until breadcrumbs scroll.
             .overflow_hidden()
-            // The breadcrumbs sit in the title (editortabscontrol.css) and each item is pointer (breadcrumbsWidget.css).
-            .cursor_pointer()
             .flex()
             .bg(self.color("breadcrumb.background"))
             .text_color(foreground)
-            .children(items)
+            // The breadcrumbs sit in the title (editortabscontrol.css) and each item is pointer (breadcrumbsWidget.css).
+            .child(div().flex_1().min_w_0().overflow_hidden().cursor_pointer().flex().children(items))
+            .children(self.editor_type_control(cx))
             .when_some(title_border, |crumbs, color| crumbs.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
     }
 

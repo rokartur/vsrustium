@@ -59,6 +59,7 @@ pub(super) fn media_preview_contributions() -> Vec<Contribution> {
         provider: "Built-in".to_owned(),
         patterns: vec![pattern.to_owned()],
         rank: RANK_BUILTIN,
+        diff_rank: RANK_BUILTIN,
     };
     vec![
         contribution(IMAGE_PREVIEW_EDITOR_ID, "Image Preview", IMAGE_PREVIEW_FILE_PATTERN),

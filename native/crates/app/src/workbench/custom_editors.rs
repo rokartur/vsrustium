@@ -24,8 +24,10 @@ use crate::quick_input::{Entry, Event, Item, Kind, QuickInput};
 const TEXT_EDITOR_ID: &str = "default";
 const CONFIGURE_DEFAULT_ID: &str = "promptOpenWith.configureDefault";
 const ASSOCIATIONS_SETTING: &str = "workbench.editorAssociations";
+const DIFF_ASSOCIATIONS_SETTING: &str = "workbench.diffEditorAssociations";
 
 /// editorResolverService.ts `priorityToRank`; the text editor ranks 2.
+const RANK_EXCLUSIVE: u8 = 5;
 const RANK_DEFAULT: u8 = 4;
 pub(super) const RANK_BUILTIN: u8 = 3;
 const RANK_TEXT_EDITOR: u8 = 2;
@@ -61,6 +63,32 @@ pub struct OpenWithPicker {
     current: String,
     ids: Vec<String>,
     configure_default: bool,
+}
+
+/// One `EditorMatchRule` of `editor_matches`.
+pub(super) struct EditorMatch {
+    pub(super) id: String,
+    pub(super) label: String,
+    /// `RegisteredEditorInfo.detail`, the provider's name.
+    pub(super) detail: String,
+    pub(super) rank: u8,
+    glob_len: usize,
+    /// `isUnconfiguredUniversalOptionalEditorMatch`: an `option` editor for `*` no association picked.
+    pub(super) universal_option: bool,
+}
+
+pub(super) struct EditorMatches {
+    pub(super) editors: Vec<EditorMatch>,
+    /// `defaultRule.editor.id`.
+    pub(super) default_id: String,
+    /// `defaultRule.associationPattern`.
+    pub(super) pattern: String,
+}
+
+impl EditorMatches {
+    pub(super) fn has_exclusive_match(&self) -> bool {
+        self.editors.iter().any(|editor| editor.rank == RANK_EXCLUSIVE)
+    }
 }
 
 /// The custom editor a webview panel shows.
@@ -122,12 +150,10 @@ impl Workbench {
     /// opens it, None for the text editor.
     // shortcut: of two default editors for one resource the first opens, where upstream also asks which to use.
     pub(super) fn custom_editor_for(&self, scheme: &str, path: &Path) -> Option<String> {
-        let (view_type, _) = self.default_editor(scheme, path, true);
+        let (view_type, _) = self.default_editor(scheme, path, true, false);
         (view_type != TEXT_EDITOR_ID).then_some(view_type)
     }
 
-    /// `getEditorMatches(resource).defaultRule`: the id of the editor that opens the resource, `default` for the text
-    /// editor, and the glob a new default would be written for. Without `associations` it is the natural default.
     /// The contributed custom editors, then the built-in media previews.
     fn editor_contributions(&self) -> Vec<Contribution> {
         let mut contributions = custom_editor_contributions(&self.extensions);
@@ -135,23 +161,66 @@ impl Workbench {
         contributions
     }
 
-    fn default_editor(&self, scheme: &str, path: &Path, associations: bool) -> (String, String) {
+    /// `getEditorMatches(resource).defaultRule`: the id of the editor that opens the resource, `default` for the text
+    /// editor, and the glob a new default would be written for. Without `associations` it is the natural default;
+    /// with `diff`, the diff editor's (`EditorAssociationType.DiffEditor`).
+    fn default_editor(&self, scheme: &str, path: &Path, associations: bool, diff: bool) -> (String, String) {
         let extension_pattern = format!("*{}", path.extension().map(|extension| format!(".{}", extension.to_string_lossy())).unwrap_or_default());
         let text_editor = (TEXT_EDITOR_ID.to_owned(), extension_pattern.clone());
         let Some(matches) = resource_matcher(scheme, path) else { return text_editor };
-        if associations && let Some((pattern, view_type)) = self.editor_associations().into_iter().find(|(pattern, _)| matches(pattern)) {
+        if associations && let Some((pattern, view_type)) = self.matching_associations(&matches, diff).into_iter().next() {
             return (view_type, pattern);
         }
         let mut best: Option<(u8, &str, String)> = None;
         let contributions = self.editor_contributions();
         for contribution in &contributions {
             let Some(pattern) = contribution.patterns.iter().filter(|pattern| matches(pattern)).max_by_key(|pattern| pattern.len()) else { continue };
-            let better = best.as_ref().is_none_or(|(rank, best_pattern, _)| (contribution.rank, pattern.len()) > (*rank, best_pattern.len()));
-            if contribution.rank > RANK_TEXT_EDITOR && better {
-                best = Some((contribution.rank, pattern, contribution.view_type.clone()));
+            let rank = contribution.rank_for(diff);
+            let better = best.as_ref().is_none_or(|(best_rank, best_pattern, _)| (rank, pattern.len()) > (*best_rank, best_pattern.len()));
+            if rank > RANK_TEXT_EDITOR && better {
+                best = Some((rank, pattern, contribution.view_type.clone()));
             }
         }
         best.map_or(text_editor, |(_, pattern, view_type)| (view_type, pattern.to_owned()))
+    }
+
+    /// `getAssociationsForResourceByType`: a diff takes `workbench.diffEditorAssociations`, else the editor
+    /// associations whose editor is not `explicit` for diffs.
+    fn matching_associations(&self, matches: &impl Fn(&str) -> bool, diff: bool) -> Vec<(String, String)> {
+        let matching = |setting| self.associations(setting).into_iter().filter(|(pattern, _)| matches(pattern)).collect::<Vec<_>>();
+        if !diff {
+            return matching(ASSOCIATIONS_SETTING);
+        }
+        let diff_associations = matching(DIFF_ASSOCIATIONS_SETTING);
+        if !diff_associations.is_empty() {
+            return diff_associations;
+        }
+        let contributions = self.editor_contributions();
+        let explicit = |view_type: &str| contributions.iter().any(|contribution| contribution.view_type == view_type && contribution.diff_rank == 0);
+        matching(ASSOCIATIONS_SETTING).into_iter().filter(|(_, view_type)| !explicit(view_type)).collect()
+    }
+
+    /// editorResolverService.ts `getEditorMatches` for a resource: its editors in `findMatchingEditors` order (rank,
+    /// then the longer glob; the text editor is `*` at builtin rank), the default rule's editor id and glob.
+    pub(super) fn editor_matches(&self, scheme: &str, path: &Path, diff: bool) -> EditorMatches {
+        let (default_id, pattern) = self.default_editor(scheme, path, true, diff);
+        let mut editors = vec![EditorMatch { id: TEXT_EDITOR_ID.to_owned(), label: "Text Editor".to_owned(), detail: "Built-in".to_owned(), rank: RANK_BUILTIN, glob_len: 1, universal_option: false }];
+        if let Some(matches) = resource_matcher(scheme, path) {
+            let associated: Vec<String> = self.matching_associations(&matches, diff).into_iter().map(|(_, view_type)| view_type).collect();
+            for contribution in self.editor_contributions() {
+                let glob = contribution.patterns.iter().filter(|pattern| matches(pattern)).max_by_key(|pattern| pattern.len());
+                let found_in_settings = associated.contains(&contribution.view_type) && contribution.rank_for(diff) != RANK_EXCLUSIVE;
+                if (glob.is_none() && !found_in_settings) || editors.iter().any(|editor| editor.id == contribution.view_type) {
+                    continue;
+                }
+                let rank = contribution.rank_for(diff);
+                let universal_option = glob.is_some_and(|glob| glob == "*") && rank == 1 && !found_in_settings;
+                let glob_len = glob.map_or(0, String::len);
+                editors.push(EditorMatch { id: contribution.view_type, label: contribution.display_name, detail: contribution.provider, rank, glob_len, universal_option });
+            }
+        }
+        editors.sort_by_key(|editor| std::cmp::Reverse((editor.rank, editor.glob_len)));
+        EditorMatches { editors, default_id, pattern }
     }
 
     /// customEditors.ts `UndoCommand` and `RedoCommand` implementations: a custom text editor's are its model's.
@@ -168,21 +237,23 @@ impl Workbench {
     /// editorCommands.ts `reopenEditorWith` on the active editor: `override_id` is an editor id, None asks with the
     /// open with picker.
     pub(super) fn reopen_active_editor_with(&mut self, override_id: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let Some(editor) = self.editors.active() else { return Outcome::done() };
-        let (resource, current) = match self.webview_panels.panels.iter().find(|panel| editor.document().is(&panel.scheme, &panel.path)) {
-            Some(panel) => match &panel.custom {
-                Some(custom) => (custom.resource.clone(), panel.view_type.clone()),
-                // A webview panel has no resource to reopen.
-                None => return Outcome::done(),
-            },
-            None => (editor.document().uri(), TEXT_EDITOR_ID.to_owned()),
-        };
+        let Some((resource, current)) = self.active_resource_and_editor_id() else { return Outcome::done() };
         match override_id {
             Some(editor_id) => self.reopen_with(&resource, &current, &editor_id, false, window, cx),
             None => {
                 self.show_open_with_picker(resource, current, false, window, cx);
                 Outcome::done()
             }
+        }
+    }
+
+    /// The active editor's resource and `editorId`; None without an editor or for a webview panel, which has no
+    /// resource to reopen.
+    pub(super) fn active_resource_and_editor_id(&self) -> Option<(Value, String)> {
+        let editor = self.editors.active()?;
+        match self.webview_panels.panels.iter().find(|panel| editor.document().is(&panel.scheme, &panel.path)) {
+            Some(panel) => panel.custom.as_ref().map(|custom| (custom.resource.clone(), panel.view_type.clone())),
+            None => Some((editor.document().uri(), TEXT_EDITOR_ID.to_owned())),
         }
     }
 
@@ -204,10 +275,10 @@ impl Workbench {
     /// picks a new default; `configure_default` is the picker that entry opens.
     fn show_open_with_picker(&mut self, resource: Value, current: String, configure_default: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Ok((scheme, path)) = uri_parts(&resource) else { return };
-        let (default_id, pattern) = self.default_editor(scheme, &path, true);
+        let (default_id, pattern) = self.default_editor(scheme, &path, true, false);
         let mut editors = vec![(TEXT_EDITOR_ID.to_owned(), "Text Editor".to_owned(), "Built-in".to_owned(), RANK_TEXT_EDITOR)];
         if let Some(matches) = resource_matcher(scheme, &path) {
-            let associated: Vec<String> = self.editor_associations().into_iter().filter(|(pattern, _)| matches(pattern)).map(|(_, view_type)| view_type).collect();
+            let associated: Vec<String> = self.associations(ASSOCIATIONS_SETTING).into_iter().filter(|(pattern, _)| matches(pattern)).map(|(_, view_type)| view_type).collect();
             for contribution in self.editor_contributions() {
                 if associated.contains(&contribution.view_type) || contribution.patterns.iter().any(|pattern| matches(pattern)) {
                     editors.push((contribution.view_type, contribution.display_name, contribution.provider, contribution.rank));
@@ -259,7 +330,7 @@ impl Workbench {
                     return self.show_open_with_picker(picker.resource, picker.current, true, window, cx);
                 }
                 if picker.configure_default {
-                    self.set_default_editor(&picker.resource, editor_id);
+                    self.set_default_editor_for(&picker.resource, editor_id, false);
                 }
                 drop(self.reopen_with(&picker.resource, &picker.current, editor_id, in_background, window, cx));
             }
@@ -270,30 +341,32 @@ impl Workbench {
 
     /// editorResolverService.ts `setDefaultEditor`: the association for the default rule's glob, removed when the
     /// editor is the one the resource opens with without it.
-    fn set_default_editor(&mut self, resource: &Value, editor_id: &str) {
+    /// `setDefaultEditor(resource, editorId, forDiffEditor)`: a diff's default goes to `workbench.diffEditorAssociations`.
+    pub(super) fn set_default_editor_for(&mut self, resource: &Value, editor_id: &str, diff: bool) {
         let Ok((scheme, path)) = uri_parts(resource) else { return };
-        let (default_id, pattern) = self.default_editor(scheme, &path, true);
-        let (natural_id, _) = self.default_editor(scheme, &path, false);
-        let mut associations = match self.setting(ASSOCIATIONS_SETTING) {
+        let setting = if diff { DIFF_ASSOCIATIONS_SETTING } else { ASSOCIATIONS_SETTING };
+        let (default_id, pattern) = self.default_editor(scheme, &path, true, diff);
+        let (natural_id, _) = self.default_editor(scheme, &path, false, diff);
+        let mut associations = match self.setting(setting) {
             Value::Object(associations) => associations,
             _ => serde_json::Map::new(),
         };
         if editor_id == natural_id {
             if associations.remove(&pattern).is_some() {
-                return self.update_setting(ASSOCIATIONS_SETTING, Value::Object(associations));
+                return self.update_setting(setting, Value::Object(associations));
             }
             if default_id == editor_id {
                 return;
             }
         }
         associations.insert(pattern, json!(editor_id));
-        self.update_setting(ASSOCIATIONS_SETTING, Value::Object(associations));
+        self.update_setting(setting, Value::Object(associations));
     }
 
     /// `workbench.editorAssociations` as glob and editor id, the longest glob first.
     // shortcut: reads the merged value where upstream reads the user's; workspace associations come with settings scopes.
-    fn editor_associations(&self) -> Vec<(String, String)> {
-        let mut associations: Vec<(String, String)> = match self.setting(ASSOCIATIONS_SETTING) {
+    fn associations(&self, setting: &str) -> Vec<(String, String)> {
+        let mut associations: Vec<(String, String)> = match self.setting(setting) {
             Value::Object(object) => object.into_iter().filter_map(|(pattern, view_type)| Some((pattern, view_type.as_str()?.to_owned()))).collect(),
             _ => Vec::new(),
         };
@@ -499,6 +572,25 @@ pub(super) struct Contribution {
     pub(super) patterns: Vec<String>,
     /// `priorityToRank` of `getPriorityFromContribution`.
     pub(super) rank: u8,
+    /// The rank in a diff editor (`priority.diffEditor`, `explicit` when only `textEditor` is given).
+    pub(super) diff_rank: u8,
+}
+
+impl Contribution {
+    fn rank_for(&self, diff: bool) -> u8 {
+        if diff { self.diff_rank } else { self.rank }
+    }
+}
+
+/// `getSinglePriorityFromContribution` as a rank.
+fn rank_of(priority: Option<&str>, is_builtin: bool) -> u8 {
+    match priority {
+        Some("exclusive") => RANK_EXCLUSIVE,
+        Some("option") => 1,
+        Some("explicit") => 0,
+        Some("builtin") if is_builtin => RANK_BUILTIN,
+        _ => RANK_DEFAULT,
+    }
 }
 
 fn custom_editor_contributions(extensions: &[exthost::scan::ScannedExtension]) -> Vec<Contribution> {
@@ -512,16 +604,15 @@ fn custom_editor_contributions(extensions: &[exthost::scan::ScannedExtension]) -
         for contribution in extension.description["contributes"]["customEditors"].as_array().into_iter().flatten() {
             let Some(view_type) = contribution["viewType"].as_str() else { continue };
             let priority = &contribution["priority"];
-            let rank = match priority.as_str().or(priority["textEditor"].as_str()) {
-                Some("option") => 1,
-                Some("explicit") => 0,
-                Some("builtin") if is_builtin => RANK_BUILTIN,
-                _ => RANK_DEFAULT,
+            let rank = rank_of(priority.as_str().or(priority["textEditor"].as_str()), is_builtin);
+            let diff_rank = match priority.as_str() {
+                Some(_) => rank,
+                None => priority["diffEditor"].as_str().map_or(0, |diff| rank_of(Some(diff), is_builtin)),
             };
             let selectors = contribution["selector"].as_array().into_iter().flatten();
             let patterns = selectors.filter_map(|selector| selector["filenamePattern"].as_str()).map(str::to_owned).collect();
             let display_name = contribution["displayName"].as_str().unwrap_or_default().to_owned();
-            contributions.push(Contribution { view_type: view_type.to_owned(), display_name, provider: provider.clone(), patterns, rank });
+            contributions.push(Contribution { view_type: view_type.to_owned(), display_name, provider: provider.clone(), patterns, rank, diff_rank });
         }
         // notebookServiceImpl.ts `_registerContributionPoint`: each notebook type is an editor, `default` unless it says otherwise.
         for contribution in extension.description["contributes"]["notebooks"].as_array().into_iter().flatten() {
@@ -533,7 +624,7 @@ fn custom_editor_contributions(extensions: &[exthost::scan::ScannedExtension]) -
             let selectors = contribution["selector"].as_array().into_iter().flatten();
             let patterns = selectors.filter_map(|selector| selector["filenamePattern"].as_str().or(selector["filenamePattern"]["include"].as_str())).map(str::to_owned).collect();
             let display_name = contribution["displayName"].as_str().unwrap_or_default().to_owned();
-            contributions.push(Contribution { view_type: view_type.to_owned(), display_name, provider: provider.clone(), patterns, rank });
+            contributions.push(Contribution { view_type: view_type.to_owned(), display_name, provider: provider.clone(), patterns, rank, diff_rank: rank });
         }
     }
     contributions

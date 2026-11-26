@@ -78,7 +78,7 @@ impl Workbench {
             let body = |workbench: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
                 let editor = workbench.editors.active().expect("an open modal group has an active editor");
                 // `NoEditorTabsControl` keeps the breadcrumbs (breadcrumbs.enabled) without the tabs.
-                let breadcrumbs = (workbench.setting("breadcrumbs.enabled") != json!(false)).then(|| workbench.breadcrumbs(editor));
+                let breadcrumbs = (workbench.setting("breadcrumbs.enabled") != json!(false)).then(|| workbench.breadcrumbs(editor, cx));
                 div().flex_1().min_h_0().flex().flex_col().children(breadcrumbs).children(workbench.unicode_banner(editor, cx)).child(workbench.text_area(editor, window, cx))
             };
             match workbench.editors.id == MODAL_GROUP {
