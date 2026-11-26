@@ -71,6 +71,8 @@ pub enum MenuId {
     /// `MenuId.MultiDiffEditorFileToolbar`: a multi diff editor file header's toolbar.
     MultiDiffEditorFileToolbar,
     EditorTitle,
+    /// `MenuId.InteractiveToolbar`: the interactive window's and REPL editor's toolbar.
+    InteractiveToolbar,
     TimelineTitle,
     TimelineItemContext,
     /// timeline.contribution.ts "Filter Timeline": a toggle per timeline source.
@@ -532,7 +534,7 @@ pub fn workbench_menus() -> Vec<MenuItem> {
 
 /// menusExtensionPoint.ts `apiMenus`: the `contributes.menus` keys of the menus the port shows. `commandPalette`
 /// is read by `command_palette::menu`.
-const API_MENUS: [(&str, MenuId); 31] = [
+const API_MENUS: [(&str, MenuId); 32] = [
     ("file/newFile", MenuId::NewFile),
     ("editor/context", MenuId::EditorContext),
     ("explorer/context", MenuId::ExplorerContext),
@@ -546,6 +548,7 @@ const API_MENUS: [(&str, MenuId); 31] = [
     ("diffEditor/gutter/hunk", MenuId::DiffEditorHunkToolbar),
     ("multiDiffEditor/resource/title", MenuId::MultiDiffEditorFileToolbar),
     ("editor/title", MenuId::EditorTitle),
+    ("interactive/toolbar", MenuId::InteractiveToolbar),
     ("scm/sourceControl", MenuId::ScmSourceControl),
     ("scm/history/title", MenuId::ScmHistoryTitle),
     ("scm/historyItem/context", MenuId::ScmHistoryItemContext),

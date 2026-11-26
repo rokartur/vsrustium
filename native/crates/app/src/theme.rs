@@ -12,6 +12,7 @@ use serde_json::Value;
 use crate::semantic_tokens::{SemanticTheme, SemanticTokenRule, TokenClassificationRegistry, read_semantic_token_customizations, read_theme_file_semantics, semantic_highlighting};
 
 mod debug_colors;
+mod notebook_colors;
 mod welcome_colors;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -422,7 +423,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
             ThemeKind::HighContrastLight => hc_light,
         };
     }
-    if let Some([dark, light, hc, hc_light]) = debug_colors::debug_default(key).or_else(|| welcome_colors::welcome_default(key)) {
+    if let Some([dark, light, hc, hc_light]) = debug_colors::debug_default(key).or_else(|| welcome_colors::welcome_default(key)).or_else(|| notebook_colors::notebook_default(key)) {
         return match kind {
             ThemeKind::Dark => dark,
             ThemeKind::Light => light,

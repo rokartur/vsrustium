@@ -221,6 +221,11 @@ impl Workbench {
 
     /// A diff editor's tab is its modified side's (`DiffEditorInput.isDirty`); an auto saved one shows no dirty mark.
     pub(super) fn tab_shows_dirty(&self, index: usize) -> bool {
+        // A notebook tab is its notebook's working copy, not its focused cell's text model.
+        let tab = &self.editors.editors[index];
+        if tab.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME {
+            return self.host.notebooks.model(&tab.document().path.to_string_lossy()).is_some_and(|model| model.dirty);
+        }
         let model = self.editors.tab_model(index);
         model.is_dirty() && !self.editor_is_saving(model)
     }
@@ -326,6 +331,10 @@ impl Workbench {
         if document.scheme == MULTI_DIFF_EDITOR_SCHEME {
             return Some(self.icon("diff-multiple", 16., 16., foreground).h(px(line_height)));
         }
+        // `ReplEditorInput.getIcon`.
+        if document.scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME && self.host.notebooks.interactives.iter().any(|interactive| interactive.repl && interactive.notebook == document.path.to_string_lossy()) {
+            return Some(self.icon("debug-line-by-line", 16., 16., foreground).h(px(line_height)));
+        }
         // `ExtensionsInput.getIcon`.
         if document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME {
             return Some(self.icon("extensions", 16., 16., foreground).h(px(line_height)));
@@ -418,6 +427,9 @@ impl Workbench {
         // diffEditorEditors.ts `_adjustOptionsForSubEditor`: no folding and no minimap in either side.
         if self.editors.active_diff().is_some() {
             metrics.decorations_width = diff_editor_view::diff_decorations_width(metrics.char_width);
+        } else if self.is_interactive_input(editor) {
+            // simpleEditorOptions.ts: lineDecorationsWidth 0 and no folding.
+            metrics.decorations_width = 0.;
         } else if editor.document().scheme == crate::notebook::CELL_SCHEME {
             // cellEditorOptions.ts: lineDecorationsWidth 0, only the folding controls.
             metrics.decorations_width = DECORATIONS_WIDTH - 10.;
@@ -448,6 +460,8 @@ impl Workbench {
             // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
             _ if editor.document().scheme == crate::output::OUTPUT_SCHEME => LineNumbers::Off,
             _ if self.zen_mode_hides_line_numbers() => LineNumbers::Off,
+            // simpleEditorOptions.ts: an interactive window's or REPL editor's input has none.
+            _ if self.is_interactive_input(editor) => LineNumbers::Off,
             // notebookEditorWidget.ts: a cell editor's line numbers follow `notebook.lineNumbers`, off by default.
             _ if editor.document().scheme == crate::notebook::CELL_SCHEME => match self.setting("notebook.lineNumbers") == "on" {
                 true => LineNumbers::On,
@@ -487,8 +501,8 @@ impl Workbench {
         let top_whitespace = self.editors.viewport.top_whitespace;
         let stop_rendering_line_after = self.stop_rendering_line_after;
         let minimap_settings = self.minimap_settings();
-        let in_cell = editor.document().scheme == crate::notebook::CELL_SCHEME;
-        // cellEditorOptions.ts: no minimap and no overview ruler lanes in a cell editor.
+        let in_cell = editor.document().scheme == crate::notebook::CELL_SCHEME || self.is_interactive_input(editor);
+        // cellEditorOptions.ts and simpleEditorOptions.ts: no minimap and no overview ruler lanes in a cell or input editor.
         let minimap_enabled = !in_diff && !in_cell && minimap_settings.enabled;
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
@@ -1048,7 +1062,8 @@ impl Workbench {
         let cursor_background = self.theme.color("editorCursor.background");
         // outputView.ts `OutputEditor.getConfigurationOverrides`: renderLineHighlight none.
         // cellEditorOptions.ts: renderLineHighlightOnlyWhenFocus.
-        let line_highlight = editor.document().scheme != crate::output::OUTPUT_SCHEME && (!in_cell || focused);
+        // simpleEditorOptions.ts: an interactive input's is none.
+        let line_highlight = editor.document().scheme != crate::output::OUTPUT_SCHEME && (!in_cell || focused) && !self.is_interactive_input(editor);
         let char_width = metrics.char_width;
         let fold_controls = self.fold_controls.opacity(Instant::now());
         let fold_control_color = self.color("editorGutter.foldingControlForeground");
@@ -1846,9 +1861,10 @@ impl Workbench {
         let mut style = window.text_style();
         style.font_features = FontFeatures(Arc::new(vec![("tnum".into(), 1)]));
         let text_width = |label: &str| window.text_system().shape_line(label.to_owned().into(), px(12.), &[style.to_run(label.len())], None).width;
-        // A search editor's input supports neither encodings nor language changes (toEditorWithEncodingSupport, toEditorWithLanguageSupport).
-        let search_editor = self.editors.active().is_some_and(|editor| editor.document().scheme == SEARCH_EDITOR_SCHEME);
-        let items: Vec<_> = items.into_iter().filter(|(_, _, command)| !search_editor || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode")).collect();
+        // A search editor's and a notebook editor's input support neither encodings nor language changes
+        // (toEditorWithEncodingSupport, toEditorWithLanguageSupport).
+        let fixed_input = self.editors.active().is_some_and(|editor| editor.document().scheme == SEARCH_EDITOR_SCHEME) || self.active_notebook_editor().is_some();
+        let items: Vec<_> = items.into_iter().filter(|(_, _, command)| !fixed_input || !matches!(*command, "workbench.action.editor.changeEncoding" | "workbench.action.editor.changeLanguageMode")).collect();
         let language_index = items.iter().position(|(_, _, command)| *command == "workbench.action.editor.changeLanguageMode");
         // languageStatus.ts: the combined entry sits left of the language entry, the pinned ones right of it.
         let (combined, pinned) = match language_index {
@@ -1922,8 +1938,8 @@ impl Workbench {
 
 #[derive(Clone, Copy)]
 pub(super) struct EditorMetrics {
-    font_size: f32,
-    line_height: f32,
+    pub(super) font_size: f32,
+    pub(super) line_height: f32,
     char_width: f32,
     line_numbers: LineNumbers,
     line_numbers_width: f32,

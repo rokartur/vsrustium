@@ -72,6 +72,7 @@ impl Workbench {
                     .detach();
                 Outcome::Pending(receiver)
             }
+            ("MainThreadNotebookEditors", "$tryShowNotebookDocument") if arg(1) == super::repl_notebook::VIEW_TYPE => self.show_repl(arg(0).clone(), arg(2).clone(), window, cx),
             ("MainThreadNotebookEditors", "$tryShowNotebookDocument") => self.try_show_notebook(arg(0).clone(), arg(2).clone(), window, cx),
             ("MainThreadNotebookEditors", "$tryRevealRange") => {
                 let Some(tab) = self.host.notebooks.editors.iter().find(|editor| Some(editor.id.as_str()) == arg(0).as_str()).map(|editor| editor.tab_model_id) else { return Outcome::done() };
@@ -389,6 +390,10 @@ impl Workbench {
             .collect();
         let mut applied = model.apply_edits(edits).map_err(|error| serialized_error(&error))?;
         let (uri, dirty, metadata, view_type) = (model.uri.clone(), model.dirty, model.metadata.clone(), model.view_type.clone());
+        // replEditor.ts `handleAppend`: a REPL editor that gets a cell is the most recent one.
+        if !applied.added.is_empty() && self.host.notebooks.interactives.iter().any(|interactive| interactive.repl && interactive.notebook == key) {
+            self.host.notebooks.most_recent_repl = Some(key.to_owned());
+        }
         self.cancel_removed_executions(key, &view_type, &uri, &removed_handles);
         for text in &applied.added {
             self.create_cell_model(text);
@@ -734,11 +739,12 @@ impl Workbench {
         self.editors.stacked_editors.clear();
         for editor in &notebooks.editors {
             let Some(model) = notebooks.model(&editor.notebook) else { continue };
-            // An interactive window's input editor, when it has the focus or there is no cell.
-            let input = notebooks.interactives.iter().find(|interactive| interactive.notebook == editor.notebook).map(|interactive| &interactive.input);
-            let input = input.filter(|input| uri_parts(input).is_ok_and(|(scheme, path)| self.editors.model(scheme, &path).is_some()));
+            // An interactive window's or REPL editor's input editor, when it has the focus or the list has no cell.
+            let interactive = notebooks.interactives.iter().find(|interactive| interactive.notebook == editor.notebook);
+            let list_cells = model.cells.len() - usize::from(interactive.is_some_and(|interactive| interactive.repl));
+            let input = interactive.map(|interactive| &interactive.input).filter(|input| uri_parts(input).is_ok_and(|(scheme, path)| self.editors.model(scheme, &path).is_some()));
             let focused = match input {
-                Some(input) if editor.input_focused || model.cells.is_empty() => Some(input),
+                Some(input) if editor.input_focused || list_cells == 0 => Some(input),
                 _ => model.cells.get(editor.focus).or(model.cells.last()).map(|cell| &cell.uri),
             };
             let Some(focused) = focused else { continue };
@@ -783,7 +789,7 @@ impl Workbench {
                 "selections": editor.selections.iter().map(|(start, end)| json!({ "start": start, "end": end })).collect::<Vec<_>>(),
                 "visibleRanges": [{ "start": 0, "end": model.cells.len() }],
                 "viewColumn": column,
-                "viewType": model.view_type,
+                "viewType": if notebooks.interactives.iter().any(|interactive| interactive.repl && interactive.notebook == editor.notebook) { super::repl_notebook::VIEW_TYPE } else { model.view_type.as_str() },
             }));
         }
         if !removed_documents.is_empty() {

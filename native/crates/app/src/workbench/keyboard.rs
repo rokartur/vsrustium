@@ -457,6 +457,11 @@ impl Workbench {
                 self.notebook_context(editor, editor_focused, window, &mut context);
             }
         }
+        // notebookEditorServiceImpl.ts: `mostRecentReplEditor` and `interactiveWindowOpen` are global.
+        if let Some(repl) = &self.host.notebooks.most_recent_repl {
+            context.insert("mostRecentReplEditor".into(), json!(repl));
+        }
+        context.insert("interactiveWindowOpen".into(), json!(self.host.notebooks.interactive_window_open));
         self.quick_input_context(window, &mut context);
         match self.side_bar_view {
             SideBarView::Explorer => self.explorer_context(window, &mut context),

@@ -635,11 +635,18 @@ fn tab_dto(group: u32, editor: &OpenEditor, active: bool, sync: &HostSync) -> Va
         tab["editorId"] = json!(model.view_type);
         tab["isDirty"] = json!(model.dirty);
         // TabInputKind.InteractiveEditorInput of an interactive window.
-        if let Some(interactive) = sync.notebooks.interactives.iter().find(|interactive| interactive.notebook == resource) {
+        if let Some(interactive) = sync.notebooks.interactives.iter().find(|interactive| interactive.notebook == resource && !interactive.repl) {
             tab["id"] = json!(format!("{group}~workbench.input.interactive-interactive-{resource} "));
             tab["label"] = json!(crate::notebook::interactive_name(&model.uri, interactive));
             tab["input"] = json!({ "kind": 9, "uri": model.uri, "inputBoxUri": interactive.input });
             tab["editorId"] = json!("interactive");
+        }
+        // A REPL editor: ReplEditorInput is a NotebookEditorInput of type `jupyter-notebook` and editor `repl`.
+        if let Some(interactive) = sync.notebooks.interactives.iter().find(|interactive| interactive.notebook == resource && interactive.repl) {
+            tab["id"] = json!(format!("{group}~repl-workbench.editorinputs.replEditorInput-{resource} "));
+            tab["label"] = json!(crate::notebook::interactive_name(&model.uri, interactive));
+            tab["input"] = json!({ "kind": 4, "notebookType": "jupyter-notebook", "uri": model.uri });
+            tab["editorId"] = json!("repl");
         }
     }
     // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput or CustomEditorInput, its editor id is the view type.

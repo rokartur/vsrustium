@@ -33,11 +33,16 @@ pub struct Notebooks {
     pub sent_editors: Vec<String>,
     pub sent_active: Option<String>,
     pub sent_visible: Vec<String>,
-    /// The interactive windows (InteractiveEditorInput): notebook URI string, input URI and history.
+    /// The interactive windows (InteractiveEditorInput) and REPL editors (ReplEditorInput): notebook URI string,
+    /// input URI and history.
     pub interactives: Vec<Interactive>,
+    /// `mostRecentReplEditor`: the notebook URI string of the REPL editor that last got a cell.
+    pub most_recent_repl: Option<String>,
+    /// `interactiveWindowOpen`: an interactive window or REPL editor opened once (never reset, as upstream).
+    pub interactive_window_open: bool,
 }
 
-/// An interactive window's input editor model and its history (interactiveHistoryService.ts).
+/// An interactive window's or REPL editor's input editor model and its history (interactiveHistoryService.ts).
 pub struct Interactive {
     pub notebook: String,
     pub input: Value,
@@ -46,6 +51,8 @@ pub struct Interactive {
     pub history: History,
     /// A tab showed it: once none does, the window goes.
     pub shown: bool,
+    /// A REPL editor (`repl` view type): its input is the notebook's last cell, the list shows the others.
+    pub repl: bool,
 }
 
 /// base/common/history.ts `HistoryNavigator2` with capacity 50: distinct values, oldest first, the last one the

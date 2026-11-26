@@ -146,8 +146,12 @@ impl Workbench {
         let cell = &model.cells[index];
         let key = model.uri_string();
         let mut items = self.builtin_cell_status_items(&key, cell, window);
-        items.extend(self.notebook_views.status_bars.items(&key, cell.handle).iter().cloned());
-        items.extend(self.cell_language_status_items(cell));
+        // interactiveEditor.ts and replEditor.ts take only the execution state and timer contributions, not the
+        // status bar controller with the language picker and the extensions' providers.
+        if !self.host.notebooks.interactives.iter().any(|interactive| interactive.notebook == key) {
+            items.extend(self.notebook_views.status_bars.items(&key, cell.handle).iter().cloned());
+            items.extend(self.cell_language_status_items(cell));
+        }
         items.retain(|item| focused || item["onlyShowWhenActive"] != true);
         items.sort_by(|a, b| b["priority"].as_f64().unwrap_or(0.).total_cmp(&a["priority"].as_f64().unwrap_or(0.)));
         let (left, mut right): (Vec<Value>, Vec<Value>) = items.into_iter().partition(|item| item["alignment"] != 2);

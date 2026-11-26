@@ -52,6 +52,23 @@ impl Workbench {
             workbench.focus_interactive_input(window, cx);
             Outcome::done()
         });
+        // executeActions.ts InterruptNotebook (`cancelNotebookCells`): the running cells go to the kernel's
+        // `$cancelCells`, which interrupts a kernel with an interrupt handler.
+        self.commands.register("notebook.interruptExecution", |workbench, _, _, _| {
+            if let Some((_, kernel, uri, running)) = workbench.active_notebook_execution().filter(|(_, _, _, running)| !running.is_empty()) {
+                drop(workbench.host.call("ExtHostNotebookKernels", "$cancelCells", vec![json!(kernel), uri, json!(running)]));
+            }
+            Outcome::done()
+        });
+        // executeActions.ts RevealRunningCellAction: the first running cell takes the focus as a container.
+        self.commands.register("notebook.revealRunningCell", |workbench, _, window, cx| {
+            let Some((key, _, _, running)) = workbench.active_notebook_execution() else { return Outcome::done() };
+            let (Some(&handle), Some(tab)) = (running.first(), workbench.active_notebook_editor().map(|editor| editor.tab_model_id)) else { return Outcome::done() };
+            let index = workbench.host.notebooks.model(&key).and_then(|model| model.index_of_handle(handle)).expect("a running cell is in its notebook");
+            workbench.focus_notebook_cell(tab, handle, false, window, cx);
+            workbench.reveal_notebook_cells(tab, index, index + 1, CellReveal::CenterIfOutside);
+            Outcome::done()
+        });
         // `interactive.history.focus`: the cell list takes the focus.
         self.commands.register("interactive.history.focus", |workbench, _, window, cx| {
             if let Some(editor) = workbench.active_notebook_editor_mut().filter(|editor| editor.input_focused) {
@@ -98,7 +115,8 @@ impl Workbench {
         }
         let title = args.get(3).and_then(Value::as_str).map(str::to_owned);
         self.host.notebooks.interactives.retain(|interactive| interactive.notebook != key);
-        self.host.notebooks.interactives.push(Interactive { notebook: key.clone(), input: input.clone(), title, history: History::new(""), shown: false });
+        self.host.notebooks.interactives.push(Interactive { notebook: key.clone(), input: input.clone(), title, history: History::new(""), shown: false, repl: false });
+        self.host.notebooks.interactive_window_open = true;
         let opened = self.open_notebook(uri.clone(), VIEW_TYPE.into(), options, window, cx);
         let (sender, receiver) = futures::channel::oneshot::channel();
         cx.spawn_in(window, async move |workbench, cx| {
@@ -138,13 +156,15 @@ impl Workbench {
 
     /// The language of the input and of executed cells: the kernel's first supported language, else plain text.
     fn interactive_language(&self, key: &str) -> String {
-        let kernel = self.host.notebooks.kernels.resolve(VIEW_TYPE, key);
+        let view_type = self.host.notebooks.model(key).map_or(VIEW_TYPE, |model| model.view_type.as_str());
+        let kernel = self.host.notebooks.kernels.resolve(view_type, key);
         kernel.and_then(|kernel| kernel.supported_languages.first().cloned()).unwrap_or_else(|| crate::languages::PLAINTEXT.into())
     }
 
-    /// `interactive.execute`: the input's text, unless blank, becomes a code cell at the end that is revealed,
-    /// executed and selected; the input empties and its history moves on.
-    fn execute_interactive_input(&mut self, resource: Option<&Value>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+    /// `interactive.execute` and `repl.execute` (`executeReplInput`): the input's text, unless blank, becomes a code
+    /// cell at the end (a REPL's: before its input cell) that is revealed, executed and selected; the input empties and
+    /// its history moves on.
+    pub(super) fn execute_interactive_input(&mut self, resource: Option<&Value>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let key = match resource.filter(|resource| resource.is_object()) {
             Some(resource) => notebook::uri_string(resource),
             None => match self.active_interactive() {
@@ -160,12 +180,13 @@ impl Workbench {
             return Outcome::done();
         }
         let interactive = self.host.notebooks.interactives.iter_mut().find(|interactive| interactive.notebook == key).expect("found above");
+        let repl = interactive.repl;
         interactive.history.replace_last(&value);
         interactive.history.reset_cursor();
         interactive.history.add("");
         self.set_interactive_input(&input, "", cx);
         let Some(model) = self.host.notebooks.model(&key) else { return Outcome::done() };
-        let index = model.cells.len();
+        let index = model.cells.len() - usize::from(repl);
         let cell = json!({ "cellKind": notebook::CODE, "mime": null, "language": self.interactive_language(&key), "source": value, "outputs": [], "metadata": {} });
         let edit = json!({ "editType": 1, "index": index, "count": 0, "cells": [cell] });
         if let Err(error) = self.apply_notebook_edits(&key, std::slice::from_ref(&edit), cx) {
@@ -218,7 +239,8 @@ impl Workbench {
             let Ok((scheme, path)) = uri_parts(&interactive.input) else { continue };
             let Some(model) = self.editors.model(scheme, &path) else { continue };
             let value = model.document().lines.join(model.document().eol);
-            if interactive.history.current() != value {
+            // replEditor.ts leaves the history alone while the input is empty.
+            if interactive.history.current() != value && !(interactive.repl && value.is_empty()) {
                 interactive.history.replace_last(&value);
             }
         }
@@ -235,12 +257,20 @@ impl Workbench {
         self.reveal_notebook_cells(tab, index, index + 1, CellReveal::InView);
     }
 
-    /// interactiveEditor.ts `_scrollIfNecessary` on a cell's execution state change: the last cell scrolls into view.
-    /// shortcut: always as with `interactiveWindow.alwaysScrollOnNewCell` (default true); without it upstream scrolls
-    /// only when the cell is at the bottom already, add that with the list's visible ranges.
+    /// interactiveEditor.ts and replEditor.ts `_scrollIfNecessary` on a cell's execution state change: the last list
+    /// cell scrolls into view with `interactiveWindow.alwaysScrollOnNewCell`, else only when it is the last visible.
     pub(super) fn scroll_interactive_to_executed(&mut self, key: &str, cell_handle: u64) {
-        let Some(model) = self.host.notebooks.model(key).filter(|model| model.view_type == VIEW_TYPE) else { return };
-        let Some(index) = model.index_of_handle(cell_handle).filter(|index| index + 1 == model.cells.len()) else { return };
+        let Some(interactive) = self.host.notebooks.interactives.iter().find(|interactive| interactive.notebook == key) else { return };
+        let Some(model) = self.host.notebooks.model(key) else { return };
+        let list_cells = model.cells.len() - usize::from(interactive.repl);
+        let Some(index) = model.index_of_handle(cell_handle).filter(|index| index + 1 == list_cells) else { return };
+        let editor = self.host.notebooks.editors.iter().find(|editor| editor.notebook == key);
+        let visible_ranges = editor.and_then(|editor| editor.visible_ranges.as_ref());
+        // `_cellAtBottom`: the cell is the last of the visible ranges.
+        let at_bottom = visible_ranges.and_then(|ranges| ranges.iter().map(|(_, end)| end.saturating_sub(1)).max()) == Some(index);
+        if self.setting("interactiveWindow.alwaysScrollOnNewCell") == false && !at_bottom {
+            return;
+        }
         if let Some(tab) = self.interactive_tab(key) {
             self.reveal_notebook_cells(tab, index, index + 1, CellReveal::InView);
         }
@@ -252,6 +282,17 @@ impl Workbench {
         editor.input_focused = true;
         window.focus(&self.editor_focus, cx);
         self.editors_changed(cx);
+    }
+
+    /// The active notebook editor's notebook, its kernel's handle, its URI and its running cells' handles
+    /// (`getCellExecutionsForNotebook`); None without a kernel.
+    pub(super) fn active_notebook_execution(&self) -> Option<(String, u64, Value, Vec<u64>)> {
+        let key = self.active_notebook_editor()?.notebook.clone();
+        let model = self.host.notebooks.model(&key)?;
+        let kernels = &self.host.notebooks.kernels;
+        let kernel = kernels.resolve(&model.view_type, &key)?.handle;
+        let running = model.cells.iter().map(|cell| cell.handle).filter(|handle| kernels.state(&key, *handle).is_some()).collect();
+        Some((key, kernel, model.uri.clone(), running))
     }
 
     /// The interactive window of the active editor.
@@ -271,7 +312,9 @@ impl Workbench {
     }
 
     /// InteractiveEditorInput `dispose` once no tab shows the window: the host lets the input go
-    /// (`$willRemoveInteractiveDocument`) and so does the workbench, with the notebook.
+    /// (`$willRemoveInteractiveDocument`) and so does the workbench, with the notebook. ReplEditorInput `dispose`
+    /// reverts its notebook softly (no longer dirty, the cells kept) and `removeNotebookEditor` resets
+    /// `mostRecentReplEditor` when it named it.
     pub(super) fn release_interactives(&mut self) {
         let shown: Vec<String> = self.host.notebooks.editors.iter().map(|editor| editor.notebook.clone()).collect();
         for interactive in &mut self.host.notebooks.interactives {
@@ -280,6 +323,17 @@ impl Workbench {
         let (kept, gone): (Vec<Interactive>, Vec<Interactive>) = std::mem::take(&mut self.host.notebooks.interactives).into_iter().partition(|interactive| !interactive.shown || shown.contains(&interactive.notebook));
         self.host.notebooks.interactives = kept;
         for interactive in gone {
+            if interactive.repl {
+                if self.host.notebooks.most_recent_repl.as_ref() == Some(&interactive.notebook) {
+                    self.host.notebooks.most_recent_repl = None;
+                }
+                if let Some(model) = self.host.notebooks.model_mut(&interactive.notebook).filter(|model| model.dirty) {
+                    model.dirty = false;
+                    let uri = model.uri.clone();
+                    self.host.send("ExtHostNotebookDocuments", "$acceptDirtyStateChanged", vec![uri, json!(false)]);
+                }
+                continue;
+            }
             let Ok((scheme, path)) = uri_parts(&interactive.input) else { continue };
             if self.editors.model(scheme, &path).is_none() {
                 continue;
@@ -296,37 +350,118 @@ impl Workbench {
         let interactive = self.host.notebooks.interactives.iter().find(|interactive| interactive.notebook == model.uri_string())?;
         let (scheme, path) = uri_parts(&interactive.input).ok()?;
         let input = self.editors.model(scheme, &path)?;
-        let focused = self.active_notebook_editor().is_some_and(|editor| editor.input_focused);
+        // `.input-cell-container:focus-within`: the keyboard is in the input editor.
+        let focused = self.editor_focus.is_focused(window) && self.editors.active().is_some_and(|active| std::ptr::eq(active, input));
         let editor_height = INPUT_LINE_HEIGHT + INPUT_EDITOR_PADDING * 2.;
         let left = notebook::layout::CODE_CELL_LEFT_MARGIN + notebook::layout::CELL_RUN_GUTTER;
-        let border = self.theme.color("notebook.inactiveFocusedCellBorder").unwrap_or(self.color("editorGroup.border"));
+        let inactive_border = self.color("notebook.inactiveFocusedCellBorder");
+        let top = INPUT_CELL_VERTICAL_PADDING;
+        let command = if interactive.repl { "repl.execute" } else { "interactive.execute" };
         let run = div()
             .id("interactive-execute")
             .absolute()
             .left(px(notebook::layout::CODE_CELL_LEFT_MARGIN))
-            .top(px(INPUT_CELL_VERTICAL_PADDING + INPUT_EDITOR_PADDING - 2.))
+            .top(px(top + INPUT_EDITOR_PADDING - 2.))
             .w(px(notebook::layout::CELL_RUN_GUTTER))
             .flex()
             .justify_center()
             .cursor_pointer()
-            .child(self.icon("notebook-execute", 16., 16., self.color("icon.foreground")))
-            .on_click(cx.listener(|workbench, _: &ClickEvent, window, cx| drop(workbench.execute_command("interactive.execute", Vec::new(), window, cx))));
+            .child(self.icon("play", 22., 16., self.color("icon.foreground")))
+            .on_click(cx.listener(move |workbench, _: &ClickEvent, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx))));
+        // interactiveEditor.css: the editor's 1px outline, `notebook.focusedCellBorder` while focused, and its
+        // `notebook.cellEditorBackground`.
+        let background = self.theme.color("notebook.cellEditorBackground").unwrap_or(self.color("editor.background"));
+        let frame = div()
+            .absolute()
+            .left(px(left - 1.))
+            .right(px(INPUT_CELL_HORIZONTAL_PADDING_RIGHT - 1.))
+            .top(px(top - 1.))
+            .h(px(editor_height + 2.))
+            .border_1()
+            .border_color(if focused { self.color("notebook.focusedCellBorder") } else { inactive_border })
+            .bg(background);
         let editor = div()
             .absolute()
             .left(px(left))
             .right(px(INPUT_CELL_HORIZONTAL_PADDING_RIGHT))
-            .top(px(INPUT_CELL_VERTICAL_PADDING + INPUT_EDITOR_PADDING))
+            .top(px(top + INPUT_EDITOR_PADDING))
             .h(px(INPUT_LINE_HEIGHT))
             .flex()
             .overflow_hidden()
+            .cursor_text()
             .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _: &MouseDownEvent, window, cx| workbench.focus_interactive_input(window, cx)))
-            .child(self.embedded_code_editor(input, window, cx));
-        let mut container = div().relative().flex_none().h(px(INPUT_LINE_HEIGHT + 2. + INPUT_CELL_VERTICAL_PADDING * 2. + INPUT_EDITOR_PADDING * 2.)).border_t_1().border_color(border).child(run).child(editor);
-        // `notebook.cellFocusIndicator` gutter: the focused input's bar.
-        if focused {
-            container = container.child(div().absolute().left(px(notebook::layout::FOCUS_INDICATOR_LEFT_MARGIN)).top(px(INPUT_CELL_VERTICAL_PADDING)).w(px(2.)).h(px(editor_height)).rounded(px(1.)).bg(self.color("notebook.focusedCellBorder")));
-        }
+            .child(self.embedded_code_editor(input, window, cx))
+            .children(self.interactive_input_hint(input, window));
+        // The `gutter` focus indicator: a 3px bar 4px in, `notebook.focusedCellBorder` while focused.
+        let indicator = div()
+            .absolute()
+            .left(px(notebook::layout::FOCUS_INDICATOR_LEFT_MARGIN))
+            .top(px(top))
+            .w(px(3.))
+            .h(px(editor_height))
+            .rounded(px(2.))
+            .bg(if focused { self.color("notebook.focusedCellBorder") } else { inactive_border });
+        let container = div()
+            .relative()
+            .flex_none()
+            .h(px(INPUT_LINE_HEIGHT + INPUT_CELL_VERTICAL_PADDING * 2. + INPUT_EDITOR_PADDING * 2.))
+            .border_t_1()
+            .border_color(inactive_border)
+            .child(indicator)
+            .child(run)
+            .child(frame)
+            .child(editor);
         Some(container)
+    }
+
+    /// ReplInputHintContentWidget at line 1, column 1 of an empty input (`_updateInputHint`): "Press <key> to
+    /// execute." in `input.placeholderForeground`, italic around the keybinding label, unless
+    /// `interactiveWindow.showExecutionHint` is off or line 1 has injected text.
+    fn interactive_input_hint(&self, input: &crate::editor::OpenEditor, window: &mut Window) -> Option<Div> {
+        let document = input.document();
+        let empty = document.lines.len() == 1 && document.lines[0].is_empty();
+        if !empty || self.setting("interactiveWindow.showExecutionHint") == false || input.injected_text.iter().any(|text| text.position.line == 0) {
+            return None;
+        }
+        let keybinding = self.input_hint_keybinding()?;
+        let metrics = self.editor_metrics(input, window);
+        let italic = |text: &str| div().italic().child(text.to_owned());
+        let placeholder = self.color("input.placeholderForeground");
+        // keybindingLabel.css without styles (the widget passes none): a 1px border in the text color, no background.
+        let caps = keybinding.key_caps();
+        let last = caps.len().saturating_sub(1);
+        let caps = caps.into_iter().enumerate().map(move |(index, cap)| {
+            let key = div().px(px(5.)).py(px(3.)).line_height(px(10.)).rounded(px(3.)).border_1().border_color(placeholder).text_size(px(11.)).child(cap);
+            key.when(index > 0, |key| key.ml(px(2.))).when(index < last, |key| key.mr(px(2.)))
+        });
+        Some(
+            div()
+                .absolute()
+                .top_0()
+                .left(px(metrics.content_left() + 4.))
+                .h(px(metrics.line_height))
+                .flex()
+                .items_center()
+                .whitespace_nowrap()
+                .font_family(super::editor_view::EDITOR_FONT)
+                .text_size(px(metrics.font_size))
+                .text_color(placeholder)
+                .child(italic("Press "))
+                .child(div().flex().children(caps))
+                .child(italic(" to execute. ")),
+        )
+    }
+
+    /// replInputHintContentWidget.ts `getKeybinding`: `interactive.execute`'s lone Shift+Enter with
+    /// `interactiveWindow.executeWithShiftEnter`, else its lone Enter or `python.execInREPLEnter`'s, else its first.
+    pub(super) fn input_hint_keybinding(&self) -> Option<crate::keybindings::Chord> {
+        let resolver = &self.keybindings.resolver;
+        let lone = |command: &str, label: &str| resolver.lookup_keybindings(command).into_iter().find(|item| item.keybinding.len() == 1 && item.keybinding[0].user_settings_label() == label).map(|item| item.keybinding[0].clone());
+        let found = match self.setting("interactiveWindow.executeWithShiftEnter") == true {
+            true => lone("interactive.execute", "shift+enter"),
+            false => lone("interactive.execute", "enter").or_else(|| lone("python.execInREPLEnter", "enter")),
+        };
+        found.or_else(|| resolver.lookup_keybindings("interactive.execute").first().and_then(|item| item.keybinding.first().cloned()))
     }
 }
 

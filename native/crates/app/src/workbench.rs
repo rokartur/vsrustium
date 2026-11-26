@@ -106,6 +106,7 @@ pub mod logs_actions;
 mod editor_type_picker;
 pub mod interactive;
 mod notebook_editor;
+mod repl_notebook;
 mod notebook_outline;
 mod notebook_status_bar;
 mod notebooks;
@@ -738,6 +739,7 @@ impl Workbench {
         workbench.register_workbench_actions();
         workbench.register_notebook_commands();
         workbench.register_interactive_commands();
+        workbench.register_repl_commands();
         workbench.register_diff_editor_commands();
         workbench.register_file_compare_commands();
         workbench.register_diff_gutter_commands();

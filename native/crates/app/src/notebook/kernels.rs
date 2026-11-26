@@ -25,6 +25,8 @@ pub struct Kernel {
     /// Empty: every registered language.
     pub supported_languages: Vec<String>,
     pub supports_interrupt: bool,
+    /// `implementsExecutionOrder`: its cells show their execution order.
+    pub supports_execution_order: bool,
     /// `preloadUris`: the controller's `NotebookRendererScript` URIs, which its notebooks' webviews load.
     pub preloads: Vec<Value>,
     /// `localResourceRoot`: the extension's folder, which the webviews may load from while the kernel is theirs.
@@ -81,6 +83,7 @@ impl Kernels {
             detail: text("detail"),
             supported_languages: languages(&data["supportedLanguages"]),
             supports_interrupt: data["supportsInterrupt"] == true,
+            supports_execution_order: data["supportsExecutionOrder"] == true,
             preloads: data["preloads"].as_array().into_iter().flatten().map(|preload| preload["uri"].clone()).collect(),
             extension_location: data["extensionLocation"].clone(),
             has_variable_provider: data["hasVariableProvider"] == true,
@@ -115,6 +118,9 @@ impl Kernels {
         }
         if let Some(interrupt) = data["supportsInterrupt"].as_bool() {
             kernel.supports_interrupt = interrupt;
+        }
+        if let Some(order) = data["supportsExecutionOrder"].as_bool() {
+            kernel.supports_execution_order = order;
         }
         if let Some(has_variable_provider) = data["hasVariableProvider"].as_bool() {
             kernel.has_variable_provider = has_variable_provider;
