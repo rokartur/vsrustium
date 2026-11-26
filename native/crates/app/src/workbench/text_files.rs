@@ -71,6 +71,8 @@ pub(super) struct TextFiles {
     pub orphaned: HashSet<PathBuf>,
     /// textFileSaveErrorHandler.ts `messages`: the save error notification of each model by URI.
     save_errors: HashMap<String, u64>,
+    /// `pendingResolveSaveConflictMessages`: the conflict editor's help messages.
+    pub conflict_messages: Vec<u64>,
     watcher: Option<Watcher>,
     /// editorService.ts `activeOutOfWorkspaceWatchers`, by watch id.
     watched_files: HashMap<PathBuf, u64>,
@@ -323,11 +325,14 @@ impl Workbench {
         let name = path.file_name().unwrap_or(path.as_os_str()).to_string_lossy();
         let action = |id: &str, label: &str| Action { id: id.into(), label: label.into(), run: Run::Command(id.into(), vec![uri_value.clone()]) };
         let mut notification = match error {
+            // A save from the opened conflict editor shows its help again (`activeConflictResolutionResource`).
+            SaveError::ModifiedSince if self.active_conflict_resolution_path().is_some_and(|conflict| conflict == path) => {
+                return self.show_conflict_editor_help(&uri, true);
+            }
             SaveError::ModifiedSince => {
                 let message = format!("Failed to save '{name}': The content of the file is newer. Please compare your version with the file contents or overwrite the content of the file with your changes.");
                 let mut notification = Notification::new(Severity::Error, message);
-                // ResolveSaveConflictAction (Compare) opens the diff editor, which the port does not have yet.
-                notification.primary = vec![action("workbench.files.action.saveIgnoreModifiedSince", "Overwrite")];
+                notification.primary = vec![action("workbench.files.action.resolveConflict", "Compare"), action("workbench.files.action.saveIgnoreModifiedSince", "Overwrite")];
                 let configure = Run::Command("workbench.action.openSettings".into(), vec![json!("files.saveConflictResolution")]);
                 notification.secondary = vec![Action { id: "workbench.files.action.configureSaveConflict".into(), label: "Configure".into(), run: configure }];
                 notification
@@ -744,6 +749,9 @@ impl Workbench {
                     }
                     if !dirty {
                         self.reload_model(&change.path, cx);
+                    }
+                    if self.editors.model(super::save_conflict::CONFLICT_RESOLUTION_SCHEME, &change.path).is_some() {
+                        let _ = self.read_conflict_resolution_model(&change.path);
                     }
                 }
                 ChangeType::Deleted if !self.text_files.orphaned.contains(&change.path) => {

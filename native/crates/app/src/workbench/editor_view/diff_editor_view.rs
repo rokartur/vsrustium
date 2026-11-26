@@ -336,6 +336,7 @@ impl Workbench {
         context.insert("textCompareEditorActive".into(), json!(true));
         context.insert("textCompareEditorVisible".into(), json!(true));
         context.insert("isInDiffEditor".into(), json!(true));
+        context.insert("saveConflictResolutionContext".into(), json!(self.active_conflict_resolution_path().is_some()));
         context.insert("diffEditorRenderSideBySideInlineBreakpointReached".into(), json!(input.inline_now && self.setting("diffEditor.renderSideBySide") != json!(false)));
         context.insert("diffEditorOriginalUri".into(), json!(crate::editor::uri_string(&input.original.scheme, &input.original.path)));
         context.insert("diffEditorModifiedUri".into(), json!(crate::editor::uri_string(&input.modified.scheme, &input.modified.path)));
