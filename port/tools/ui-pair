@@ -86,9 +86,10 @@ async function run(app: string, pid: number, folder: string) {
 	// The workbench and its extensions settle after the window appears.
 	await Bun.sleep(app === 'reference' ? 10000 : 6000);
 	const target = { pid, window_id: window.window_id };
-	// A first capture at 2x sets the screenshot pixel space the pixel actions use.
-	await cua('get_window_state', { ...target, include_accessibility_tree: false, max_image_dimension: 2048 });
-	const at = (point: number[]) => ({ x: point[0] * 2, y: point[1] * 2 });
+	// A first capture at the backing scale sets the screenshot pixel space the pixel actions use; the Studio's
+	// windows capture at 1x some runs, so steps stay in points and the scale comes from the capture.
+	const { screenshot_scale: scale } = await cua('get_window_state', { ...target, include_accessibility_tree: false, max_image_dimension: 2048 });
+	const at = (point: number[]) => ({ x: point[0] * scale, y: point[1] * scale });
 	for (const step of steps) {
 		if (step.click) {
 			await cua('click', { ...target, ...at(step.click), modifier: step.modifier, delivery_mode: step.foreground ? 'foreground' : undefined });
@@ -96,8 +97,8 @@ async function run(app: string, pid: number, folder: string) {
 			// Electron drops background wheel events; both get the real pointer's.
 			await cua('scroll', { ...target, ...at(step.scroll), direction: 'down', amount: step.amount ?? 3, delivery_mode: 'foreground' });
 		} else if (step.hover) {
-			// Editor hovers follow mouse moves, which only the real pointer sends; desktop coordinates are 2x pixels.
-			await cua('move_cursor', { scope: 'desktop', delivery_mode: 'foreground', x: (window.bounds.x + step.hover[0]) * 2, y: (window.bounds.y + step.hover[1]) * 2 });
+			// Editor hovers follow mouse moves, which only the real pointer sends; desktop coordinates are pixels.
+			await cua('move_cursor', { scope: 'desktop', delivery_mode: 'foreground', x: (window.bounds.x + step.hover[0]) * scale, y: (window.bounds.y + step.hover[1]) * scale });
 		} else if (step.doubleClick) {
 			await cua('double_click', { ...target, ...at(step.doubleClick) });
 		} else if (step.rightClick) {
@@ -124,7 +125,7 @@ async function run(app: string, pid: number, folder: string) {
 			// A background drag reaches only Electron's own drag and drop; GPUI needs the real pointer.
 			// `foreground: true` sends the reference's drag through the real pointer too (a sash, not a drag and drop).
 			const delivery_mode = app === 'port' || step.foreground ? 'foreground' : 'background';
-			const drag = cua('drag', { ...target, from_x: x1 * 2, from_y: y1 * 2, to_x: x2 * 2, to_y: y2 * 2, duration_ms: 4000, steps: 40, modifier: step.modifier, button: step.button, delivery_mode });
+			const drag = cua('drag', { ...target, from_x: x1 * scale, from_y: y1 * scale, to_x: x2 * scale, to_y: y2 * scale, duration_ms: 4000, steps: 40, modifier: step.modifier, button: step.button, delivery_mode });
 			await Bun.sleep(3500);
 			await shot(app, pid, target.window_id, step.shot!);
 			await drag;

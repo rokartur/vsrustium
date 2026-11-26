@@ -1,6 +1,7 @@
-//! The Explorer's views as collapsible panes (paneview.ts `PaneView`, viewPaneContainer.ts `ViewPaneContainer`,
-//! viewContainerModel.ts state): headers that expand and collapse with the mouse and keys, sashes between them,
-//! headers dragged onto another pane to reorder, and the state in `workbench.explorer.views.state`.
+//! The views of the Explorer and Source Control containers as collapsible panes (paneview.ts `PaneView`,
+//! viewPaneContainer.ts `ViewPaneContainer`, viewContainerModel.ts state): headers that expand and collapse with the
+//! mouse and keys, sashes between them, headers dragged onto another pane to reorder, a single view merged into the
+//! container (`mergeViewWithContainerWhenSingleView`), and the state in the container's `storageId`.
 
 use std::collections::HashMap;
 
@@ -11,19 +12,37 @@ use gpui::{
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::view_visibility::container_storage_id;
 use crate::split_view::{SashState, SplitView, View};
 
 /// `--vscode-workbench-paneHeaderHeight` of the modern layout.
 pub const HEADER_SIZE: f32 = 28.;
 /// paneview.ts: a vertical pane's default `minimumBodySize`.
 const MINIMUM_BODY_SIZE: f32 = 120.;
-/// explorerViewlet.ts `storageId`: the views' collapsed state and sizes in workspace storage, their order with
-/// `.hidden` in profile storage (viewContainerModel.ts `getViewsStateStorageId`).
-const STATE_KEY: &str = "workbench.explorer.views.state";
 pub const FILE_VIEW: &str = "workbench.explorer.fileView";
 pub const EMPTY_VIEW: &str = "workbench.explorer.emptyView";
 pub(super) const OUTLINE_VIEW: &str = "outline";
 pub(super) const TIMELINE_VIEW: &str = "timeline";
+/// scm.contribution.ts `VIEW_PANE_ID` and `HISTORY_VIEW_PANE_ID`.
+pub(super) const SCM_CHANGES_VIEW: &str = "workbench.scm";
+pub(super) const SCM_HISTORY_VIEW: &str = "workbench.scm.history";
+
+/// A view container drawn as a `ViewPaneContainer`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum PaneContainer {
+    Explorer,
+    Scm,
+}
+
+impl PaneContainer {
+    /// The view container key of `contributes.views` and view_visibility.rs.
+    pub(super) fn key(self) -> &'static str {
+        match self {
+            PaneContainer::Explorer => "explorer",
+            PaneContainer::Scm => "scm",
+        }
+    }
+}
 
 /// The panes of a `PaneView` in a split view: a collapsed pane is its header, an expanded one at least the header
 /// and `MINIMUM_BODY_SIZE`.
@@ -154,8 +173,8 @@ fn drop_index(from: usize, to: usize, below: bool, count: usize) -> Option<usize
 }
 
 #[derive(Default)]
-pub(super) struct ExplorerPanes {
-    view: Option<PaneView>,
+pub(super) struct ContainerPanes {
+    pub(super) view: Option<PaneView>,
     focus: HashMap<&'static str, FocusHandle>,
     /// Sizes stored after a sash drag (`setSizes`); panes without one take an equal share when laid out.
     stored_sizes: HashMap<String, f32>,
@@ -163,22 +182,28 @@ pub(super) struct ExplorerPanes {
     sash_hover: Option<(usize, Task<()>)>,
     /// The pane a header is dragged over, and whether over its lower half.
     drop: Option<(&'static str, bool)>,
+    /// The header last focused by a pointer click, which `:focus-visible` leaves without an outline.
+    pointer_focused: Option<&'static str>,
 }
 
 /// A view's body in the pane view: a header title and its content.
-pub(super) struct ExplorerPane {
+pub(super) struct ViewPane {
     pub id: &'static str,
     pub title: String,
     /// `ViewPane.titleDescription`, after the title.
     pub description: Option<String>,
     /// The `view/title` actions, shown while the expanded pane is hovered (paneview.css).
     pub actions: Option<AnyElement>,
+    /// Whether the expanded pane's actions show without a hover: focus in its body (paneview.css `:focus-within`) or
+    /// `ViewPaneShowActions.WhenExpanded`.
+    pub show_actions: bool,
     pub body: AnyElement,
 }
 
 /// The header a pane drag carries, drawn as the drag image (`setDragImage(header)`).
 #[derive(Clone)]
 pub(super) struct DraggedPane {
+    container: PaneContainer,
     id: &'static str,
     title: String,
     chevron: String,
@@ -204,123 +229,172 @@ impl Render for DraggedPane {
 }
 
 impl Workbench {
-    /// The Explorer's views by id, the first one the folder's (or the empty window's) view: viewContainerModel.ts
-    /// order (stored, else declared) and collapsed state (stored, else the descriptor's `collapsed`).
-    pub(super) fn layout_explorer_panes(&mut self, side_bar_height: f32, cx: &mut Context<Self>) {
-        // The card's borders, the composite title, the compact activity bar, and the pane view's 5px less.
+    pub(super) fn panes(&self, container: PaneContainer) -> &ContainerPanes {
+        match container {
+            PaneContainer::Explorer => &self.explorer_panes,
+            PaneContainer::Scm => &self.scm_panes,
+        }
+    }
+
+    fn panes_mut(&mut self, container: PaneContainer) -> &mut ContainerPanes {
+        match container {
+            PaneContainer::Explorer => &mut self.explorer_panes,
+            PaneContainer::Scm => &mut self.scm_panes,
+        }
+    }
+
+    /// The containers' pane views at the side bar's height: the card's borders, the composite title, the compact
+    /// activity bar, and the pane view's 5px less.
+    pub(super) fn layout_view_panes(&mut self, side_bar_height: f32, cx: &mut Context<Self>) {
         let compact = if self.compact_activity_bar_location().is_some() { 32. } else { 0. };
         let height = side_bar_height - 2. - 32. - compact - 5.;
         let first = if self.folder.is_some() { FILE_VIEW } else { EMPTY_VIEW };
-        let contributed = self.shown_tree_views();
         let built_in = [first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().filter(|&id| id == FILE_VIEW || !self.view_hidden("explorer", id));
-        let ids: Vec<&'static str> = built_in.chain(contributed.iter().copied()).collect();
-        for &id in &ids {
-            self.explorer_panes.focus.entry(id).or_insert_with(|| cx.focus_handle());
+        // viewsExtensionPoint.ts `showCollapsed`: an extension's view in the Explorer or Source Control starts collapsed.
+        let explorer: Vec<_> = built_in.map(|id| (id, id != first)).chain(self.shown_tree_views().into_iter().map(|id| (id, true))).collect();
+        self.layout_panes(PaneContainer::Explorer, height, explorer, cx);
+        let mut scm = Vec::new();
+        if !self.view_hidden("scm", SCM_CHANGES_VIEW) {
+            scm.push((SCM_CHANGES_VIEW, false));
         }
-        let laid_out = self.explorer_panes.view.as_ref().is_some_and(|view| view.ids().len() == ids.len() && ids.iter().all(|id| view.ids().contains(id)));
+        // scm.contribution.ts: Graph shows while `scm.historyProviderCount` is not 0; the port draws the active repository's.
+        if self.active_scm_provider().is_some_and(|provider| provider.has_history_provider) && !self.view_hidden("scm", SCM_HISTORY_VIEW) {
+            scm.push((SCM_HISTORY_VIEW, false));
+        }
+        scm.extend(self.shown_views_of("scm").into_iter().map(|id| (id, true)));
+        self.layout_panes(PaneContainer::Scm, height, scm, cx);
+    }
+
+    /// The container's views by id with whether each starts collapsed: viewContainerModel.ts order (stored, else
+    /// declared) and collapsed state (stored, else the descriptor's `collapsed`).
+    fn layout_panes(&mut self, container: PaneContainer, height: f32, mut descriptors: Vec<(&'static str, bool)>, cx: &mut Context<Self>) {
+        let panes = self.panes_mut(container);
+        for &(id, _) in &descriptors {
+            panes.focus.entry(id).or_insert_with(|| cx.focus_handle());
+        }
+        let laid_out = panes.view.as_ref().is_some_and(|view| view.ids().len() == descriptors.len() && descriptors.iter().all(|(id, _)| view.ids().contains(id)));
         if laid_out {
-            self.explorer_panes.view.as_mut().expect("checked above").layout(height);
+            panes.view.as_mut().expect("checked above").layout(height);
             return;
         }
-        let workspace_state = self.workspace_storage.lock().unwrap().get(STATE_KEY).and_then(|raw| serde_json::from_str::<Value>(raw).ok()).unwrap_or_default();
-        let global_state = self.profile_storage.lock().unwrap().get(&format!("{STATE_KEY}.hidden")).and_then(|raw| serde_json::from_str::<Value>(raw).ok()).unwrap_or_default();
-        let order = |id: &str| global_state.as_array().and_then(|views| views.iter().find(|view| view["id"] == id)).and_then(|view| view["order"].as_f64());
-        // viewsExtensionPoint.ts `showCollapsed`: an extension's view in the Explorer starts collapsed.
-        let mut descriptors: Vec<(&'static str, bool)> = ids.iter().map(|&id| (id, id != first)).collect();
+        let storage_id = container_storage_id(container.key());
+        let workspace_state = self.workspace_storage.lock().unwrap().get(&storage_id).and_then(|raw| serde_json::from_str::<Value>(raw).ok()).unwrap_or_default();
+        let global_state = self.views_visibility_state(container.key());
+        let order = |id: &str| global_state.iter().find(|view| view["id"] == id).and_then(|view| view["order"].as_f64());
         descriptors.sort_by(|a, b| order(a.0).unwrap_or(f64::MAX).total_cmp(&order(b.0).unwrap_or(f64::MAX)));
-        self.explorer_panes.stored_sizes.clear();
-        let panes: Vec<_> = descriptors
-            .into_iter()
-            .map(|(id, collapsed_by_default)| {
-                let state = &workspace_state[id];
-                let size = state["size"].as_f64().map(|size| size as f32);
-                if let Some(size) = size {
-                    self.explorer_panes.stored_sizes.insert(id.to_string(), size);
-                }
-                (id, !state["collapsed"].as_bool().unwrap_or(collapsed_by_default), size)
-            })
-            .collect();
-        self.explorer_panes.view = Some(PaneView::new(height, &panes));
+        let panes = self.panes_mut(container);
+        panes.stored_sizes.clear();
+        let mut pane_states = Vec::new();
+        for (id, collapsed_by_default) in descriptors {
+            let state = &workspace_state[id];
+            let size = state["size"].as_f64().map(|size| size as f32);
+            if let Some(size) = size {
+                panes.stored_sizes.insert(id.to_string(), size);
+            }
+            pane_states.push((id, !state["collapsed"].as_bool().unwrap_or(collapsed_by_default), size));
+        }
+        panes.view = Some(PaneView::new(height, &pane_states));
     }
 
     /// viewContainerModel.ts `updateState`: collapsed and size per view in the workspace, order in the profile.
-    fn store_explorer_panes(&self) {
-        let view = self.explorer_panes.view.as_ref().expect("stored after a layout");
+    fn store_panes(&self, container: PaneContainer) {
+        let panes = self.panes(container);
+        let view = panes.view.as_ref().expect("stored after a layout");
         let mut workspace = serde_json::Map::new();
         // The hidden views keep their entries: `isHidden` is what keeps them out of the pane view.
-        let mut global: Vec<Value> = self.views_visibility_state("explorer").into_iter().filter(|entry| !view.ids().iter().any(|&id| entry["id"] == id)).collect();
+        let mut global: Vec<Value> = self.views_visibility_state(container.key()).into_iter().filter(|entry| !view.ids().iter().any(|&id| entry["id"] == id)).collect();
         for (index, &id) in view.ids().iter().enumerate() {
             let mut state = json!({ "collapsed": !view.is_expanded(index), "isHidden": false });
-            if let Some(size) = self.explorer_panes.stored_sizes.get(id) {
+            if let Some(size) = panes.stored_sizes.get(id) {
                 state["size"] = json!(size);
             }
             workspace.insert(id.to_string(), state);
             global.push(json!({ "id": id, "isHidden": false, "order": index }));
         }
-        self.workspace_storage.lock().unwrap().set(STATE_KEY, Value::Object(workspace).to_string());
-        self.profile_storage.lock().unwrap().set(&format!("{STATE_KEY}.hidden"), Value::Array(global).to_string());
+        let storage_id = container_storage_id(container.key());
+        self.workspace_storage.lock().unwrap().set(&storage_id, Value::Object(workspace).to_string());
+        self.profile_storage.lock().unwrap().set(&format!("{storage_id}.hidden"), Value::Array(global).to_string());
     }
 
-    pub(super) fn explorer_pane_expanded(&self, id: &str) -> bool {
-        let Some(view) = self.explorer_panes.view.as_ref() else { return false };
-        view.ids().iter().position(|&pane| pane == id).is_some_and(|index| view.is_expanded(index))
+    /// Whether the view's body shows: expanded, or merged into its container as its only view.
+    pub(super) fn view_pane_expanded(&self, container: PaneContainer, id: &str) -> bool {
+        let Some(view) = self.panes(container).view.as_ref() else { return false };
+        view.ids().iter().position(|&pane| pane == id).is_some_and(|index| view.ids().len() == 1 || view.is_expanded(index))
     }
 
     /// `viewsService.openView`: expands the view's pane once it is laid out.
-    pub(super) fn expand_explorer_pane(&mut self, id: &str, cx: &mut Context<Self>) {
-        let index = self.explorer_panes.view.as_ref().and_then(|view| view.ids().iter().position(|&pane| pane == id));
+    pub(super) fn expand_pane(&mut self, container: PaneContainer, id: &str, cx: &mut Context<Self>) {
+        let index = self.panes(container).view.as_ref().and_then(|view| view.ids().iter().position(|&pane| pane == id));
         if let Some(index) = index {
-            self.set_pane_expanded(index, true, cx);
+            self.set_pane_expanded(container, index, true, cx);
         }
     }
 
-    fn set_pane_expanded(&mut self, index: usize, expanded: bool, cx: &mut Context<Self>) {
-        let view = self.explorer_panes.view.as_mut().expect("panes are laid out before they draw");
+    pub(super) fn set_pane_expanded(&mut self, container: PaneContainer, index: usize, expanded: bool, cx: &mut Context<Self>) {
+        let view = self.panes_mut(container).view.as_mut().expect("panes are laid out before they draw");
         if view.set_expanded(index, expanded) {
-            self.store_explorer_panes();
+            self.store_panes(container);
+            self.sync_tree_views(cx);
             cx.notify();
         }
     }
 
-    fn drop_pane(&mut self, dragged: &'static str, target: &'static str, below: bool, cx: &mut Context<Self>) {
-        self.explorer_panes.drop = None;
-        let view = self.explorer_panes.view.as_mut().expect("panes are laid out before they draw");
+    fn drop_pane(&mut self, container: PaneContainer, dragged: &'static str, target: &'static str, below: bool, cx: &mut Context<Self>) {
+        let panes = self.panes_mut(container);
+        panes.drop = None;
+        let view = panes.view.as_mut().expect("panes are laid out before they draw");
         let (Some(from), Some(to)) = (view.ids().iter().position(|&id| id == dragged), view.ids().iter().position(|&id| id == target)) else { return };
         if let Some(to) = drop_index(from, to, below, view.ids().len()) {
             view.move_pane(from, to);
-            self.store_explorer_panes();
+            self.store_panes(container);
         }
         cx.notify();
     }
 
-    /// The pane view of the Explorer, laid out by `layout_explorer_panes`: `first` (the folder's or the empty
-    /// window's view), then Outline and Timeline in their stored order.
-    pub(super) fn explorer_pane_view(&self, first: ExplorerPane, window: &Window, cx: &mut Context<Self>) -> Div {
-        let mut panes = vec![
-            first,
-            ExplorerPane { id: OUTLINE_VIEW, title: "Outline".into(), description: None, actions: Some(self.outline_title_actions(window, cx).into_any_element()), body: self.outline_pane_body(window, cx) },
-            self.timeline_pane(window, cx),
-        ];
-        let view = self.explorer_panes.view.as_ref().expect("panes are laid out before they draw");
+    /// A `ViewPaneContainer` in the side bar, laid out by `layout_view_panes`: the composite title, then the panes
+    /// in their stored order; `panes` are the container's own views, a contributed one is a tree view. A single view
+    /// merges into the container: no header, its title in the composite title (`getTitle`) beside its actions. The
+    /// caller ends it with the pane view's 5px.
+    pub(super) fn view_pane_container(&self, container: PaneContainer, title: &str, mut panes: Vec<ViewPane>, window: &Window, cx: &mut Context<Self>) -> Div {
+        let view = self.panes(container).view.as_ref().expect("panes are laid out before they draw");
         let (ids, sizes, sash_states) = (view.ids().to_vec(), view.sizes(), view.sash_states());
+        let mut ordered = Vec::new();
+        for &id in &ids {
+            ordered.push(match panes.iter().position(|pane| pane.id == id) {
+                Some(position) => panes.remove(position),
+                None => self.tree_view_pane(id, window, cx),
+            });
+        }
+        let frame = self.side_bar_frame().text_color(self.foreground_or("sideBar.foreground"));
+        if let [id] = ids[..] {
+            let pane = ordered.remove(0);
+            let title = match pane.title.as_str() {
+                _ if id == SCM_CHANGES_VIEW => "Source Control".to_string(),
+                _ if id == SCM_HISTORY_VIEW => "Source Control Graph".to_string(),
+                "" => title.to_string(),
+                pane_title if pane_title == title => title.to_string(),
+                pane_title => format!("{title}: {pane_title}"),
+            };
+            // shortcut: a view with its own actions keeps only its "..." (panecomposite.ts puts the Views submenu before
+            // the view's secondary actions); merge the menus when a merged view's Views submenu has an enabled toggle.
+            let more = pane.actions.is_none().then(|| self.view_container_more_actions(container.key(), cx));
+            let title = self.side_bar_title_text(title).when(id == FILE_VIEW, |title| title.children(self.explorer_title_actions(window, cx))).children(pane.actions).children(more);
+            return frame.child(title).child(div().flex_1().min_h_0().flex().flex_col().child(pane.body));
+        }
         let expanded: Vec<bool> = (0..ids.len()).map(|index| view.is_expanded(index)).collect();
         let dragging_sash = view.dragged_sash().is_some();
         let mut elements = Vec::new();
-        for (index, &id) in ids.iter().enumerate() {
-            let pane = match panes.iter().position(|pane| pane.id == id) {
-                Some(position) => panes.remove(position),
-                None => self.tree_view_pane(id, window, cx),
-            };
-            let header = self.pane_header(index, id, &pane.title, pane.description, pane.actions, expanded[index], ids.len(), window, cx);
-            elements.push(self.pane(id, sizes[index], header, expanded[index].then_some(pane.body), cx));
+        for (index, (&id, pane)) in ids.iter().zip(ordered).enumerate() {
+            let header = self.pane_header(container, index, id, &pane.title, pane.description, pane.actions.filter(|_| expanded[index]), pane.show_actions, expanded[index], ids.len(), window, cx);
+            elements.push(self.pane(container, id, sizes[index], header, expanded[index].then_some(pane.body), cx));
         }
         let mut top = 0.;
         let mut sashes = Vec::new();
         for (index, state) in sash_states.into_iter().enumerate() {
             top += sizes[index];
-            sashes.push(self.pane_sash(index, state, top, cx));
+            sashes.push(self.pane_sash(container, index, state, top, cx));
         }
-        div()
+        let pane_view = div()
             .relative()
             .h(px(sizes.iter().sum()))
             .flex_none()
@@ -328,12 +402,13 @@ impl Workbench {
             .flex_col()
             .children(elements)
             .children(sashes)
-            .when(dragging_sash, |view| view.child(self.pane_sash_drag(cx)))
+            .when(dragging_sash, |view| view.child(self.pane_sash_drag(container, cx)));
+        frame.child(self.side_bar_title_text(title.to_string()).child(self.view_container_more_actions(container.key(), cx))).child(pane_view)
     }
 
     /// `.pane` with its body under the header while expanded, and the drop overlay of a dragged header.
-    fn pane(&self, id: &'static str, size: f32, header: Div, body: Option<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
-        let drop = self.explorer_panes.drop.filter(|(target, _)| *target == id && cx.has_active_drag()).map(|(_, below)| below);
+    fn pane(&self, container: PaneContainer, id: &'static str, size: f32, header: Div, body: Option<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
+        let drop = self.panes(container).drop.filter(|(target, _)| *target == id && cx.has_active_drag()).map(|(_, below)| below);
         let overlay = self.color("sideBar.dropBackground");
         let outline = self.theme.color("contrastActiveBorder");
         div()
@@ -351,19 +426,20 @@ impl Workbench {
                 if !event.bounds.contains(&event.event.position) {
                     return;
                 }
-                let dragged = event.drag(cx).id;
+                let dragged = event.drag(cx);
                 let below = event.event.position.y >= event.bounds.center().y;
-                let drop = (dragged != id).then_some((id, below));
-                if workbench.explorer_panes.drop != drop {
-                    workbench.explorer_panes.drop = drop;
+                let drop = (dragged.container == container && dragged.id != id).then_some((id, below));
+                let panes = workbench.panes_mut(container);
+                if panes.drop != drop {
+                    panes.drop = drop;
                     cx.notify();
                 }
             }))
             .on_drop(cx.listener(move |workbench, dragged: &DraggedPane, _, cx| {
-                let below = workbench.explorer_panes.drop.filter(|(target, _)| *target == id).map(|(_, below)| below);
+                let below = workbench.panes(container).drop.filter(|(target, _)| *target == id && dragged.container == container).map(|(_, below)| below);
                 match below {
-                    Some(below) => workbench.drop_pane(dragged.id, id, below, cx),
-                    None => workbench.explorer_panes.drop = None,
+                    Some(below) => workbench.drop_pane(container, dragged.id, id, below, cx),
+                    None => workbench.panes_mut(container).drop = None,
                 }
             }))
             .when_some(drop, |pane, below| {
@@ -377,14 +453,16 @@ impl Workbench {
     /// `.pane-header`: a click, Enter or Space toggles, Left collapses, Right expands, Up and Down move to the
     /// neighbouring header; dragged onto another pane it moves this one.
     #[allow(clippy::too_many_arguments)]
-    fn pane_header(&self, index: usize, id: &'static str, title: &str, description: Option<String>, actions: Option<AnyElement>, expanded: bool, count: usize, window: &Window, cx: &mut Context<Self>) -> Div {
-        let focus = &self.explorer_panes.focus[id];
+    fn pane_header(&self, container: PaneContainer, index: usize, id: &'static str, title: &str, description: Option<String>, actions: Option<AnyElement>, show_actions: bool, expanded: bool, count: usize, window: &Window, cx: &mut Context<Self>) -> Div {
+        let focus = &self.panes(container).focus[id];
         let focused = focus.is_focused(window);
+        let show_actions = show_actions || focused || self.setting("workbench.view.alwaysShowHeaderActions") == json!(true);
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
         let background = self.color("sideBar.background");
         let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| index > 0);
         let chevron = if expanded { "chevron-down" } else { "chevron-right" };
         let dragged = DraggedPane {
+            container,
             id,
             title: title.to_string(),
             chevron: self.app_root.join("node_modules/@vscode/codicons/src/icons").join(format!("{chevron}.svg")).to_string_lossy().into_owned(),
@@ -416,25 +494,30 @@ impl Workbench {
                 .children(description.filter(|_| expanded).map(|description| {
                     div().ml(px(10.)).text_size(px(12.)).text_color(self.color("panelTitle.inactiveForeground")).overflow_hidden().whitespace_nowrap().child(description)
                 }))
-                .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().group_hover(id, |actions| actions.visible()).when(focused, |actions| actions.visible()).child(actions)))
+                .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().group_hover(id, |actions| actions.visible()).when(show_actions, |actions| actions.visible()).child(actions)))
                 .when(id == FILE_VIEW, |header| header.children(self.explorer_title_actions(window, cx)))
-                .when(focused, |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
-                .on_click(cx.listener(move |workbench, _, window, cx| {
-                    let focus = workbench.explorer_panes.focus[id].clone();
+                // paneHeaders.css `.pane-header:focus:not(:focus-visible)`: a header focused by a click has no outline.
+                .when(focused && self.panes(container).pointer_focused != Some(id), |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
+                .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, window, cx| {
+                    let panes = workbench.panes_mut(container);
+                    panes.pointer_focused = (!event.is_keyboard()).then_some(id);
+                    let focus = panes.focus[id].clone();
                     window.focus(&focus, cx);
-                    workbench.set_pane_expanded(index, !expanded, cx);
+                    workbench.set_pane_expanded(container, index, !expanded, cx);
                 }))
                 .on_key_down(cx.listener(move |workbench, event: &KeyDownEvent, window, cx| {
                     let neighbour = match event.keystroke.key.as_str() {
                         // Enter and Space reach `on_click`: gpui clicks a focused element on its activation keys.
-                        "left" => return workbench.set_pane_expanded(index, false, cx),
-                        "right" => return workbench.set_pane_expanded(index, true, cx),
+                        "left" => return workbench.set_pane_expanded(container, index, false, cx),
+                        "right" => return workbench.set_pane_expanded(container, index, true, cx),
                         "up" if index > 0 => index - 1,
                         "down" if index + 1 < count => index + 1,
                         _ => return,
                     };
-                    let ids = workbench.explorer_panes.view.as_ref().expect("panes are laid out before they draw").ids();
-                    let focus = workbench.explorer_panes.focus.get(ids[neighbour]).cloned();
+                    let panes = workbench.panes_mut(container);
+                    panes.pointer_focused = None;
+                    let ids = panes.view.as_ref().expect("panes are laid out before they draw").ids();
+                    let focus = panes.focus.get(ids[neighbour]).cloned();
                     if let Some(focus) = focus {
                         window.focus(&focus, cx);
                         cx.notify();
@@ -445,12 +528,13 @@ impl Workbench {
     }
 
     /// A horizontal `.monaco-sash` between two panes (sash.css): 4px centered on the boundary.
-    fn pane_sash(&self, index: usize, state: SashState, boundary: f32, cx: &mut Context<Self>) -> AnyElement {
+    fn pane_sash(&self, container: PaneContainer, index: usize, state: SashState, boundary: f32, cx: &mut Context<Self>) -> AnyElement {
         if state == SashState::Disabled {
             return div().into_any_element();
         }
-        let dragged = self.explorer_panes.view.as_ref().and_then(PaneView::dragged_sash);
-        let active = self.explorer_panes.hovered_sash == Some(index) || dragged == Some(index);
+        let panes = self.panes(container);
+        let dragged = panes.view.as_ref().and_then(PaneView::dragged_sash);
+        let active = panes.hovered_sash == Some(index) || dragged == Some(index);
         let hover_border = self.theme.color("sash.hoverBorder").unwrap_or(self.color("focusBorder"));
         let cursor = match state {
             SashState::AtMinimum => gpui::CursorStyle::ResizeDown,
@@ -467,7 +551,8 @@ impl Workbench {
             .cursor(cursor)
             .when(active, |sash| sash.bg(hover_border))
             .on_hover(cx.listener(move |workbench, hovered: &bool, window, cx| {
-                let panes = &mut workbench.explorer_panes;
+                let delay = workbench.sash_hover_delay();
+                let panes = workbench.panes_mut(container);
                 if !*hovered {
                     if panes.hovered_sash == Some(index) {
                         panes.hovered_sash = None;
@@ -479,11 +564,10 @@ impl Workbench {
                     return;
                 }
                 panes.hovered_sash = None;
-                let delay = workbench.sash_hover_delay();
-                workbench.explorer_panes.sash_hover = Some((index, cx.spawn_in(window, async move |workbench, cx| {
+                panes.sash_hover = Some((index, cx.spawn_in(window, async move |workbench, cx| {
                     cx.background_executor().timer(delay).await;
                     let _ = workbench.update(cx, |workbench, cx| {
-                        workbench.explorer_panes.hovered_sash = Some(index);
+                        workbench.panes_mut(container).hovered_sash = Some(index);
                         cx.notify();
                     });
                 })));
@@ -493,7 +577,7 @@ impl Workbench {
                 MouseButton::Left,
                 cx.listener(move |workbench, event: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
-                    let view = workbench.explorer_panes.view.as_mut().expect("sashes are drawn with the panes");
+                    let view = workbench.panes_mut(container).view.as_mut().expect("sashes are drawn with the panes");
                     view.start_sash_drag(index, f32::from(event.position.y), event.modifiers.alt);
                     cx.notify();
                 }),
@@ -502,7 +586,7 @@ impl Workbench {
     }
 
     /// Follows the pointer anywhere in the window while a pane sash drags; the sizes are stored when it ends.
-    fn pane_sash_drag(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn pane_sash_drag(&self, container: PaneContainer, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let workbench = cx.entity();
         canvas(
             |_, _, _| (),
@@ -510,7 +594,7 @@ impl Workbench {
                 let moved = workbench.clone();
                 window.on_mouse_event(move |event: &MouseMoveEvent, _, _, cx| {
                     moved.update(cx, |workbench, cx| {
-                        let view = workbench.explorer_panes.view.as_mut().expect("a sash drags in the panes");
+                        let view = workbench.panes_mut(container).view.as_mut().expect("a sash drags in the panes");
                         view.drag_sash(f32::from(event.position.y), event.modifiers.alt);
                         cx.notify();
                     });
@@ -518,11 +602,12 @@ impl Workbench {
                 let released = workbench.clone();
                 window.on_mouse_event(move |_: &MouseUpEvent, _, _, cx| {
                     released.update(cx, |workbench, cx| {
-                        let view = workbench.explorer_panes.view.as_mut().expect("a sash drags in the panes");
+                        let panes = workbench.panes_mut(container);
+                        let view = panes.view.as_mut().expect("a sash drags in the panes");
                         view.end_sash_drag();
                         let sizes: Vec<(String, f32)> = view.ids().iter().map(|id| id.to_string()).zip(view.sizes()).collect();
-                        workbench.explorer_panes.stored_sizes = sizes.into_iter().collect();
-                        workbench.store_explorer_panes();
+                        panes.stored_sizes = sizes.into_iter().collect();
+                        workbench.store_panes(container);
                         cx.notify();
                     });
                 });

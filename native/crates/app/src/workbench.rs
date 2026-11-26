@@ -419,7 +419,8 @@ pub struct Workbench {
     editor_groups: editor_groups::EditorGroups,
     history: history_actions::History,
     panel: panel::Panel,
-    explorer_panes: view_panes::ExplorerPanes,
+    explorer_panes: view_panes::ContainerPanes,
+    scm_panes: view_panes::ContainerPanes,
     pub workspace_trust: crate::workspace_trust::WorkspaceTrust,
     /// The APPLICATION_SHARED storage: trust and the recently opened list.
     pub shared_storage: Arc<Mutex<Storage>>,
@@ -680,7 +681,8 @@ impl Workbench {
             editor_groups: Default::default(),
             history: Default::default(),
             panel: panel::Panel::default(),
-            explorer_panes: view_panes::ExplorerPanes::default(),
+            explorer_panes: view_panes::ContainerPanes::default(),
+            scm_panes: view_panes::ContainerPanes::default(),
             workspace_trust: Default::default(),
             shared_storage: Arc::new(Mutex::new(Storage::in_memory())),
             recently_opened: Default::default(),
@@ -1187,7 +1189,7 @@ impl Workbench {
             return self.contributed_side_bar(id, window, cx);
         }
         if self.side_bar_view == SideBarView::Scm {
-            return self.scm_side_bar(window, cx).children(self.contributed_sections_of("scm", window, cx));
+            return self.scm_side_bar(window, cx);
         }
         if self.side_bar_view == SideBarView::Extensions {
             let title = self.side_bar_title_text(self.extensions_title()).child(self.extensions_title_actions(cx));
@@ -1203,12 +1205,9 @@ impl Workbench {
         if self.side_bar_view == SideBarView::Testing {
             return self.testing_side_bar(cx).children(self.contributed_sections_of("test", window, cx));
         }
-        let title = self
-            .side_bar_title("Explorer")
-            .child(self.view_container_more_actions("explorer", cx));
         let Some(tree) = self.folder.as_ref() else {
-            let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, body: self.empty_view(window, cx).into_any_element() };
-            return self.side_bar_frame().text_color(foreground).child(title).child(self.explorer_pane_view(empty, window, cx)).child(div().h(px(5.)).flex_none());
+            let empty = view_panes::ViewPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, show_actions: false, body: self.empty_view(window, cx).into_any_element() };
+            return self.explorer_view_container(empty, window, cx).child(div().h(px(5.)).flex_none());
         };
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
         let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
@@ -1416,10 +1415,8 @@ impl Workbench {
         let sticky_container = self.tree_sticky_container(list_scroll::ListId::Explorer, &sticky, sticky_elements, cx);
         // explorerView.ts `setEditable`: no horizontal scrolling while a name is edited.
         let horizontal = self.horizontal_scrolling(list_scroll::ListId::Explorer) && self.explorer.edit.is_none();
-        self.side_bar_frame()
-            .text_color(foreground)
-            .child(title)
-            .child(self.explorer_pane_view(view_panes::ExplorerPane { id: view_panes::FILE_VIEW, title: folder_name, description: None, actions: None, body:
+        let explorer_focused = self.explorer.focus.is_focused(window);
+        self.explorer_view_container(view_panes::ViewPane { id: view_panes::FILE_VIEW, title: folder_name, description: None, actions: None, show_actions: explorer_focused, body:
                 div().id("explorer-pane").relative().flex_1().min_h_0().flex().flex_col()
                 .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
                     workbench.explorer.pane_hovered = *hovered;
@@ -1444,11 +1441,22 @@ impl Workbench {
                     // `horizontalScrolling`: unwrapped rows as wide as the widest, at least the view.
                     .child(div().flex_none().flex().flex_col().when(horizontal, |rows| rows.self_start().min_w_full().whitespace_nowrap()).children(rows))
                     .child(self.explorer_empty_area(cx)),
-                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx))
+                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx)
             // shortcut: extension webview views sit below the Explorer's panes, not in view_panes.rs; milestone 11 moves them in.
             .children(self.webview_view_panes(cx))
             // The pane view is laid out 5px shorter than the side bar content.
             .child(div().h(px(5.)).flex_none())
+    }
+
+    /// The Explorer's `ViewPaneContainer`: `first` (the folder's or the empty window's view), Outline and Timeline.
+    fn explorer_view_container(&self, first: view_panes::ViewPane, window: &Window, cx: &mut Context<Self>) -> Div {
+        let outline_focused = self.outline_pane.focus.is_focused(window);
+        let panes = vec![
+            first,
+            view_panes::ViewPane { id: view_panes::OUTLINE_VIEW, title: "Outline".into(), description: None, actions: Some(self.outline_title_actions(window, cx).into_any_element()), show_actions: outline_focused, body: self.outline_pane_body(window, cx) },
+            self.timeline_pane(window, cx),
+        ];
+        self.view_pane_container(view_panes::PaneContainer::Explorer, "Explorer", panes, window, cx)
     }
 
     fn side_bar_frame(&self) -> Div {

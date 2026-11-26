@@ -23,7 +23,7 @@ fn workbench_in<'a>(name: &str, cx: &'a mut TestAppContext) -> (PathBuf, gpui::E
     let workspace = Some(config::workspace::Workspace::folder(dir.clone()));
     let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), workspace, crate::languages::Languages::new(&[]), settings, HostSync::new(sender), cx));
     cx.run_until_parked();
-    workbench.update(cx, |workbench, cx| workbench.expand_explorer_pane(TIMELINE_VIEW_ID, cx));
+    workbench.update(cx, |workbench, cx| workbench.expand_pane(crate::workbench::view_panes::PaneContainer::Explorer, TIMELINE_VIEW_ID, cx));
     (dir, workbench, receiver, cx)
 }
 

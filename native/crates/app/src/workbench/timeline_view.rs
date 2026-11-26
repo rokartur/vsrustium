@@ -151,7 +151,7 @@ impl Workbench {
 
     /// `isBodyVisible`: expanded, in the Explorer on screen.
     fn timeline_visible(&self) -> bool {
-        self.explorer_pane_expanded(TIMELINE_VIEW_ID) && self.side_bar_view == SideBarView::Explorer && self.side_bar_visible()
+        self.view_pane_expanded(super::view_panes::PaneContainer::Explorer, TIMELINE_VIEW_ID) && self.side_bar_view == SideBarView::Explorer && self.side_bar_visible()
     }
 
     /// `onActiveEditorChanged` and `setExpanded`, checked on every render: the body follows the active editor while
@@ -236,7 +236,7 @@ impl Workbench {
             None => explorer_row.map(|path| crate::editor::uri_value("file", &path)).or_else(|| self.timeline_target()),
         };
         self.side_bar_view = SideBarView::Explorer;
-        self.expand_explorer_pane(TIMELINE_VIEW_ID, cx);
+        self.expand_pane(super::view_panes::PaneContainer::Explorer, TIMELINE_VIEW_ID, cx);
         self.timeline.shown = self.timeline_visible();
         if let Some(uri) = uri {
             self.timeline.pinned = true;
@@ -620,7 +620,7 @@ impl Workbench {
 
     /// The Timeline pane of the Explorer's pane view: the shown resource as its description, the title menu, and
     /// the message or the rows (timelinePane.css).
-    pub(in crate::workbench) fn timeline_pane(&self, window: &Window, cx: &mut Context<Self>) -> super::view_panes::ExplorerPane {
+    pub(in crate::workbench) fn timeline_pane(&self, window: &Window, cx: &mut Context<Self>) -> super::view_panes::ViewPane {
         let model = &self.timeline.model;
         // timelinePane.ts `updateFilename`.
         let label = model.target_label();
@@ -657,11 +657,12 @@ impl Workbench {
             .track_scroll(&self.timeline.scroll)
             .children(rows);
         let body = div().relative().size_full().flex().flex_col().children(message).child(tree);
-        super::view_panes::ExplorerPane {
+        super::view_panes::ViewPane {
             id: TIMELINE_VIEW_ID,
             title: "Timeline".into(),
             description: Some(description).filter(|description| !description.is_empty()),
             actions: Some(self.timeline_title_actions(window, cx).into_any_element()),
+            show_actions: self.timeline.focus.is_focused(window),
             body: body.into_any_element(),
         }
     }

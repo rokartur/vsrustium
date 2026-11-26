@@ -375,7 +375,7 @@ impl Workbench {
         let sashes = grid.sashes();
         let dragging = grid.dragged_sash().is_some();
         if self.is_part_visible(Part::SideBar) {
-            self.layout_explorer_panes(parts.iter().find(|(part, _)| *part == Part::SideBar).map_or(height, |(_, [_, _, _, h])| *h) - super::layout::CARD_MARGIN, cx);
+            self.layout_view_panes(parts.iter().find(|(part, _)| *part == Part::SideBar).map_or(height, |(_, [_, _, _, h])| *h) - super::layout::CARD_MARGIN, cx);
         }
         self.sync_tree_views(cx);
         let mut editor = Some(editor);

@@ -11,6 +11,7 @@ use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
 use super::input_box_view::{InputId, InputLook, InputView};
 use super::scm_tree::TreeRow;
+use super::view_panes::{PaneContainer, SCM_CHANGES_VIEW, ViewPane};
 use crate::commands::Outcome;
 use crate::editor::TextDocument;
 use crate::input_box::InputBox;
@@ -76,7 +77,8 @@ impl ScmView {
 }
 
 impl Workbench {
-    // shortcut: the SCM Changes and webview view headers are drawn here, not as view panes of view_panes.rs; milestone 11 moves them.
+    // shortcut: the Run and Debug, Extensions and webview view headers are drawn here, not as panes of view_panes.rs;
+    // a container moves there with a `PaneContainer` variant.
     pub(super) fn section_header(&self, title: &str, expanded: bool, separated: bool) -> Div {
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
         let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| separated);
@@ -393,10 +395,11 @@ impl Workbench {
         json!({ "$mid": 5, "handle": provider.handle })
     }
 
-    /// The Source Control view: the title, then the Changes pane. Several repositories, or `scm.alwaysShowRepositories`,
-    /// show a row per repository with its children below it (scmViewPane.ts `SCMTreeDataSource.getChildren`).
+    /// The Source Control container: the Changes pane, the Graph pane while the active repository has a history
+    /// provider, then the contributed views. Several repositories, or `scm.alwaysShowRepositories`, show a row per
+    /// repository with its children below it (scmViewPane.ts `SCMTreeDataSource.getChildren`).
     pub(in crate::workbench) fn scm_side_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
-        let foreground = self.foreground_or("sideBar.foreground");
+        let foreground = self.foreground_or("sideBarSectionHeader.foreground");
         let providers = self.visible_scm_providers();
         let show_repositories = providers.len() > 1 || self.setting("scm.alwaysShowRepositories") == json!(true);
         // `updateScmProviderContextKeys` and `getActionsContext`: the title sees a repository only when it is the only row.
@@ -405,27 +408,28 @@ impl Workbench {
             _ => (self.key_context(window), Vec::new()),
         };
         self.scm_view_context(&mut context);
-        let title = self.side_bar_title("Source Control").child(self.scm_more_actions(context.clone(), args.clone(), foreground, cx));
-        let frame = self.side_bar_frame().text_color(foreground).child(title);
-        if providers.is_empty() {
-            // scmViewPane.ts: no repository shows the view's welcome content, alone in the container without a pane header.
-            return frame.children(self.view_welcome(super::views_welcome::SCM_VIEW, window, cx));
-        }
-        let title_actions = self.inline_actions(MenuId::ScmTitle, &context, args, foreground, cx);
-        let header = self.section_header("Changes", true, false).child(div().ml_auto().mr(px(4.)).flex().child(title_actions));
-        let mut rows: Vec<gpui::AnyElement> = Vec::new();
-        for provider in &providers {
-            if show_repositories {
-                rows.push(self.scm_repository_row(provider, &providers, window, cx).into_any_element());
-                if self.scm.collapsed_repositories.contains(&provider.handle) {
-                    continue;
+        let actions = div().flex().items_center().child(self.inline_actions(MenuId::ScmTitle, &context, args.clone(), foreground, cx)).child(self.scm_more_actions(context, args, foreground, cx));
+        let show_actions = self.scm.input_focus.is_focused(window) || self.scm.list_focus.is_focused(window);
+        // scmViewPane.ts: no repository shows the view's welcome content.
+        let body = match providers.is_empty() {
+            true => div().flex().flex_col().children(self.view_welcome(super::views_welcome::SCM_VIEW, window, cx)).into_any_element(),
+            false => {
+                let mut rows: Vec<gpui::AnyElement> = Vec::new();
+                for provider in &providers {
+                    if show_repositories {
+                        rows.push(self.scm_repository_row(provider, &providers, window, cx).into_any_element());
+                        if self.scm.collapsed_repositories.contains(&provider.handle) {
+                            continue;
+                        }
+                    }
+                    self.push_scm_repository_children(&mut rows, provider, providers.len(), usize::from(show_repositories), window, cx);
                 }
+                div().id("scm-list").flex_1().min_h_0().overflow_y_scroll().track_focus(&self.scm.list_focus).children(rows).into_any_element()
             }
-            self.push_scm_repository_children(&mut rows, provider, providers.len(), usize::from(show_repositories), window, cx);
-        }
-        let list = div().id("scm-list").flex_1().min_h_0().overflow_y_scroll().track_focus(&self.scm.list_focus).children(rows);
-        let graph = self.active_scm_provider().filter(|provider| provider.has_history_provider).map(|provider| self.scm_graph_section(provider, window, cx));
-        frame.child(header).child(list).children(graph)
+        };
+        let mut panes = vec![ViewPane { id: SCM_CHANGES_VIEW, title: "Changes".into(), description: None, actions: Some(actions.into_any_element()), show_actions, body }];
+        panes.extend(self.active_scm_provider().filter(|provider| provider.has_history_provider).map(|provider| self.scm_graph_pane(provider, window, cx)));
+        self.view_pane_container(PaneContainer::Scm, "Source Control", panes, window, cx).child(div().h(px(5.)).flex_none())
     }
 
     /// A repository's input, action button (`scm.showActionButton`) and groups; the groups show when some has
@@ -665,11 +669,15 @@ impl Workbench {
                 .child(div().w(px(1.)).h(px(16.)).bg(self.theme.color("button.separator").unwrap_or(foreground)))
                 .child(self.icon("chevron-down", 26., 16., foreground).cursor_pointer())
         });
+        // scmViewPane.ts `ListDelegate.getHeight`: the row is `DEFAULT_HEIGHT` 28 plus 8, the button centered in it.
         div()
+            .h(px(36.))
+            .flex_none()
+            .flex()
+            .items_center()
             .pl(px(INDENT * (1 + level) as f32 + TWISTIE))
             .pr(px(12.))
-            .pb(px(4.))
-            .child(div().h(px(26.)).flex().rounded(px(2.)).bg(background).text_color(foreground).when(!enabled, |button| button.opacity(0.4)).child(main).children(dropdown))
+            .child(div().flex_1().h(px(26.)).flex().rounded(px(2.)).bg(background).text_color(foreground).when(!enabled, |button| button.opacity(0.4)).child(main).children(dropdown))
     }
 
     fn scm_group_row(&self, provider: &Provider, group: &Group, level: usize, window: &Window, cx: &mut Context<Self>) -> gpui::Stateful<Div> {

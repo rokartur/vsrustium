@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use super::scm_view::ROW_HEIGHT;
+use super::view_panes::{PaneContainer, SCM_HISTORY_VIEW, ViewPane};
 use crate::scm::Provider;
 use crate::scm_history::{
     ColorId, HISTORY_ITEM_BASE_REF_COLOR, HISTORY_ITEM_REF_COLOR, HISTORY_ITEM_REMOTE_REF_COLOR, HistoryItem, HistoryItemKind, HistoryItemRef, HistoryItemViewModel, SCM_INCOMING_HISTORY_ITEM_ID,
@@ -26,7 +27,6 @@ type CurrentRefs = [Option<HistoryItemRef>; 3];
 /// `SCMHistoryViewModel` of the active repository with the 'auto' history item filter (the current refs).
 #[derive(Default)]
 pub struct ScmGraph {
-    collapsed: bool,
     /// The provider handle and the `$onDidChangeHistoryProviderCurrentHistoryItemRefs` values the items belong to.
     pub(super) loaded_for: Option<(u64, [Option<Value>; 3])>,
     /// Bumped on every reload, so answers to an older one are dropped.
@@ -45,7 +45,7 @@ pub struct ScmGraph {
 
 impl ScmGraph {
     fn reset(&mut self, loaded_for: Option<(u64, [Option<Value>; 3])>, refs: CurrentRefs) {
-        *self = ScmGraph { collapsed: self.collapsed, generation: self.generation + 1, loaded_for, refs, ..ScmGraph::default() };
+        *self = ScmGraph { generation: self.generation + 1, loaded_for, refs, ..ScmGraph::default() };
     }
 }
 
@@ -74,7 +74,7 @@ impl Workbench {
             }
             return;
         };
-        if self.scm_graph.collapsed {
+        if !self.view_pane_expanded(PaneContainer::Scm, SCM_HISTORY_VIEW) {
             return;
         }
         let loaded_for = (provider.handle, [provider.history_item_ref.clone(), provider.history_item_remote_ref.clone(), provider.history_item_base_ref.clone()]);
@@ -181,18 +181,9 @@ impl Workbench {
         }
     }
 
-    /// The Graph pane: its header, then the history items with their expanded changes and "Load More".
-    pub(super) fn scm_graph_section(&self, provider: &Provider, window: &Window, cx: &mut Context<Self>) -> Div {
+    /// The Graph pane: the history items with their expanded changes and "Load More".
+    pub(super) fn scm_graph_pane(&self, provider: &Provider, window: &Window, cx: &mut Context<Self>) -> ViewPane {
         let graph = &self.scm_graph;
-        let title_actions = (!graph.collapsed).then(|| self.scm_graph_title_actions(provider, window, cx));
-        let header = self.section_header("Graph", !graph.collapsed, true).id("scm-graph-header").children(title_actions).on_click(cx.listener(|workbench, _: &ClickEvent, _, cx| {
-            workbench.scm_graph.collapsed = !workbench.scm_graph.collapsed;
-            cx.notify();
-        }));
-        let section = div().flex().flex_col().child(header);
-        if graph.collapsed {
-            return section.flex_none();
-        }
         let handle = provider.handle;
         let mut rows: Vec<gpui::AnyElement> = Vec::new();
         for (index, view_model) in graph.view_models.iter().enumerate() {
@@ -205,7 +196,9 @@ impl Workbench {
         if let Some(last) = graph.view_models.last().filter(|_| has_more(&graph.view_models)) {
             rows.push(self.scm_graph_load_more_row(handle, last, cx).into_any_element());
         }
-        section.flex_1().min_h_0().child(div().id("scm-graph-list").flex_1().min_h_0().overflow_y_scroll().track_scroll(&graph.scroll).children(rows))
+        let body = div().id("scm-graph-list").flex_1().min_h_0().overflow_y_scroll().track_scroll(&graph.scroll).children(rows).into_any_element();
+        // scmHistoryViewPane.ts `ViewPaneShowActions.WhenExpanded`: the actions show while the pane is expanded.
+        ViewPane { id: SCM_HISTORY_VIEW, title: "Graph".into(), description: None, actions: Some(self.scm_graph_title_actions(provider, window, cx).into_any_element()), show_actions: true, body }
     }
 
     /// `HistoryItemRenderer.renderElement`: the graph, the subject with the author as description, the badges.

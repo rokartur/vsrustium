@@ -347,7 +347,7 @@ impl Workbench {
 
     /// The pane of a contributed view: its title (the view's `name`, or `TreeView.title`), title actions, message
     /// and rows.
-    pub(super) fn tree_view_pane(&self, id: &'static str, window: &Window, cx: &mut Context<Self>) -> super::view_panes::ExplorerPane {
+    pub(super) fn tree_view_pane(&self, id: &'static str, window: &Window, cx: &mut Context<Self>) -> super::view_panes::ViewPane {
         let focus = self.tree_views.focus[id].clone();
         let name = self.tree_views.views.iter().find(|view| view.id == id).map(|view| view.name.clone()).unwrap_or_default();
         let empty = CustomTree::default();
@@ -372,7 +372,7 @@ impl Workbench {
             .children(message)
             .children(rows)
             .into_any_element();
-        super::view_panes::ExplorerPane { id, title, description: tree.description.clone(), actions: Some(actions), body }
+        super::view_panes::ViewPane { id, title, description: tree.description.clone(), actions: Some(actions), show_actions: focused, body }
     }
 
     #[allow(clippy::too_many_arguments)]

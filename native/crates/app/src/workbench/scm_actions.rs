@@ -605,8 +605,8 @@ fn flatten_submenus(actions: Vec<MenuAction>) -> Vec<MenuAction> {
 type Row = (MenuId, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>, Option<&'static str>);
 const SCM_MENUS: &[Row] = &[
     (MenuId::ScmTitle, "", "View & Sort", "0_view&sort", 1., Some("view == 'workbench.scm' && scmRepositoryCount != 0"), None, None),
-    (MenuId::ScmTitle, "workbench.scm.action.setListViewModeNavigation", "View as List", "navigation", -1000., Some("view == 'workbench.scm' && scmRepositoryCount != 0 && scmViewMode == 'tree'"), None, Some("scmViewMode == 'list'")),
-    (MenuId::ScmTitle, "workbench.scm.action.setTreeViewModeNavigation", "View as Tree", "navigation", -1000., Some("view == 'workbench.scm' && scmRepositoryCount != 0 && scmViewMode == 'list'"), None, Some("scmViewMode == 'tree'")),
+    // Not listed: setListViewModeNavigation and setTreeViewModeNavigation, `isHiddenByDefault` and the port has no
+    // toolbar context menu that shows a hidden action.
     (
         MenuId::ScmTitle,
         "workbench.scm.action.collapseAllRepositories",
@@ -673,9 +673,7 @@ const SCM_MENUS: &[Row] = &[
 ];
 
 /// The codicons of the actions above (`icon` of their `Action2`).
-const SCM_ICONS: [(&str, &str); 8] = [
-    ("workbench.scm.action.setListViewModeNavigation", "list-tree"),
-    ("workbench.scm.action.setTreeViewModeNavigation", "list-flat"),
+const SCM_ICONS: [(&str, &str); 6] = [
     ("workbench.scm.action.collapseAllRepositories", "collapse-all"),
     ("workbench.scm.action.expandAllRepositories", "expand-all"),
     ("workbench.scm.action.graph.revealCurrentHistoryItem", "target"),

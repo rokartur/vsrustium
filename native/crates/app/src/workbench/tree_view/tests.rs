@@ -82,7 +82,7 @@ fn a_collapsed_view_fetches_nothing_until_its_pane_expands(cx: &mut TestAppConte
     request(&workbench, cx, "$refresh", json!([VIEW]));
     assert_eq!(sent(&receiver, cx, &[]), Vec::<String>::new(), "treeView.ts: no tree, no fetch");
 
-    workbench.update(cx, |workbench, cx| workbench.expand_explorer_pane(VIEW, cx));
+    workbench.update(cx, |workbench, cx| workbench.expand_pane(crate::workbench::view_panes::PaneContainer::Explorer, VIEW, cx));
     let roots = json!([[0, item("a", None, 1), item("b", None, 0)]]);
     let messages = sent(&receiver, cx, &[(Value::Null, roots)]);
     assert!(messages.contains(&format!("$activateByEvent([\"onView:{VIEW}\",0])")), "{messages:?}");

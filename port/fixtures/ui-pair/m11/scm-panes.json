@@ -1,0 +1,14 @@
+[
+  {"hotkey": ["ctrl", "shift", "g"]},
+  {"wait": 2500},
+  {"shot": "scm"},
+  {"click": [100, 408]},
+  {"wait": 600},
+  {"shot": "graph-collapsed"},
+  {"click": [100, 82]},
+  {"wait": 600},
+  {"shot": "changes-collapsed"},
+  {"hover": [100, 700]},
+  {"wait": 600},
+  {"shot": "graph-hovered"}
+]
