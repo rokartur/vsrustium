@@ -59,6 +59,8 @@ impl Workbench {
         self.restore_explorer_view_state();
         self.restore_editor_view_states();
         self.restore_editor_part_state();
+        // explorerView.ts: the view shown at startup runs `selectActiveFile(true)` for the restored editor.
+        self.reveal_active_file();
         self.restore_debug_state();
         self.restore_problems_state();
         self.restore_outline_state();

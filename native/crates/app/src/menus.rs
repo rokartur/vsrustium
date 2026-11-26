@@ -451,8 +451,8 @@ const APPEARANCE_TOGGLES: [ToggleRow; 23] = [
     (MenuId::MenubarAppearanceMenu, "editor.action.toggleRenderControlCharacter", "Render &&Control Characters", "4_editor", 5., "", "config.editor.renderControlCharacters"),
 ];
 
-/// themes.contribution.ts: `ThemesSubMenu` items; the product icon theme picker is not ported.
-const THEMES_SUBMENU: [(&str, &str, f64); 2] = [("workbench.action.selectTheme", "Color Theme", 1.), ("workbench.action.selectIconTheme", "File Icon Theme", 2.)];
+/// themes.contribution.ts: `ThemesSubMenu` items.
+const THEMES_SUBMENU: [(&str, &str, f64); 3] = [("workbench.action.selectTheme", "Color Theme", 1.), ("workbench.action.selectIconTheme", "File Icon Theme", 2.), ("workbench.action.selectProductIconTheme", "Product Icon Theme", 3.)];
 
 /// titlebarActions.ts `ToggleTitleBarConfigAction`s of the title bar parts the port draws: setting, title, order,
 /// `when`. Editor Actions, Notifications and Integrated Browser toggle parts the port has not.

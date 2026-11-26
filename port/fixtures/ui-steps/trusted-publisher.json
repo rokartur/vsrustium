@@ -1,0 +1,18 @@
+[
+  {"wait": 3000},
+  {"hotkey": ["cmd", "shift", "p"]},
+  {"wait": 800},
+  {"type": "Configure Display Language"},
+  {"wait": 1500},
+  {"key": "return"},
+  {"wait": 10000},
+  {"shot": "picker"},
+  {"type": "Deutsch"},
+  {"wait": 2000},
+  {"shot": "typed"},
+  {"key": "return"},
+  {"wait": 15000},
+  {"shot": "dialog"},
+  {"key": "escape"},
+  {"wait": 500}
+]

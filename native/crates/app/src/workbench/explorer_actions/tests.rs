@@ -359,6 +359,34 @@ fn closing_the_window_stores_the_tree_view_state_for_the_next_open(cx: &mut Test
     assert_eq!(restored, (true, Some(dir.join("sub/b.txt"))));
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// explorerView.ts: the Explorer shown at startup runs `selectActiveFile(true)`, so a restored editor's file is
+/// selected and its folders expand.
+#[gpui::test]
+fn the_restored_editor_file_is_selected_after_a_restart(cx: &mut TestAppContext) {
+    let (dir, workbench, window_cx) = explorer("explorer-restored-editor", cx);
+    std::fs::write(dir.join("sub/b.txt"), "b").unwrap();
+    workbench.update_in(window_cx, |workbench, window, cx| workbench.open_file(dir.join("sub/b.txt"), true, window, cx));
+    window_cx.run_until_parked();
+    let saved = workbench.read_with(window_cx, |workbench, _| workbench.workspace_storage.lock().unwrap().get("memento/workbench.parts.editor").map(str::to_owned).unwrap());
+    let storage = std::sync::Arc::new(std::sync::Mutex::new(storage::Storage::in_memory()));
+    storage.lock().unwrap().set("memento/workbench.parts.editor", saved);
+
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
+    let folder = dir.clone();
+    let (reopened, window_cx) = cx.add_window_view(|_, cx| {
+        let mut workbench = Workbench::new(theme, app_root.clone(), Some(Workspace::folder(folder)), Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.restore_workspace_state(storage);
+        workbench
+    });
+    let restored = reopened.read_with(window_cx, |workbench, _| {
+        let tree = workbench.folder.as_ref().unwrap();
+        (tree.is_expanded(&dir.join("sub")), tree.focused.clone(), tree.selected.clone())
+    });
+    assert_eq!(restored, (true, Some(dir.join("sub/b.txt")), vec![dir.join("sub/b.txt")]));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
 #[gpui::test]
 fn opening_a_file_reveals_it_unless_auto_reveal_is_off_or_excludes_it(cx: &mut TestAppContext) {
     let (dir, workbench, cx) = explorer("explorer-auto-reveal", cx);

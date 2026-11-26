@@ -1,0 +1,12 @@
+{
+	"fonts": [
+		{ "id": "fixture", "src": [{ "path": "./codicon.ttf", "format": "truetype" }], "weight": "normal", "style": "normal" }
+	],
+	"iconDefinitions": {
+		"files": { "fontCharacter": "\\EB05" },
+		"search": { "fontCharacter": "\\EB59" },
+		"source-control": { "fontCharacter": "\\EAF2" },
+		"debug-alt": { "fontCharacter": "\\EB44" },
+		"extensions": { "fontCharacter": "\\EA79" }
+	}
+}

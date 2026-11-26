@@ -9,6 +9,7 @@ mod actions;
 mod breakpoint_widget;
 mod bulk_text_edits;
 mod configuration;
+mod configuration_migration;
 mod content_hover;
 mod content_hover_view;
 mod editor_groups;
@@ -194,6 +195,7 @@ use status_entries::{EDITOR_STATUS_PRIORITY, PROBLEMS_PRIORITY};
 pub mod themes;
 mod quick_input_view;
 mod text_files;
+mod trusted_publishers;
 pub(crate) mod text_model_resolver;
 mod control_characters;
 mod large_file;
@@ -271,6 +273,8 @@ pub struct Workbench {
     pub languages: Languages,
     /// `None` draws files without icons, as `workbench.iconTheme: null` does.
     pub file_icons: Option<FileIconTheme>,
+    /// `None` is the Default product icon theme: the codicons.
+    pub product_icons: Option<crate::product_icons::ProductIconTheme>,
     pub editors: EditorGroup,
     /// The window's settings, shared with the extension host thread that reloads them on file changes.
     pub settings: Arc<Mutex<Settings>>,
@@ -581,6 +585,7 @@ impl Workbench {
             folder: workspace.map(|workspace| FileTree::new(workspace, settings.clone())),
             languages,
             file_icons: None,
+            product_icons: None,
             editors: EditorGroup::default(),
             settings,
             host,
@@ -851,6 +856,7 @@ impl Workbench {
         workbench.start_system_events(cx);
         workbench.user_activity(cx);
         workbench.register_extension_management_commands();
+        workbench.register_trusted_publisher_commands();
         workbench.register_extension_host_commands();
         workbench.register_user_data_profile_commands();
         workbench.register_profiles_editor_commands();
@@ -1615,15 +1621,18 @@ impl Workbench {
         Some(div().h_full().ml(px(3.)).px(px(5.)).flex().items_center().child(message))
     }
 
-    /// A codicon centered in a square box. Drawn from the icon's SVG: Wu's text system skips fonts
-    /// without an 'm' glyph, so codicon.ttf cannot load (gpui_macos text_system.rs load_family).
+    /// A codicon centered in a square box, or the product icon theme's glyph for it. Drawn as SVG: Wu's text system
+    /// skips fonts without an 'm' glyph, so icon fonts cannot load (gpui_macos text_system.rs load_family).
     fn icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba) -> Div {
         self.turned_icon(name, box_size, icon_size, color, 0.)
     }
 
     /// An icon rotated by `turns` of a full turn, clockwise.
     fn turned_icon(&self, name: &str, box_size: f32, icon_size: f32, color: Rgba, turns: f32) -> Div {
-        let path = crate::codicons::svg_path(&self.app_root, crate::symbol_icons::svg_name(name));
+        let icon = match self.product_icons.as_ref().and_then(|theme| theme.svg(name, icon_size)) {
+            Some(glyph) => svg().data(glyph.as_bytes()),
+            None => svg().external_path(crate::codicons::svg_path(&self.app_root, crate::symbol_icons::svg_name(name)).to_string_lossy().into_owned()),
+        };
         div()
             .relative()
             .size(px(box_size))
@@ -1631,7 +1640,7 @@ impl Workbench {
             .flex()
             .items_center()
             .justify_center()
-            .child(svg().external_path(path.to_string_lossy().into_owned()).size(px(icon_size)).text_color(color).with_transformation(gpui::Transformation::rotate(gpui::percentage(turns))))
+            .child(icon.size(px(icon_size)).text_color(color).with_transformation(gpui::Transformation::rotate(gpui::percentage(turns))))
     }
 }
 

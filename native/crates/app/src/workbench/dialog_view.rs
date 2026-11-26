@@ -228,34 +228,90 @@ impl Workbench {
             .into_any_element()
     }
 
-    /// A rendered markdown paragraph: its links open through the opener, `` `code` `` shows in the editor font.
+    /// A rendered markdown paragraph: its links open through the opener, `` `code` `` shows in the editor font,
+    /// `**bold**`, backslash escapes and `&nbsp;` render, and a leading `$(icon)` (supportThemeIcons) is drawn.
     fn dialog_markdown(&self, index: usize, markdown: &str, cx: &mut Context<Self>) -> AnyElement {
         let link_color = self.color("textLink.foreground");
         if let Some(code) = markdown.strip_prefix('`').and_then(|rest| rest.strip_suffix('`')) {
             return div().font_family("Menlo").child(code.to_owned()).into_any_element();
         }
+        let (icon, markdown) = match markdown.strip_prefix("$(").and_then(|rest| rest.split_once(')')) {
+            Some((icon, rest)) => (Some(icon.to_owned()), rest),
+            None => (None, markdown),
+        };
         let mut text = String::new();
-        let mut links = Vec::new();
+        // Per run of output text: whether it is bold and the link it belongs to.
+        let mut runs: Vec<(std::ops::Range<usize>, bool, Option<usize>)> = Vec::new();
         let mut hrefs = Vec::new();
         for node in parse_linked_text(markdown) {
-            match node {
-                Node::Text(value) => text.push_str(&value),
+            let (raw, link) = match node {
+                Node::Text(value) => (value, None),
                 Node::Link { label, href, .. } => {
-                    links.push(text.len()..text.len() + label.len());
                     hrefs.push(href);
-                    text.push_str(&label);
+                    (label, Some(hrefs.len() - 1))
                 }
+            };
+            append_inline_markdown(&raw, link, &mut text, &mut runs);
+        }
+        let link_style = HighlightStyle { color: Some(link_color.into()), underline: Some(gpui::UnderlineStyle { thickness: px(1.), color: Some(link_color.into()), wavy: false }), ..Default::default() };
+        let mut highlights = Vec::new();
+        let mut links: Vec<std::ops::Range<usize>> = Vec::new();
+        for (range, bold, link) in runs {
+            let weight = bold.then_some(FontWeight::BOLD);
+            match link {
+                Some(link) => {
+                    highlights.push((range.clone(), HighlightStyle { font_weight: weight, ..link_style }));
+                    match links.get_mut(link) {
+                        Some(existing) => existing.end = range.end,
+                        None => links.push(range),
+                    }
+                }
+                None if bold => highlights.push((range, HighlightStyle { font_weight: weight, ..Default::default() })),
+                None => {}
             }
         }
-        let style = HighlightStyle { color: Some(link_color.into()), underline: Some(gpui::UnderlineStyle { thickness: px(1.), color: Some(link_color.into()), wavy: false }), ..Default::default() };
-        let highlights = links.iter().map(|range| (range.clone(), style)).collect::<Vec<_>>();
         let weak = cx.entity().downgrade();
-        InteractiveText::new(("dialog-markdown", index), StyledText::new(text).with_highlights(highlights))
-            .on_click(links, move |index, window, cx| {
-                let href = hrefs[index].clone();
-                let _ = weak.update(cx, |workbench, cx| workbench.open_notification_link(&href, window, cx));
-            })
-            .into_any_element()
+        let text = InteractiveText::new(("dialog-markdown", index), StyledText::new(text).with_highlights(highlights)).on_click(links, move |index, window, cx| {
+            let href = hrefs[index].clone();
+            let _ = weak.update(cx, |workbench, cx| workbench.open_notification_link(&href, window, cx));
+        });
+        match icon {
+            // shortcut: GPUI's StyledText holds no inline elements, so the icon sits beside the text; wraps under it differ.
+            Some(icon) => div().flex().items_center().child(self.icon(&icon, 16., 14., self.color("editorWidget.foreground"))).child(text).into_any_element(),
+            None => text.into_any_element(),
+        }
+    }
+}
+
+/// The inline markdown of a text run: `\x` escapes, `&nbsp;` and `**` bold; an inline `$(icon)` inside a link label
+/// is dropped.
+fn append_inline_markdown(raw: &str, link: Option<usize>, text: &mut String, runs: &mut Vec<(std::ops::Range<usize>, bool, Option<usize>)>) {
+    let mut bold = false;
+    let mut start = text.len();
+    let mut rest = raw;
+    while let Some(char) = rest.chars().next() {
+        if let Some(after) = rest.strip_prefix("**") {
+            if text.len() > start {
+                runs.push((start..text.len(), bold, link));
+            }
+            bold = !bold;
+            start = text.len();
+            rest = after;
+        } else if let Some(after) = rest.strip_prefix("&nbsp;") {
+            text.push('\u{a0}');
+            rest = after;
+        } else if let Some((_, after)) = rest.strip_prefix("$(").and_then(|icon| icon.split_once(')')) {
+            rest = after.strip_prefix(' ').unwrap_or(after);
+        } else if let Some(escaped) = rest.strip_prefix('\\').and_then(|after| after.chars().next()) {
+            text.push(escaped);
+            rest = &rest[1 + escaped.len_utf8()..];
+        } else {
+            text.push(char);
+            rest = &rest[char.len_utf8()..];
+        }
+    }
+    if text.len() > start {
+        runs.push((start..text.len(), bold, link));
     }
 }
 

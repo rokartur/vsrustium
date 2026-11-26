@@ -151,22 +151,41 @@ impl Workbench {
             self.extensions_viewlet.installing.push(lower.clone());
             self.refresh_extensions_views(cx);
         }
-        let download = cx.background_executor().spawn(async move {
+        let trusted = self.user_trusted_publishers();
+        let lookup = cx.background_executor().spawn(async move {
             if builtin {
                 anyhow::bail!("The extension '{id}' cannot be installed because it was not found.");
             }
             let gallery = Gallery::open_vsx(crate::VERSION);
             let extension = gallery.installable_extension(&id, version.as_deref(), pre_release)?;
-            let vsix = gallery.download(&extension, operation, &downloads, verify_signature)?;
-            Ok((vsix, extension))
+            let others = super::trusted_publishers::other_untrusted_publishers(&gallery, &extension, &trusted);
+            Ok((extension, others))
         });
         let (sender, receiver) = oneshot::channel();
         cx.spawn(async move |workbench, cx| {
+            // `installFromGallery`: `checkForTrustedPublishers` runs before the download.
+            let download = async {
+                let (extension, others) = lookup.await?;
+                let trust = workbench.update(cx, |workbench, cx| workbench.check_trusted_publishers(&extension, others, cx))?;
+                if let Some(trust) = trust
+                    && !trust.await.unwrap_or(false)
+                {
+                    anyhow::bail!(super::trusted_publishers::CANCELED);
+                }
+                let gallery = Gallery::open_vsx(crate::VERSION);
+                cx.background_executor().spawn(async move { gallery.download(&extension, operation, &downloads, verify_signature).map(|vsix| (vsix, extension)) }).await
+            };
             let installed = match download.await {
-                Ok((vsix, extension)) => workbench.update(cx, |workbench, cx| workbench.run_extension_jobs(vec![Job::InstallGallery(vsix, Box::new(extension))], None, cx, |error| error)),
+                Ok((vsix, extension)) => workbench.update(cx, |workbench, cx| {
+                    // `onProfileAwareDidInstallExtensions`: a gallery install trusts its publisher.
+                    workbench.trust_publishers(&[(extension.publisher.clone(), extension.publisher_display_name.clone())]);
+                    workbench.run_extension_jobs(vec![Job::InstallGallery(vsix, Box::new(extension))], None, cx, |error| error)
+                }),
                 Err(error) => workbench.update(cx, |workbench, cx| {
                     let error = format!("{error:#}");
-                    workbench.notify_error(error.clone());
+                    if error != super::trusted_publishers::CANCELED {
+                        workbench.notify_error(error.clone());
+                    }
                     cx.notify();
                     Outcome::Ready(Err(serialized_error(&error)))
                 }),

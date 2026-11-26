@@ -268,14 +268,14 @@ impl Associations {
 }
 
 /// `"\\E023"` (a CSS escape) or the character itself.
-fn font_character(text: &str) -> Option<char> {
+pub(crate) fn font_character(text: &str) -> Option<char> {
     match text.strip_prefix('\\') {
         Some(hex) => char::from_u32(u32::from_str_radix(hex, 16).ok()?),
         None => text.chars().next(),
     }
 }
 
-fn glyph_outline(face: &ttf_parser::Face, character: char) -> Option<(String, f32)> {
+pub(crate) fn glyph_outline(face: &ttf_parser::Face, character: char) -> Option<(String, f32)> {
     struct SvgPath(String);
     impl ttf_parser::OutlineBuilder for SvgPath {
         fn move_to(&mut self, x: f32, y: f32) {
@@ -300,7 +300,7 @@ fn glyph_outline(face: &ttf_parser::Face, character: char) -> Option<(String, f3
 }
 
 /// WOFF 1.0: the sfnt tables, each zlib-compressed when that made it smaller. Rebuilds the plain sfnt.
-fn woff_to_sfnt(woff: &[u8]) -> anyhow::Result<Vec<u8>> {
+pub(crate) fn woff_to_sfnt(woff: &[u8]) -> anyhow::Result<Vec<u8>> {
     let bytes = |offset: usize, length: usize| woff.get(offset..offset + length).context("truncated woff");
     let u32_at = |offset: usize| Ok::<_, anyhow::Error>(u32::from_be_bytes(bytes(offset, 4)?.try_into()?));
     anyhow::ensure!(bytes(0, 4)? == b"wOFF", "not a woff 1.0 font");

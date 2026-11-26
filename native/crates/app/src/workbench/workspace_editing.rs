@@ -157,6 +157,8 @@ impl Workbench {
         tree.workspace = workspace.clone();
         self.host.send_workspace_data(&workspace);
         self.configuration_changed(change, before, cx);
+        // configuration.ts `onDidChangeWorkspaceFolders`: the added folders' settings migrate too.
+        self.migrate_configurations(cx);
         self.text_files.watched_files.clear();
         self.start_file_watcher(cx);
         if let Some(window) = window.filter(|_| first_changed && !std::env::args().any(|arg| arg.starts_with("--extensionTestsPath"))) {

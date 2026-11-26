@@ -32,6 +32,7 @@ mod extension_recommendations;
 mod extensions_model;
 mod file_actions;
 mod file_icons;
+mod product_icons;
 mod filters;
 mod history;
 mod fuzzy_scorer;
@@ -494,6 +495,7 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.cli_profile = cli_profile.clone();
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
                 workbench.watch_settings_files(window, cx);
+                workbench.migrate_configurations(cx);
                 workbench.watch_policies(cx);
                 workbench.start_file_watcher(cx);
                 workbench.start_system_wide_keybindings(window, cx);
@@ -503,6 +505,7 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.command_icons = menus::command_icons(&extensions);
                 workbench.status_entries = main_thread_status_bar::static_entries(&extensions);
                 workbench.file_icons = file_icons;
+                workbench.product_icons = product_icons::settings_product_icons(&extensions, &settings.lock().unwrap());
                 workbench.color_themes = color_themes;
                 workbench.set_tree_views(&extensions);
                 workbench.host.set_running_extensions(&extensions);
