@@ -47,6 +47,7 @@ mod system_wide_keybindings;
 mod language_features;
 mod languages;
 mod launch;
+mod diagnostics;
 mod list_tree;
 mod link_computer;
 mod local_history;
@@ -168,8 +169,18 @@ fn main() -> anyhow::Result<()> {
         None => default_user_data()?,
     };
     std::fs::create_dir_all(&user_data).with_context(|| format!("creating {}", user_data.display()))?;
+    // Packaged as VSRustium.app (port/tools/package-app) the app files sit in Contents/Resources/app; run from the
+    // checkout they are the working directory.
+    let bundled = std::env::current_exe()?.parent().and_then(|macos| macos.parent()).map(|contents| contents.join("Resources/app")).filter(|app| app.join("product.json").is_file());
+    let working_dir = std::env::current_dir()?;
+    let app_root = bundled.unwrap_or_else(|| working_dir.clone());
+    product::load(&app_root);
     let socket = launch::socket_path(&user_data);
-    if launch::send_to_running_instance(&socket, &args, &std::env::current_dir()?) {
+    if args.iter().any(|arg| arg == "--status" || arg == "-s") {
+        diagnostics::print_status(&socket);
+        return Ok(());
+    }
+    if launch::send_to_running_instance(&socket, &args, &working_dir) {
         return Ok(());
     }
     let launches = launch::listen(&socket);
@@ -188,14 +199,7 @@ fn main() -> anyhow::Result<()> {
     let development = ExtensionDevelopment::from_args(&args)?;
     // shortcut: the port is no app bundle, so no CFBundleURLTypes routes `code-oss://` here; `--open-url <url>` does.
     let open_url = flag_value("--open-url");
-    apply_shell_env(args.iter().any(|arg| arg == "--force-disable-user-env"));
-
-    // Packaged as VSRustium.app (port/tools/package-app) the app files sit in Contents/Resources/app; run from the
-    // checkout they are the working directory.
-    let bundled = std::env::current_exe()?.parent().and_then(|macos| macos.parent()).map(|contents| contents.join("Resources/app")).filter(|app| app.join("product.json").is_file());
-    let working_dir = std::env::current_dir()?;
-    let app_root = bundled.unwrap_or_else(|| working_dir.clone());
-    product::load(&app_root);
+    let shell_env_error = apply_shell_env(args.iter().any(|arg| arg == "--force-disable-user-env"), &user_data);
     // main.ts: `--export-default-keybindings [folder]`, a folder relative to the working directory, else `<appRoot>/doc`.
     let export_default_keybindings = args.iter().any(|arg| arg == "--export-default-keybindings").then(|| {
         flag_value("--export-default-keybindings").filter(|folder| !folder.starts_with("--")).map_or_else(|| app_root.join("doc"), |folder| working_dir.join(folder))
@@ -262,6 +266,12 @@ fn main() -> anyhow::Result<()> {
         {
             eprintln!("{error:#}");
             std::process::exit(1);
+        }
+        // app.ts `resolveShellEnvironment(..., notifyOnError: true)` once the first window opened: to the focused one.
+        if let Some(message) = shell_env_error
+            && let Some(handle) = cx.window_stack().unwrap_or_else(|| cx.windows()).into_iter().find_map(|handle| handle.downcast::<Workbench>())
+        {
+            let _ = handle.update(cx, |workbench, window, cx| workbench.show_resolve_shell_env_error(message, window, cx));
         }
         workbench::menubar::install(cx);
         if let Some(launches) = launches {
@@ -759,18 +769,23 @@ fn open_shared_storage(shared_data: Option<PathBuf>) -> anyhow::Result<storage::
 
 /// main.ts `resolveShellEnv` merged into `process.env`: a Dock launch gets the login shell's PATH for the host,
 /// terminals and tasks. Runs before any thread starts, so changing the environment is sound.
-// shortcut: the timeout is the 10 s default, `application.shellEnvironmentResolutionTimeout` is read later than this; read it here once settings load first.
-fn apply_shell_env(force_disable: bool) {
+fn apply_shell_env(force_disable: bool, user_data: &Path) -> Option<String> {
     let env: std::collections::HashMap<String, String> = std::env::vars_os().filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?))).collect();
-    match shell_env::resolve_shell_env(&env, force_disable, std::time::Duration::from_secs(10)) {
+    let user_settings = Settings::load(Registry::with_extensions(&[]), user_data.join("User"), None);
+    let timeout = shell_env::resolution_timeout(user_settings.get_value(Some("application.shellEnvironmentResolutionTimeout"), &Overrides::default()));
+    match shell_env::resolve_shell_env(&env, force_disable, timeout) {
         Some(Ok(resolved)) => {
             for (key, value) in resolved {
                 // SAFETY: called from main before the host, the UI or any other thread starts.
                 unsafe { std::env::set_var(key, value) };
             }
+            None
         }
-        Some(Err(message)) => eprintln!("[shellEnv] {message}"),
-        None => {}
+        Some(Err(message)) => {
+            eprintln!("[shellEnv] {message}");
+            Some(message)
+        }
+        None => None,
     }
 }
 

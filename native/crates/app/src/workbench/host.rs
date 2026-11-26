@@ -59,6 +59,21 @@ impl Workbench {
         context.insert("isWindowAlwaysOnTop".into(), Value::Bool(always_on_top));
     }
 
+    /// window.ts `vscode:showResolveShellEnvError`: the error of resolving the login shell's environment at startup.
+    pub fn show_resolve_shell_env_error(&mut self, message: String, window: &mut Window, cx: &mut Context<Self>) {
+        let reply = self.prompt_notification(crate::notifications::Severity::Error, message, &["Restart", "Configure", "Learn More"]);
+        cx.spawn_in(window, async move |workbench, cx| {
+            let Ok(Ok(choice)) = reply.await else { return };
+            let _ = workbench.update_in(cx, |workbench, window, cx| match choice.as_u64() {
+                Some(0) => super::relauncher::relaunch(cx),
+                Some(1) => drop(workbench.execute_command("workbench.action.openSettings", vec![serde_json::json!({ "query": "application.shellEnvironmentResolutionTimeout" })], window, cx)),
+                Some(2) => cx.open_url("https://go.microsoft.com/fwlink/?linkid=2149667"),
+                _ => {}
+            });
+        })
+        .detach();
+    }
+
     /// The window's extension host session ends once the workbench is released (its window closed); `ended` answers
     /// when the session thread is done with the window's storage.
     pub fn watch_session_end(&mut self, closed: Arc<AtomicBool>, ended: oneshot::Receiver<()>, cx: &mut Context<Self>) {

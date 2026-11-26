@@ -128,7 +128,7 @@ fn system_info(screen_reader: bool, empty_workspace: bool) -> Vec<String> {
 }
 
 /// `os.freemem()` on macOS: free pages times the page size (libuv's `uv_get_free_memory`).
-fn free_memory() -> f64 {
+pub(crate) fn free_memory() -> f64 {
     let vm_stat = run("vm_stat", &[]);
     let page_size = vm_stat.split("page size of ").nth(1).and_then(|rest| rest.split(' ').next()).and_then(|size| size.parse::<f64>().ok()).unwrap_or(16384.);
     let free_pages = vm_stat.lines().find(|line| line.starts_with("Pages free:")).and_then(|line| line.split(':').nth(1)).and_then(|pages| pages.trim().trim_end_matches('.').parse::<f64>().ok()).unwrap_or_default();
