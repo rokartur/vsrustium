@@ -9,6 +9,16 @@ Not reached: tests of the reference run (402 folder, 4 workspace) the port did n
 | api-folder | 35 | 41 | 133 | 193 | timed out after 1800s |
 | api-workspace | 0 | 0 | 4 | 0 | exit 1 after 0s |
 
+## Milestone 20 sweep: the whole folder suite
+
+`MOCHA_GREP='^(?!(chat|lm |vscode API - browser|Notebook|ipynb|Interactive Window))' SUITE_TIMEOUT=780 port/tools/api-tests` on the Studio (branch port-m20-sweep): every suite except the removed features (chat, lm, the integrated browser) and notebooks (session m17b).
+
+| run | api-folder passing / pending / failing | api-workspace |
+|-----|---------------------------------------|---------------|
+| at 44a309311e1 (port-integrate) | 274 / 17 / 7, exit 1 after 252 s | 4 / 0 / 0 |
+| after the four milestone 20 code commits | 278 / 17 / 3, exit 1 after 41 s | 4 / 0 / 0 |
+
+The suite runs to its end. Fixed in between: `vscode API - network proxy support` basic auth (`$lookupAuthorization`), and the three CustomExecution task tests (`runTask` with a task name showed the problem matcher picker; the 60 s timeouts are gone, hence 41 s). Left: `env.remoteName` (asserts the removed `vscode.github-authentication`), `custom root certificate` (passes with `--node`; Bun's TLS secure context has no `context.addCACert`), `Tabs - Ensure tabs getter is correct` (opens a notebook, milestone 17).
 ## Milestone 11: tree views and editor groups
 
 `MOCHA_GREP="vscode API - tree|vscode API - window" SUITE_TIMEOUT=600 port/tools/api-tests` on the Studio, the working tree after the panel commit d1e955ab4cf with tree views and decorations: api-folder 33 passing, 0 pending, 11 failing (exit 1 after 10s). All four tree.test.ts cases pass (`TreeView - element already registered`, `... after rapid root refresh`, `... during switch and update`, `... after refresh`). The 11 failing are window.test.ts cases that open editors in view columns, which `$tryShowTextDocument` ignored then, plus `Tabs - vscode.open & vscode.diff` (fake-fs, `_workbench.diff`) and `showWorkspaceFolderPick` (`_workbench.pickWorkspaceFolder` not found).

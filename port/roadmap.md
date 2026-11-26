@@ -164,7 +164,7 @@ Made later: the integrated browser (`browserView`, `MainThreadBrowsers`) is `rem
 
 Open:
 
-1. No milestone yet: `workbench/services/sharedProcess` `workbench/services/utilityProcess` (Artur: not `n/a`).
+1. Closed in the milestone 20 sweep: `workbench/services/sharedProcess` `workbench/services/utilityProcess` (Artur: not `n/a`) are documented 1:1 by what replaces each channel (port/notes.md milestone 20).
 
 ## Open findings outside the milestones
 
