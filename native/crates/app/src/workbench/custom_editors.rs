@@ -465,7 +465,7 @@ impl Workbench {
 }
 
 /// editorResolverService.ts `globMatchesResource` for one resource.
-fn resource_matcher(scheme: &str, path: &Path) -> Option<impl Fn(&str) -> bool> {
+pub(super) fn resource_matcher(scheme: &str, path: &Path) -> Option<impl Fn(&str) -> bool> {
     // These schemes match no glob.
     if matches!(scheme, "extension" | WEBVIEW_PANEL_SCHEME | "vscode-workspace-trust" | "vscode-settings") {
         return None;

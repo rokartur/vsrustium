@@ -13,7 +13,13 @@ use crate::session::Session;
 /// `$tryApplyWorkspaceEdit`: `false` with a warning when an edit fails.
 pub fn serve(session: &mut Session, req: u32, args: &[Arg]) -> Message {
     let dto = match args.first() {
-        Some(Arg::Json(value) | Arg::JsonWithBuffers { json: value, .. }) => value.clone(),
+        Some(Arg::Json(value)) => value.clone(),
+        // Cell edits carry their outputs' bytes as buffers.
+        Some(Arg::JsonWithBuffers { json, buffers }) => {
+            let mut value = json.clone();
+            crate::session::restore_buffer_refs(&mut value, buffers);
+            value
+        }
         _ => Value::Null,
     };
     let undo_redo_group_id = match args.get(1) {
@@ -58,8 +64,7 @@ pub(crate) fn apply(fs: &mut Providers, dto: &Value, undo_redo_group_id: Option<
             // The bulk edit undo element waits for the workbench undo stack of the Explorer operations (port/notes.md).
             EditKind::File => _ = operations::apply(fs, group.iter().map(file_edit).collect::<files::Result<_>>()?, undo_redo_group_id)?,
             EditKind::Text => text_edits(fs, group)?,
-            // Notebook cell edits need the notebook models (milestone 13); until then they fail here.
-            EditKind::Cell => return Err(files::plain_error("cell edits are not supported yet")),
+            EditKind::Cell => cell_edits(fs, group)?,
         }
     }
     Ok(())
@@ -96,6 +101,15 @@ fn text_edits(fs: &mut Providers, group: &[Value]) -> files::Result<()> {
         }
     }
     match fs.session.ask_workbench("workbench", "applyTextEdits", vec![json!(group), json!(provider_files)]) {
+        Some(Ok(_)) => Ok(()),
+        Some(Err(error)) => Err(files::plain_error(error["message"].as_str().unwrap_or_default())),
+        None => Err(files::plain_error("Canceled")),
+    }
+}
+
+/// bulkCellEdits.ts `BulkCellEdits.apply` runs in the workbench, which has the notebook models.
+fn cell_edits(fs: &mut Providers, group: &[Value]) -> files::Result<()> {
+    match fs.session.ask_workbench("workbench", "applyCellEdits", vec![json!(group)]) {
         Some(Ok(_)) => Ok(()),
         Some(Err(error)) => Err(files::plain_error(error["message"].as_str().unwrap_or_default())),
         None => Err(files::plain_error("Canceled")),

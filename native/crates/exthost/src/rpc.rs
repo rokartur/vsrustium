@@ -30,12 +30,48 @@ pub fn undefined() -> Value {
     serde_json::json!({ "$$ref$$": -1 })
 }
 
+/// How the app writes a `VSBuffer` in the JSON of a host call: `{"$vsbuffer": <base64>}`.
+pub const VSBUFFER_KEY: &str = "$vsbuffer";
+/// How the app marks a `SerializableObjectWithBuffers` argument: `{"$withBuffers": <json>}`, its buffers written as
+/// `VSBUFFER_KEY` objects anywhere inside.
+pub const WITH_BUFFERS_KEY: &str = "$withBuffers";
+
 impl Arg {
-    pub fn from_value(value: Value) -> Arg {
-        match value.get("$$ref$$").and_then(Value::as_i64) == Some(-1) {
-            true => Arg::Undefined,
-            false => Arg::Json(value),
+    pub fn from_value(mut value: Value) -> Arg {
+        if value.get("$$ref$$").and_then(Value::as_i64) == Some(-1) {
+            return Arg::Undefined;
         }
+        if let Some(bytes) = decode_buffer(&value) {
+            return Arg::Buffer(bytes);
+        }
+        match value.get_mut(WITH_BUFFERS_KEY).map(Value::take) {
+            Some(mut json) => {
+                let mut buffers = Vec::new();
+                take_buffers(&mut json, &mut buffers);
+                Arg::JsonWithBuffers { json, buffers }
+            }
+            None => Arg::Json(value),
+        }
+    }
+}
+
+fn decode_buffer(value: &Value) -> Option<Vec<u8>> {
+    use base64::Engine;
+    let encoded = value.as_object().filter(|object| object.len() == 1)?.get(VSBUFFER_KEY)?.as_str()?;
+    base64::engine::general_purpose::STANDARD.decode(encoded).ok()
+}
+
+/// rpcProtocol.ts `stringifyJsonWithBufferRefs`: each buffer becomes `{"$$ref$$": index}`.
+fn take_buffers(value: &mut Value, buffers: &mut Vec<Vec<u8>>) {
+    if let Some(bytes) = decode_buffer(value) {
+        *value = serde_json::json!({ "$$ref$$": buffers.len() });
+        buffers.push(bytes);
+        return;
+    }
+    match value {
+        Value::Object(map) => map.values_mut().for_each(|value| take_buffers(value, buffers)),
+        Value::Array(items) => items.iter_mut().for_each(|value| take_buffers(value, buffers)),
+        _ => {}
     }
 }
 
@@ -323,5 +359,13 @@ mod tests {
     fn an_undefined_argument_is_sent_as_undefined() {
         assert_eq!(Arg::from_value(undefined()), Arg::Undefined);
         assert_eq!(Arg::from_value(json!(1)), Arg::Json(json!(1)));
+    }
+
+    #[test]
+    fn marked_buffers_become_buffer_arguments() {
+        assert_eq!(Arg::from_value(json!({ "$vsbuffer": "AQI=" })), Arg::Buffer(vec![1, 2]));
+        let marked = json!({ "$withBuffers": { "items": [{ "mime": "a", "valueBytes": { "$vsbuffer": "Aw==" } }] } });
+        assert_eq!(Arg::from_value(marked), Arg::JsonWithBuffers { json: json!({ "items": [{ "mime": "a", "valueBytes": { "$$ref$$": 0 } }] }), buffers: vec![vec![3]] });
+        assert_eq!(Arg::from_value(json!({ "$withBuffers": {} })), Arg::JsonWithBuffers { json: json!({}), buffers: Vec::new() });
     }
 }

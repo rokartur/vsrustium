@@ -381,10 +381,13 @@ impl Session {
     pub fn reply(&mut self, req: u32, result: Result<Value, Value>) {
         let message = match result {
             Ok(Value::Null) => Message::ReplyOk { req, value: Reply::Empty },
-            // A command answering a `VSBuffer` (`_provideDocumentSemanticTokens`) replies with the buffer itself.
-            Ok(value) => match value.get(VSBUFFER_KEY).and_then(Value::as_str).and_then(|encoded| STANDARD.decode(encoded).ok()) {
-                Some(bytes) => Message::ReplyOk { req, value: Reply::Buffer(bytes) },
-                None => Message::ReplyOk { req, value: Reply::Json(value) },
+            // A command answering a `VSBuffer` (`_provideDocumentSemanticTokens`) replies with the buffer itself, one
+            // answering a `SerializableObjectWithBuffers` (`_executeDataToNotebook`) with its JSON and buffers.
+            Ok(value) => match Arg::from_value(value) {
+                Arg::Buffer(bytes) => Message::ReplyOk { req, value: Reply::Buffer(bytes) },
+                Arg::JsonWithBuffers { json, buffers } => Message::ReplyOk { req, value: Reply::JsonWithBuffers { json, buffers } },
+                Arg::Json(value) => Message::ReplyOk { req, value: Reply::Json(value) },
+                Arg::Undefined => Message::ReplyOk { req, value: Reply::Empty },
             },
             Err(error) => Message::ReplyErr { req, error: Some(error) },
         };
@@ -394,7 +397,11 @@ impl Session {
     /// The host's answer to a `notify`, once it arrived.
     pub fn take_result(&mut self, req: u32) -> Option<Result<Value, Value>> {
         Some(match self.results.remove(&req)? {
-            CallResult::Ok(Reply::Json(value) | Reply::JsonWithBuffers { json: value, .. }) => Ok(value),
+            CallResult::Ok(Reply::Json(value)) => Ok(value),
+            CallResult::Ok(Reply::JsonWithBuffers { mut json, buffers }) => {
+                restore_buffer_refs(&mut json, &buffers);
+                Ok(json)
+            }
             CallResult::Ok(Reply::Buffer(bytes)) => Ok(json!(bytes)),
             CallResult::Ok(_) => Ok(Value::Null),
             CallResult::Err(error) => Err(error.unwrap_or(Value::Null)),
@@ -500,6 +507,10 @@ impl Session {
         if let Some(forward) = &self.forward {
             let answered: Vec<_> = forward.replies.try_iter().collect();
             let asks = forward.asks.clone();
+            // What the workbench queued before answering reaches the host first (a notebook editor before its id).
+            if !answered.is_empty() {
+                self.flush_main_thread();
+            }
             for (req, result) in answered {
                 if !asks.contains(&req) {
                     self.reply(req, result);
@@ -745,7 +756,7 @@ fn arg_value(arg: Arg) -> Value {
     }
 }
 
-fn restore_buffer_refs(value: &mut Value, buffers: &[Vec<u8>]) {
+pub fn restore_buffer_refs(value: &mut Value, buffers: &[Vec<u8>]) {
     if let Some(buffer) = value.get("$$ref$$").and_then(Value::as_u64).and_then(|index| buffers.get(index as usize)) {
         *value = json!(buffer);
         return;
@@ -766,7 +777,7 @@ fn forwarded_arg(arg: Arg) -> Value {
     }
 }
 
-pub const VSBUFFER_KEY: &str = "$vsbuffer";
+pub use crate::rpc::VSBUFFER_KEY;
 
 /// A `SerializedError` (or any thrown value) as one string: its stack, else its message.
 fn error_text(error: &Value) -> String {

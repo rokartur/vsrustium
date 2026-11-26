@@ -99,6 +99,8 @@ pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
+mod notebooks;
+pub(crate) use notebooks::focused_cell;
 mod notifications_view;
 mod panel;
 mod part_grid;
@@ -675,6 +677,7 @@ impl Workbench {
         crate::main_thread_commands::register_commands_documentation(&mut workbench);
         workbench.editors.disposed.settings = Some(workbench.settings.clone());
         workbench.register_workbench_actions();
+        workbench.register_notebook_commands();
         workbench.register_diff_editor_commands();
         workbench.register_diff_gutter_commands();
         workbench.register_unchanged_region_commands();
@@ -908,6 +911,7 @@ impl Workbench {
         self.sync_webview_panels();
         self.text_files_editors_changed();
         self.save_editor_part_state();
+        self.send_notebook_changes();
         self.host.send_changes(&self.editors);
         cx.notify();
     }

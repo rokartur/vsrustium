@@ -219,3 +219,9 @@ On the Studio at 1ed0e932 (settings.json reload in the workbench, `.vsrustium` f
 ## Milestone 15: terminal and tasks
 
 On the Studio at b9d74655619, `SHELL=/bin/bash MOCHA_GREP='vscode API - ([tT]erminal|tasks)' SUITE_TIMEOUT=600 port/tools/api-tests`: api-folder 47 passing, 4 pending, 0 failing, 351 not reached (exit 0 after 20s); api-workspace 0/0/0/4. terminal.test.ts, terminal.shellIntegration.test.ts and workspace.tasks.test.ts all pass; the 4 pending are upstream `test.skip` ("Test if env is set", "should listen to all future terminal data events", "should respect dimension overrides", "dependsOn task should start with a different processId (#118256)").
+
+## Milestone 17: notebooks, model and extension host side
+
+On the Studio, branch `port-m17b-notebooks` (the tree committed as the notebook model commit), `MOCHA_GREP="Notebook|Ensure tabs getter" SUITE_TIMEOUT=600 port/tools/api-tests`: api-folder 40 passing, 8 pending, 0 failing (exit 0 after 12s). notebook.api.test.ts (with `Notebook & LiveShare`), notebook.document.test.ts and notebook.kernel.test.ts pass as in the reference, and `vscode API - window` `Tabs - Ensure tabs getter is correct` (`openNotebookDocument`, the last window failure) passes; the 8 pending are upstream `test.skip` (the whole `Notebook Editor` suite and four single tests).
+
+Same tree, the suites the RPC and document changes touch: `MOCHA_GREP="vscode API - window|vscode API - workspace|vscode API - commands|vscode API - editors|Notebook" SUITE_TIMEOUT=900`: api-folder 205 passing, 10 pending, 0 failing (exit 0 after 43s); api-workspace 4/0/0.

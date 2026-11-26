@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 use crate::diff_editor::{DIFF_EDITOR_SCHEME, DiffInput};
 use crate::multi_diff_editor::MULTI_DIFF_EDITOR_SCHEME;
 use crate::editor::{ContentChanged, EditReason, EditorGroup, OpenEditor, Position, Selection, uri_string, uri_value};
+use crate::notebook::{CELL_SCHEME, NOTEBOOK_EDITOR_SCHEME};
 use crate::theme::ThemeKind;
 
 #[derive(Debug)]
@@ -106,6 +107,8 @@ pub struct HostSync {
     pub configuration_scopes: bool,
     /// `workbench.editor.untitled.labelFormat` is `content`: untitled tabs take their first line's words.
     pub untitled_names_from_content: bool,
+    /// The notebooks, their editors and kernels; a cell's text change is a change of its notebook too.
+    pub notebooks: crate::notebook::Notebooks,
 }
 
 /// `TabModelOperationKind`.
@@ -119,13 +122,13 @@ const CODE_EDITOR_ID: &str = "vs.editor.ICodeEditor:1";
 
 impl HostSync {
     pub fn new(sender: Sender<HostMessage>) -> Self {
-        HostSync { sender, documents: Vec::new(), editors: Vec::new(), editor_positions: serde_json::Map::new(), active_editor: None, visible_lines: None, tabs: vec![(0, Vec::new())], active_group: 0, search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), activation_events: HashSet::new(), installed_extensions_registered: false, configuration_scopes: false, untitled_names_from_content: true }
+        HostSync { sender, documents: Vec::new(), editors: Vec::new(), editor_positions: serde_json::Map::new(), active_editor: None, visible_lines: None, tabs: vec![(0, Vec::new())], active_group: 0, search_tabs: HashMap::new(), webview_tabs: HashMap::new(), activations: HashMap::new(), activation_events: HashSet::new(), installed_extensions_registered: false, configuration_scopes: false, untitled_names_from_content: true, notebooks: Default::default() }
     }
 
     /// Sends what changed in `group` since the last call: activation for new languages, the document
     /// and editor delta, then the tab model.
     pub fn send_changes(&mut self, group: &EditorGroup) {
-        let is_entry = |editor: &&OpenEditor| matches!(editor.document().scheme.as_str(), DIFF_EDITOR_SCHEME | MULTI_DIFF_EDITOR_SCHEME | crate::merge_editor::MERGE_EDITOR_SCHEME);
+        let is_entry = |editor: &&OpenEditor| matches!(editor.document().scheme.as_str(), DIFF_EDITOR_SCHEME | MULTI_DIFF_EDITOR_SCHEME | crate::merge_editor::MERGE_EDITOR_SCHEME | NOTEBOOK_EDITOR_SCHEME);
         let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document().path) && !is_entry(editor);
         // A custom text editor's model stays a document, without a text editor (customTextEditorModel.ts).
         let is_document = |editor: &&OpenEditor| self.webview_tabs.get(&editor.document().path).is_none_or(|tab| tab.custom_text) && !is_entry(editor);
@@ -163,7 +166,26 @@ impl HostSync {
             .column_ids()
             .into_iter()
             .enumerate()
-            .filter_map(|(column, id)| group.group_active(id).filter(|(editor, _)| is_text(editor)).map(|(editor, viewport)| (column, editor, viewport)))
+            .filter_map(|(column, id)| {
+                let (editor, viewport) = group.group_active(id)?;
+                // A notebook editor's focused cell is the code editor the host sees (`activeCodeEditor`).
+                // shortcut: only that cell of each notebook editor is a visible text editor, not every rendered cell.
+                let editor = match editor.document().scheme == NOTEBOOK_EDITOR_SCHEME {
+                    true => crate::workbench::focused_cell(&self.notebooks, group, editor)?,
+                    false => editor,
+                };
+                is_text(&editor).then_some((column, editor, viewport))
+            })
+            .collect();
+        let mut seen_cells = Vec::new();
+        let visible: Vec<(usize, &OpenEditor, crate::editor::Viewport)> = visible
+            .into_iter()
+            .filter(|(_, editor, _)| {
+                let id = snapshot_id(editor);
+                let new = !seen_cells.contains(&id);
+                seen_cells.push(id);
+                new
+            })
             .collect();
         // The Output view's editor is visible without a view column (`editorPosition` undefined).
         let panel = group.panel_editor_shown.then(|| group.group_active(crate::editor::PANEL_GROUP)).flatten().filter(|(editor, _)| is_text(editor));
@@ -187,7 +209,11 @@ impl HostSync {
         if !added_editors.is_empty() {
             delta.insert("addedEditors".into(), Value::Array(added_editors));
         }
-        let active_id = group.active().filter(is_text).map(snapshot_id);
+        let active = group.active().and_then(|editor| match editor.document().scheme == NOTEBOOK_EDITOR_SCHEME {
+            true => crate::workbench::focused_cell(&self.notebooks, group, editor),
+            false => Some(editor),
+        });
+        let active_id = active.filter(is_text).map(snapshot_id);
         if active_id != self.active_editor || delta.contains_key("removedEditors") || delta.contains_key("addedEditors") {
             delta.insert("newActiveEditor".into(), json!(active_id));
         }
@@ -325,12 +351,29 @@ impl HostSync {
         });
         let dirty = editor.is_dirty();
         self.send("ExtHostDocuments", "$acceptModelChanged", vec![uri.clone(), event, json!(dirty)]);
+        if document.scheme == CELL_SCHEME {
+            self.send_cell_content_change(&uri);
+        }
         if dirty != change.was_dirty {
             self.send("ExtHostDocuments", "$acceptDirtyStateChanged", vec![uri, json!(dirty)]);
         }
         // untitledTextEditorInput.ts `onDidChangeLabel`: a new first line renames an untitled tab.
         if dirty != change.was_dirty || document.scheme == "untitled" {
             self.send_tabs(group);
+        }
+    }
+
+    /// notebookTextModel.ts `_bindCellContentHandler`: a cell's text changed, so its notebook did.
+    fn send_cell_content_change(&mut self, cell_uri: &Value) {
+        let Some((notebook, _)) = crate::notebook::parse_cell_uri(cell_uri) else { return };
+        let Some(model) = self.notebooks.model_mut(&crate::notebook::uri_string(&notebook)) else { return };
+        let Some(index) = model.index_of_cell(cell_uri) else { return };
+        let was_dirty = model.dirty;
+        let event = model.cell_content_changed(index);
+        let uri = model.uri.clone();
+        self.send("ExtHostNotebookDocuments", "$acceptModelChanged", vec![uri.clone(), json!({ exthost::rpc::WITH_BUFFERS_KEY: event }), json!(true), Value::Null]);
+        if !was_dirty {
+            self.send("ExtHostNotebookDocuments", "$acceptDirtyStateChanged", vec![uri, json!(true)]);
         }
     }
 
@@ -579,6 +622,17 @@ fn tab_dto(group: u32, editor: &OpenEditor, active: bool, sync: &HostSync) -> Va
         tab["label"] = json!(search.label);
         tab["input"] = json!({ "kind": 0 });
         tab["editorId"] = json!(type_id);
+    }
+    // mainThreadEditorTabs.ts: TabInputKind.NotebookInput, its editor id is the notebook type.
+    if editor.document().scheme == NOTEBOOK_EDITOR_SCHEME
+        && let Some(model) = sync.notebooks.model(&editor.document().path.to_string_lossy())
+    {
+        let resource = model.uri_string();
+        tab["id"] = json!(format!("{group}~{}-workbench.editor.notebook-{resource} ", model.view_type));
+        tab["label"] = json!(crate::notebook::label(&model.uri));
+        tab["input"] = json!({ "kind": 4, "notebookType": model.view_type, "uri": model.uri });
+        tab["editorId"] = json!(model.view_type);
+        tab["isDirty"] = json!(model.dirty);
     }
     // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput or CustomEditorInput, its editor id is the view type.
     if let Some(webview) = webview_tabs.get(&editor.document().path) {

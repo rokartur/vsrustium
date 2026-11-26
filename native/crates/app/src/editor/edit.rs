@@ -187,6 +187,10 @@ impl OpenEditor {
         if self.document().scheme == "untitled" {
             return self.text_model().associated_file || self.document().lines != [""];
         }
+        // A notebook cell's text is no working copy: its notebook is the one dirty.
+        if self.document().scheme == crate::notebook::CELL_SCHEME {
+            return false;
+        }
         self.text_model().history.alternative_version_id != self.text_model().history.saved_alternative_version_id
     }
 
