@@ -154,7 +154,7 @@ Rows: `telemetry/source-search` `telemetry/network-capture` `mainthread/MainThre
 
 Scope: nothing new; close the gaps the earlier milestones left.
 
-Done when: `port/tools/api-tests` gives 337/31/0 (folder) and 4/0/0 (workspace): the reference baseline 356/46/0 less the suites of removed features (port/results/api-tests-reference.md); pixel-check of every window has no difference beyond anti-aliasing and the causes listed in `port/results/pixels.md`; every ledger row is `verified`, `removed` or `n/a`.
+Done when: `port/tools/api-tests` gives 318/28/0 (folder) and 4/0/0 (workspace): the reference baseline 356/46/0 less the suites and tests of removed features (chat, lm, the integrated browser, `env.remoteName`) (port/results/api-tests-reference.md); pixel-check of every window has no difference beyond anti-aliasing and the causes listed in `port/results/pixels.md`; every ledger row is `verified`, `removed` or `n/a`.
 
 ## Decisions (Artur)
 

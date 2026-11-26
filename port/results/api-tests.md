@@ -242,4 +242,4 @@ Same tree, the suites the RPC and document changes touch: `MOCHA_GREP="vscode AP
 
 ## Milestone 20: custom root certificate on Bun
 
-On the Studio, branch `port-m20-sweep` (proxyResolver.ts `addBunSecureContext`), `port/tools/build-exthost && MOCHA_GREP='network proxy' SUITE_TIMEOUT=600 port/tools/api-tests`: api-folder 2 passing, 1 pending (`separate local / remote proxy settings`, skipped upstream), 0 failing: `custom root certificate` and `basic auth` pass on the Bun host. Before the change `custom root certificate` failed on Bun (`DEPTH_ZERO_SELF_SIGNED_CERT`) and passed with `--node`.
+On the Studio, branch `port-m20-sweep` (proxyResolver.ts `addBunSecureContext`), `port/tools/build-exthost && MOCHA_GREP='network proxy' SUITE_TIMEOUT=600 port/tools/api-tests`: api-folder 2 passing, 1 pending (`separate local / remote proxy settings`, skipped upstream), 0 failing: `custom root certificate` and `basic auth` pass on the Bun host. Before the change `custom root certificate` failed on Bun and passed with `--node`.
