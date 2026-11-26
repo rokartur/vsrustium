@@ -246,7 +246,7 @@ impl Workbench {
     /// `AbstractCloseAllAction.run` and `handleDirtyClosing`: dirty editors among `indices` ask to save first;
     /// Cancel keeps every editor open.
     pub(super) fn close_editors(&mut self, indices: Vec<usize>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let dirty: Vec<usize> = indices.iter().copied().filter(|index| self.editors.editors[*index].is_dirty()).collect();
+        let dirty: Vec<usize> = indices.iter().copied().filter(|index| self.tab_is_dirty(*index)).collect();
         // showSaveConfirm answers Don't Save without a dialog while extension tests run.
         if dirty.is_empty() || self.skip_dialogs {
             self.discard_and_close(&dirty, &indices, cx);
@@ -288,6 +288,15 @@ impl Workbench {
         }
     }
 
+    /// The tab's working copy is dirty: its text model, or a notebook tab's notebook.
+    fn tab_is_dirty(&self, index: usize) -> bool {
+        let editor = &self.editors.editors[index];
+        match editor.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME {
+            true => self.host.notebooks.model(&editor.document().path.to_string_lossy()).is_some_and(|model| model.dirty),
+            false => editor.is_dirty(),
+        }
+    }
+
     /// Reverts `dirty` (ConfirmResult.DONT_SAVE), then closes the editors at `indices`.
     fn discard_and_close(&mut self, dirty: &[usize], indices: &[usize], cx: &mut Context<Self>) {
         for index in dirty {
@@ -315,6 +324,10 @@ impl Workbench {
             "untitled" => {
                 self.revert_untitled(&path);
                 true
+            }
+            crate::notebook::NOTEBOOK_EDITOR_SCHEME => {
+                self.revert_notebook(&path.to_string_lossy(), cx);
+                false
             }
             _ => {
                 if let Err(error) = self.revert_text_file(&scheme, &path, cx) {
