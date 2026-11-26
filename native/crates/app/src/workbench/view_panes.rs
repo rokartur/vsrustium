@@ -28,6 +28,7 @@ pub const FILE_VIEW: &str = "workbench.explorer.fileView";
 pub const EMPTY_VIEW: &str = "workbench.explorer.emptyView";
 pub(super) const OUTLINE_VIEW: &str = "outline";
 pub(super) const TIMELINE_VIEW: &str = "timeline";
+pub(super) const OPEN_EDITORS_VIEW: &str = "workbench.explorer.openEditorsView";
 /// scm.contribution.ts `VIEW_PANE_ID` and `HISTORY_VIEW_PANE_ID`.
 pub(super) const SCM_CHANGES_VIEW: &str = "workbench.scm";
 pub(super) const SCM_HISTORY_VIEW: &str = "workbench.scm.history";
@@ -56,12 +57,16 @@ pub struct PaneView {
     expanded: Vec<bool>,
     /// `Pane.expandedSize`: the size an expanded pane last laid out at, which it comes back at.
     expanded_sizes: Vec<Option<f32>>,
+    /// `minimumBodySize` and `maximumBodySize` per pane.
+    body_limits: Vec<(f32, f32)>,
     split: SplitView,
 }
 
-fn size_limits(expanded: bool) -> (f32, f32) {
+const DEFAULT_BODY_LIMITS: (f32, f32) = (MINIMUM_BODY_SIZE, f32::INFINITY);
+
+fn size_limits(expanded: bool, (minimum, maximum): (f32, f32)) -> (f32, f32) {
     match expanded {
-        true => (HEADER_SIZE + MINIMUM_BODY_SIZE, f32::INFINITY),
+        true => (HEADER_SIZE + minimum, HEADER_SIZE + maximum),
         false => (HEADER_SIZE, HEADER_SIZE),
     }
 }
@@ -72,7 +77,7 @@ impl PaneView {
     /// is the pane view's and its bottom gap.
     pub fn new(height: f32, panes: &[(&'static str, bool, Option<f32>)]) -> Self {
         let views = panes.iter().map(|&(_, expanded, _)| {
-            let (minimum, maximum) = size_limits(expanded);
+            let (minimum, maximum) = size_limits(expanded, DEFAULT_BODY_LIMITS);
             View::new(minimum, minimum, maximum)
         });
         let mut split = SplitView::new(height, views.collect());
@@ -85,6 +90,7 @@ impl PaneView {
             ids: panes.iter().map(|&(id, _, _)| id).collect(),
             expanded: panes.iter().map(|&(_, expanded, _)| expanded).collect(),
             expanded_sizes: vec![None; panes.len()],
+            body_limits: vec![DEFAULT_BODY_LIMITS; panes.len()],
             split,
         };
         pane_view.remember_expanded_sizes();
@@ -103,6 +109,10 @@ impl PaneView {
         self.split.sizes()
     }
 
+    pub fn height(&self) -> f32 {
+        self.split.size()
+    }
+
     pub fn layout(&mut self, height: f32) {
         if height != self.split.size() {
             self.split.layout(height);
@@ -117,7 +127,7 @@ impl PaneView {
             return false;
         }
         self.expanded[index] = expanded;
-        let (minimum, maximum) = size_limits(expanded);
+        let (minimum, maximum) = size_limits(expanded, self.body_limits[index]);
         self.split.set_limits(index, minimum, maximum);
         let current = self.split.sizes()[index];
         let size = if expanded { self.expanded_sizes[index].unwrap_or(current) } else { current };
@@ -134,7 +144,22 @@ impl PaneView {
         self.expanded.insert(to, expanded);
         let size = self.expanded_sizes.remove(from);
         self.expanded_sizes.insert(to, size);
+        let limits = self.body_limits.remove(from);
+        self.body_limits.insert(to, limits);
         self.split.move_view(from, to);
+    }
+
+    /// The `minimumBodySize` and `maximumBodySize` setters: `onDidChange`, then the split view's `onViewChange`
+    /// clamps the pane's size to its new bounds.
+    pub fn set_body_limits(&mut self, index: usize, minimum: f32, maximum: f32) {
+        if self.body_limits[index] == (minimum, maximum) {
+            return;
+        }
+        self.body_limits[index] = (minimum, maximum);
+        let (pane_minimum, pane_maximum) = size_limits(self.expanded[index], (minimum, maximum));
+        self.split.set_limits(index, pane_minimum, pane_maximum);
+        self.split.resize_view(index, self.split.sizes()[index]);
+        self.remember_expanded_sizes();
     }
 
     pub fn sash_states(&self) -> Vec<SashState> {
@@ -245,7 +270,7 @@ impl Workbench {
         }
     }
 
-    fn panes_mut(&mut self, container: PaneContainer) -> &mut ContainerPanes {
+    pub(super) fn panes_mut(&mut self, container: PaneContainer) -> &mut ContainerPanes {
         match container {
             PaneContainer::Explorer => &mut self.explorer_panes,
             PaneContainer::Scm => &mut self.scm_panes,
@@ -257,11 +282,17 @@ impl Workbench {
     pub(super) fn layout_view_panes(&mut self, side_bar_height: f32, cx: &mut Context<Self>) {
         let compact = if self.compact_activity_bar_location().is_some() { 32. } else { 0. };
         let height = side_bar_height - 2. - 32. - compact - BOTTOM_GAP;
+        self.layout_container_panes(height, cx);
+    }
+
+    /// The containers' pane views at the pane view's `height`, with the views shown now.
+    pub(super) fn layout_container_panes(&mut self, height: f32, cx: &mut Context<Self>) {
         let first = if self.workspace().is_some_and(|workspace| !workspace.folders.is_empty()) { FILE_VIEW } else { EMPTY_VIEW };
-        let built_in = [first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().filter(|&id| id == FILE_VIEW || !self.view_hidden("explorer", id));
+        let built_in = [OPEN_EDITORS_VIEW, first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().filter(|&id| id == FILE_VIEW || !self.view_hidden("explorer", id));
         // viewsExtensionPoint.ts `showCollapsed`: an extension's view in the Explorer or Source Control starts collapsed.
-        let explorer: Vec<_> = built_in.map(|id| (id, id != first)).chain(self.shown_tree_views().into_iter().map(|id| (id, true))).collect();
+        let explorer: Vec<_> = built_in.map(|id| (id, id != first && id != OPEN_EDITORS_VIEW)).chain(self.shown_tree_views().into_iter().map(|id| (id, true))).collect();
         self.layout_panes(PaneContainer::Explorer, height, explorer, cx);
+        self.limit_open_editors_pane();
         let mut scm = Vec::new();
         if !self.view_hidden("scm", SCM_CHANGES_VIEW) {
             scm.push((SCM_CHANGES_VIEW, false));
@@ -525,6 +556,7 @@ impl Workbench {
                 // paneviewlet.css: the title ellipsizes to make room for the actions ("Gr..." beside Graph's).
                 .child(div().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
                 // paneviewlet.css `.pane-header .description`: 10px after the title, normal weight, only while expanded.
+                .when(id == OPEN_EDITORS_VIEW, |header| header.children(self.open_editors_dirty_badge(cx)))
                 .children(description.filter(|_| expanded).map(|description| {
                     div().ml(px(10.)).text_size(px(12.)).text_color(self.color("panelTitle.inactiveForeground")).overflow_hidden().whitespace_nowrap().child(description)
                 }))
@@ -662,6 +694,18 @@ mod tests {
     use super::*;
 
     const EXPLORER: [(&str, bool, Option<f32>); 3] = [(FILE_VIEW, true, None), (OUTLINE_VIEW, false, None), (TIMELINE_VIEW, false, None)];
+
+    #[test]
+    fn body_limits_clamp_the_pane_and_the_others_take_the_change() {
+        let mut view = PaneView::new(600., &[(OPEN_EDITORS_VIEW, true, None), (FILE_VIEW, true, None)]);
+        view.set_body_limits(0, 44., 66.);
+        assert_eq!(view.sizes(), [HEADER_SIZE + 66., 600. - HEADER_SIZE - 66.]);
+        view.set_body_limits(0, 0., 0.);
+        assert_eq!(view.sizes(), [HEADER_SIZE, 600. - HEADER_SIZE]);
+        view.set_expanded(0, false);
+        view.set_expanded(0, true);
+        assert_eq!(view.sizes(), [HEADER_SIZE, 600. - HEADER_SIZE]);
+    }
 
     #[test]
     fn collapsed_panes_are_their_headers_and_the_folder_takes_the_rest() {

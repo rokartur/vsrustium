@@ -169,6 +169,7 @@ mod language_detection;
 pub mod snippet_actions;
 mod emmet;
 mod tab_completion;
+mod open_editors_view;
 mod outline_actions;
 mod inlay_hints_accessibility;
 mod comment_navigation;
@@ -335,6 +336,7 @@ pub struct Workbench {
     document_symbols: document_symbols::DocumentSymbols,
     references_peek: references_peek::ReferencesPeek,
     outline_pane: outline_pane::OutlinePane,
+    open_editors_focus: FocusHandle,
     hierarchy_peek: hierarchy_peek::HierarchyPeek,
     content_hover: content_hover::ContentHover,
     suggest: suggest_controller::Suggest,
@@ -633,6 +635,7 @@ impl Workbench {
             document_symbols: Default::default(),
             references_peek: references_peek::ReferencesPeek::new(cx),
             outline_pane: outline_pane::OutlinePane::new(cx),
+            open_editors_focus: cx.focus_handle(),
             hierarchy_peek: hierarchy_peek::HierarchyPeek::new(cx),
             content_hover: Default::default(),
             suggest: Default::default(),
@@ -1530,11 +1533,15 @@ impl Workbench {
     /// The Explorer's `ViewPaneContainer`: `first` (the folder's or the empty window's view), Outline and Timeline.
     fn explorer_view_container(&self, first: view_panes::ViewPane, window: &Window, cx: &mut Context<Self>) -> Div {
         let outline_focused = self.outline_pane.focus.is_focused(window);
-        let panes = vec![
+        let open_editors_shown = self.explorer_panes.view.as_ref().is_some_and(|view| view.ids().contains(&view_panes::OPEN_EDITORS_VIEW));
+        let mut panes = vec![
             first,
             view_panes::ViewPane { id: view_panes::OUTLINE_VIEW, title: "Outline".into(), description: None, actions: Some(self.outline_title_actions(window, cx).into_any_element()), show_actions: outline_focused, body: self.outline_pane_body(window, cx) },
             self.timeline_pane(window, cx),
         ];
+        if open_editors_shown {
+            panes.push(self.open_editors_pane(window, cx));
+        }
         self.view_pane_container(view_panes::PaneContainer::Explorer, "Explorer", panes, window, cx)
     }
 

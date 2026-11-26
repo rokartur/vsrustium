@@ -211,7 +211,11 @@ impl Workbench {
 
     /// editorTabsControl.ts `getHoverTitle`: the long title, with a preview note on a preview editor's tab.
     fn tab_hover(&self, index: usize) -> impl IntoElement {
-        let editor = &self.editors.editors[index];
+        self.editor_title_hover(("tab-hover", index), &self.editors.editors[index])
+    }
+
+    /// A tab's or an Open Editors row's hover: the editor's `getTitle(Verbosity.LONG)`.
+    pub(super) fn editor_title_hover(&self, id: impl Into<gpui::ElementId>, editor: &OpenEditor) -> impl IntoElement {
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
         let title = match (self.editors.diffs.get(&editor.model_id), editor.document().scheme.as_str()) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
@@ -228,17 +232,20 @@ impl Workbench {
             },
         };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
-        self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
+        self.hover_target(id, content, super::hover::HoverOptions::mouse())
     }
 
     /// A diff editor's tab is its modified side's (`DiffEditorInput.isDirty`); an auto saved one shows no dirty mark.
     pub(super) fn tab_shows_dirty(&self, index: usize) -> bool {
+        self.editor_shows_dirty(&self.editors.editors[index])
+    }
+
+    pub(super) fn editor_shows_dirty(&self, tab: &OpenEditor) -> bool {
         // A notebook tab is its notebook's working copy, not its focused cell's text model.
-        let tab = &self.editors.editors[index];
         if tab.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME {
             return self.host.notebooks.model(&tab.document().path.to_string_lossy()).is_some_and(|model| model.dirty);
         }
-        let model = self.editors.tab_model(index);
+        let model = self.editors.editor_model(tab);
         model.is_dirty() && !self.editor_is_saving(model)
     }
 
@@ -301,7 +308,7 @@ impl Workbench {
             })
             .children(lock)
             .children(badge.map(|badge| badge.mt(px(3.5)).line_height(px(24.))))
-            .map(|tab| self.tab_drag_and_drop(tab, index, cx))
+            .map(|tab| self.tab_drag_and_drop(tab, self.editors.id, index, cx))
             .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, _, cx| {
                 workbench.editors.activate(index);
                 if event.click_count() == 2 {

@@ -882,7 +882,11 @@ impl EditorGroup {
 
     /// The model a tab edits: its own, or a diff editor's modified side.
     pub fn tab_model(&self, index: usize) -> &OpenEditor {
-        let tab = &self.editors[index];
+        self.editor_model(&self.editors[index])
+    }
+
+    /// The model an editor of any group edits: a diff or merge editor's edited side, else the editor's own.
+    pub fn editor_model<'a>(&'a self, tab: &'a OpenEditor) -> &'a OpenEditor {
         match self.edited_side(tab.model_id) {
             Some(side) => self.model(&side.scheme, &side.path).expect("a diff or merge editor's models stay open"),
             None => tab,

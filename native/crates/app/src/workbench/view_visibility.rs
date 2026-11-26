@@ -9,7 +9,7 @@ use gpui::{Context, Div, MouseButton, MouseDownEvent, Stateful, Window, prelude:
 use serde_json::{Value, json};
 
 use super::Workbench;
-use super::view_panes::{EMPTY_VIEW, FILE_VIEW, OUTLINE_VIEW, TIMELINE_VIEW};
+use super::view_panes::{EMPTY_VIEW, FILE_VIEW, OPEN_EDITORS_VIEW, OUTLINE_VIEW, TIMELINE_VIEW};
 use crate::commands::Outcome;
 use crate::menus::MenuAction;
 
@@ -40,7 +40,7 @@ impl Workbench {
         let entries = self.views_visibility_state(container);
         match entries.iter().find(|entry| entry["id"] == id).and_then(|entry| entry["isHidden"].as_bool()) {
             Some(hidden) => hidden,
-            None => self.tree_views.views.iter().any(|view| view.id == id && view.hide_by_default),
+            None => id == OPEN_EDITORS_VIEW || self.tree_views.views.iter().any(|view| view.id == id && view.hide_by_default),
         }
     }
 
@@ -52,7 +52,7 @@ impl Workbench {
     }
 
     /// `toggleViewVisibility`: the view's entry flips, the others stay.
-    fn toggle_view_visibility(&mut self, container: &str, id: &str, cx: &mut Context<Self>) {
+    pub(super) fn toggle_view_visibility(&mut self, container: &str, id: &str, cx: &mut Context<Self>) {
         let hidden = !self.view_hidden(container, id);
         let mut entries = self.views_visibility_state(container);
         match entries.iter_mut().find(|entry| entry["id"] == id) {
@@ -68,6 +68,7 @@ impl Workbench {
     fn container_view_entries(&self, container: &str) -> Vec<ViewEntry> {
         let mut entries = Vec::new();
         if container == "explorer" {
+            entries.push(ViewEntry { id: OPEN_EDITORS_VIEW, name: "Open Editors".into(), can_toggle: true });
             match self.workspace().is_some_and(|workspace| !workspace.folders.is_empty()) {
                 true => entries.push(ViewEntry { id: FILE_VIEW, name: "Folders".into(), can_toggle: false }),
                 false => entries.push(ViewEntry { id: EMPTY_VIEW, name: "No Folder Opened".into(), can_toggle: true }),

@@ -74,6 +74,7 @@ impl Workbench {
     /// viewsService.ts `registerFocusViewAction` of the built-in views: `<view id>.focus` runs `openView(id, true)`.
     /// The panel's views register theirs in `register_panel_view`, the contributed ones above.
     pub(super) fn register_view_focus_commands(&mut self) {
+        self.register_open_editors_commands();
         for id in [FILE_VIEW, OUTLINE_VIEW, TIMELINE_VIEW] {
             self.commands.register(format!("{id}.focus"), move |workbench, _, window, cx| {
                 drop(workbench.execute_command("workbench.view.explorer", Vec::new(), window, cx));
