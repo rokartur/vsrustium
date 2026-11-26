@@ -93,6 +93,11 @@ impl HoverOptions {
         HoverOptions { position: HoverPosition::Below, ..Self::instant() }
     }
 
+    /// A pointer on an action item: its managed hover below the element, after the default element delegate's delay.
+    pub fn action_item() -> Self {
+        HoverOptions { instant: false, ..Self::managed() }
+    }
+
     /// `showInstantHover` with `HoverPosition.BELOW` and `showPointer`: the profile icon picker.
     pub fn sticky_below() -> Self {
         HoverOptions { position: HoverPosition::Below, ..Self::instant() }

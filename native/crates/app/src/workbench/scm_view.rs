@@ -842,7 +842,7 @@ impl Workbench {
                 cx.stop_propagation();
                 drop(workbench.execute_command(&command, args.clone(), window, cx));
             }))
-            .child(self.hover_target(gpui::SharedString::from(format!("command-button-hover-{id}")), HoverContent::Text(title), HoverOptions::mouse()))
+            .child(self.hover_target(gpui::SharedString::from(format!("command-button-hover-{id}")), HoverContent::Text(title), HoverOptions::action_item()))
     }
 
 }

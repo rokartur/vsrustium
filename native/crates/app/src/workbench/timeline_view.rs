@@ -838,7 +838,7 @@ impl Workbench {
             .cursor_pointer()
             .hover(|action| action.bg(self.color("toolbar.hoverBackground")))
             .on_mouse_down(MouseButton::Left, stop_action_mouse_down)
-            .child(self.hover_target(SharedString::from(format!("timeline-action-hover-{icon}")), HoverContent::Text(title), HoverOptions::mouse()))
+            .child(self.hover_target(SharedString::from(format!("timeline-action-hover-{icon}")), HoverContent::Text(title), HoverOptions::action_item()))
     }
 
     /// `getItemActions`: the `inline` group of `MenuId.TimelineItemContext` for the item, shown on hover.
