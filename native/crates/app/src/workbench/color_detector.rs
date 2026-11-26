@@ -28,8 +28,10 @@ const EDITOR_FONT_SIZE: f32 = 12.;
 
 #[derive(Default)]
 pub(super) struct ColorDetector {
-    model_id: Option<u32>,
+    pub(super) model_id: Option<u32>,
     pub(super) colors: Vec<ColorData>,
+    /// `DecoratorLimitReporter.limited`: `editor.colorDecoratorsLimit` when the model has more colors.
+    pub(super) limited: Option<usize>,
     compute: Option<Task<()>>,
     /// The color picker the hover shows.
     pub(super) picker: Option<super::color_picker::HoverColorPicker>,
@@ -78,8 +80,12 @@ impl Workbench {
         self.color_detector.compute = None;
         let Some(editor) = self.editors.active() else {
             self.color_detector.model_id = None;
+            self.color_detector.limited = None;
             return;
         };
+        if self.color_detector.model_id != Some(editor.model_id) {
+            self.color_detector.limited = None;
+        }
         self.color_detector.model_id = Some(editor.model_id);
         if !self.color_decorators_enabled(editor) {
             self.color_detector.model_id = None;
@@ -113,6 +119,7 @@ impl Workbench {
                 workbench.color_detector.compute = None;
                 if workbench.color_detector.model_id == Some(model_id) {
                     workbench.update_color_decorators(colors);
+                    workbench.refresh_language_status(cx);
                     cx.notify();
                 }
             });
@@ -158,6 +165,7 @@ impl Workbench {
         let Some(editor) = self.editors.active().filter(|editor| editor.model_id == model_id) else { return };
         let limit = self.suggest_setting(editor, "editor.colorDecoratorsLimit").as_u64().unwrap_or(500) as usize;
         let columns = (INNER_WIDTH_EM + 2. * MARGIN_EM) / EDITOR_CHAR_EM;
+        self.color_detector.limited = (colors.len() > limit).then_some(limit);
         let injections = colors.iter().take(limit).enumerate().map(|(id, color)| InjectedText { position: color.start, columns, owner: InjectionOwner::Color, id, at_range_start: true }).collect();
         self.color_detector.colors = colors;
         let editor = self.editors.active_mut().expect("checked above");

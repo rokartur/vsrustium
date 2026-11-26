@@ -13,6 +13,7 @@ use super::hover::{HoverContent, HoverOptions, text_width};
 use super::quick_input_view::icon_at;
 use super::status_entries::EDITOR_STATUS_PRIORITY;
 use crate::commands::Outcome;
+use crate::editor::marker_decorations::MAX_MARKER_DECORATIONS;
 use crate::language_features::{Candidate, LanguageFeatures};
 use crate::main_thread_status_bar::StatusEntry;
 use crate::notifications::{Node, parse_linked_text};
@@ -162,6 +163,7 @@ impl Workbench {
         let candidate = Candidate { uri: &uri, language: &editor.document().language_id };
         let mut statuses: Vec<Status> = self.language_status.registry.ordered(SET, &candidate).into_iter().map(|registration| Status::from_dto(&registration.args[2])).collect();
         statuses.extend(self.formatter_conflict().map(formatter_conflict_status));
+        statuses.extend(self.limit_indicator_statuses(editor));
         statuses.sort_by(|a, b| b.severity.cmp(&a.severity).then_with(|| a.source.cmp(&b.source)).then_with(|| a.id.cmp(&b.id)));
         statuses
     }
@@ -346,6 +348,43 @@ impl Workbench {
         }
         self.language_status.counted = self.language_status.serial;
         self.profile_storage.lock().unwrap().set(KEY_INTERACT_COUNT, (count + 1).to_string());
+    }
+}
+
+impl Workbench {
+    /// limitIndicator.contribution.ts: a Warning for each feature of the active editor its limit cut short.
+    fn limit_indicator_statuses(&self, editor: &crate::editor::OpenEditor) -> Vec<Status> {
+        let only_shown = |limit: Option<usize>| limit.map(|limit| format!("only {limit} shown for performance reasons"));
+        let colors = only_shown(self.color_detector.limited.filter(|_| self.color_detector.model_id == Some(editor.model_id)));
+        let folding = only_shown(editor.folding_limited);
+        let source_truncated = self.diagnostics.service.is_source_truncated(&editor.document().uri_string());
+        let problems = match (source_truncated, editor.text_model().markers_truncated) {
+            (true, true) => Some(format!("Some problems are not shown in the problems view, and only {MAX_MARKER_DECORATIONS} problems are rendered in the editor for performance reasons.")),
+            (true, false) => Some("Some problems are not shown in the problems view for performance reasons.".to_string()),
+            (false, true) => Some(format!("Only {MAX_MARKER_DECORATIONS} problems are rendered in the editor for performance reasons.")),
+            (false, false) => None,
+        };
+        let entries = [
+            ("decoratorsLimitInfo", "Color Decorator Status", "Color decorators", "Color Decorators", Some("editor.colorDecoratorsLimit"), colors),
+            ("foldingLimitInfo", "Folding Status", "Folding ranges", "Folding", Some("editor.foldingMaximumRegions"), folding),
+            ("diagnosticsLimitInfo", "Problems Status", "Problems", "Problems", None, problems),
+        ];
+        let mut statuses = Vec::new();
+        for (id, name, label, source, setting, detail) in entries {
+            let Some(detail) = detail else { continue };
+            statuses.push(Status {
+                id: id.into(),
+                name: name.into(),
+                severity: WARNING,
+                label: label.into(),
+                short_label: label.into(),
+                detail,
+                busy: false,
+                source: source.into(),
+                command: setting.map(|setting| json!({ "id": "workbench.action.openSettings", "title": "Configure", "arguments": [setting] })),
+            });
+        }
+        statuses
     }
 }
 

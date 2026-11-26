@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use crate::commands::Outcome;
-use crate::editor::folding::{FoldingRegions, MAX_FOLDING_REGIONS, SyntaxRange, compute_ranges, sanitize_ranges};
+use crate::editor::folding::{FoldingRegions, MAX_FOLDING_REGIONS, SyntaxRange, compute_ranges_limited, sanitize_ranges};
 use crate::language_features::Candidate;
 
 #[cfg(test)]
@@ -44,7 +44,7 @@ impl Workbench {
             return Outcome::Ready(Ok(json!([])));
         }
         let limit = self.folding_limit(&overrides);
-        let indentation = compute_ranges(&document.lines, document.indentation.tab_size, document.off_side, document.folding_markers.as_deref());
+        let indentation = compute_ranges_limited(&document.lines, document.indentation.tab_size, document.off_side, document.folding_markers.as_deref(), limit);
         let line_count = document.lines.len();
         let handles = self.folding_range_providers(&document.uri(), &document.language_id);
         let calls: Vec<_> = handles.iter().map(|handle| self.host.call_cancellable("ExtHostLanguageFeatures", "$provideFoldingRanges", vec![json!(handle), uri.clone(), json!({})])).collect();
@@ -101,15 +101,19 @@ impl Workbench {
         }
         let Some(editor) = self.editors.active().filter(|editor| editor.model_id == model_id) else { return };
         let handles = self.folding_range_providers(&editor.document().uri(), &editor.document().language_id);
+        let (uri, version, line_count) = (editor.document().uri(), editor.text_model().version_id, editor.document().lines.len());
+        let document = editor.document();
+        let limit = self.folding_limit(&Overrides { resource: Some(&document.path), override_identifier: Some(&document.language_id) });
+        drop(document);
+        let editor = self.editors.active_mut().expect("found above");
+        let limit_changed = std::mem::replace(&mut editor.folding_limit, limit) != limit;
         if handles.is_empty() {
-            let editor = self.editors.active_mut().expect("found above");
-            if editor.syntax_folding {
+            if editor.syntax_folding || limit_changed {
                 editor.apply_syntax_folding(None, false);
                 self.folding_regions_changed(cx);
             }
             return;
         }
-        let (uri, version, line_count) = (editor.document().uri(), editor.text_model().version_id, editor.document().lines.len());
         let calls: Vec<_> = handles.iter().map(|handle| self.host.call_cancellable("ExtHostLanguageFeatures", "$provideFoldingRanges", vec![json!(handle), uri.clone(), json!({})])).collect();
         cx.spawn(async move |workbench, cx| {
             let mut answers = Vec::new();
@@ -168,6 +172,7 @@ impl Workbench {
     /// The hidden lines can have changed: the host hears the visible ranges, the window redraws.
     fn folding_regions_changed(&mut self, cx: &mut Context<Self>) {
         self.host.send_visible_ranges(&self.editors);
+        self.refresh_language_status(cx);
         cx.notify();
     }
 }

@@ -186,7 +186,6 @@ impl MarkerService {
         result
     }
 
-    #[allow(dead_code, reason = "the Problems panel (markersView.ts) reads it; it waits for milestone 11's panel part")]
     pub fn is_source_truncated(&self, resource: &str) -> bool {
         self.owners(resource).iter().any(|entry| entry.is_truncated)
     }

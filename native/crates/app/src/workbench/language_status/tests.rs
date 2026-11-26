@@ -168,3 +168,44 @@ fn a_changed_status_wiggles_when_new_to_the_user_or_severe_and_flashes_when_seve
     workbench.update_in(cx, |workbench, window, cx| _ = workbench.execute_command("editor.inlayHints.Reset", vec![], window, cx));
     assert_eq!(stored(&workbench, cx, KEY_INTERACT_COUNT), None);
 }
+
+/// limitIndicator.test.ts "distinguishes diagnostic truncation from editor highlight limits".
+#[gpui::test]
+fn too_many_problems_warn_whether_the_editor_or_the_source_cut_them(cx: &mut TestAppContext) {
+    let (workbench, cx) = open(cx, "limit-problems");
+    let uri = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().uri());
+    let mut details = Vec::new();
+    for (count, truncated) in [(5000, false), (5001, false), (1001, true), (5001, true), (5000, false)] {
+        let markers: Vec<Value> = (0..count).map(|index| json!({ "severity": 8, "message": format!("problem {}", index + 1), "startLineNumber": index + 1, "startColumn": 1, "endLineNumber": index + 1, "endColumn": 2 })).collect();
+        workbench.update(cx, |workbench, cx| workbench.change_many_markers("test", &json!([[uri.clone(), markers, truncated]]), cx));
+        details.push(view(&workbench, cx).combined.iter().filter(|status| status.id == "diagnosticsLimitInfo").map(|status| status.detail.clone()).collect::<Vec<_>>());
+    }
+    let expected: [&[&str]; 5] = [
+        &[],
+        &["Only 5000 problems are rendered in the editor for performance reasons."],
+        &["Some problems are not shown in the problems view for performance reasons."],
+        &["Some problems are not shown in the problems view, and only 5000 problems are rendered in the editor for performance reasons."],
+        &[],
+    ];
+    assert_eq!(details, expected);
+}
+
+/// limitIndicator.test.ts "keeps Configure actions for folding and color limits".
+#[gpui::test]
+fn folding_and_color_limits_warn_with_a_configure_command(cx: &mut TestAppContext) {
+    let (workbench, cx) = open(cx, "limit-folding");
+    workbench.update(cx, |workbench, _| {
+        let editor = workbench.editors.active_mut().unwrap();
+        editor.text_model_mut().document.lines = (0..12).flat_map(|_| ["a".to_string(), "  b".to_string()]).collect();
+        editor.folding_limit = 10;
+        editor.refresh_folding_ranges();
+        workbench.color_detector.model_id = Some(workbench.editors.active().unwrap().model_id);
+        workbench.color_detector.limited = Some(1);
+    });
+    let statuses: Vec<(String, String, Option<Value>)> = view(&workbench, cx).combined.into_iter().map(|status| (status.id, status.detail, status.command)).collect();
+    let configure = |setting: &str| Some(json!({ "id": "workbench.action.openSettings", "title": "Configure", "arguments": [setting] }));
+    assert_eq!(statuses, [
+        ("decoratorsLimitInfo".to_string(), "only 1 shown for performance reasons".to_string(), configure("editor.colorDecoratorsLimit")),
+        ("foldingLimitInfo".to_string(), "only 10 shown for performance reasons".to_string(), configure("editor.foldingMaximumRegions")),
+    ]);
+}
