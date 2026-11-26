@@ -950,6 +950,7 @@ impl Workbench {
         self.close_keybindings_editor(window, cx);
         self.close_settings_editor(window, cx);
         self.close_profiles_editor(cx);
+        self.close_workspace_trust_editor(cx);
         self.close_modal_group(window, cx);
     }
 

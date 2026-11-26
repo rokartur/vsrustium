@@ -566,12 +566,20 @@ impl Workbench {
                 shifted()
                     // .view-lines is monaco-mouse-cursor-text; the line numbers, glyph margin and the overview ruler over the
                     // vertical scrollbar keep the default cursor.
-                    .child(div().absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor(self.text_cursor_style()).on_mouse_down(
+                    .child(div().debug_selector(|| "editor-view-lines".into()).absolute().top_0().bottom_0().left(px(metrics.content_left())).right(px(OVERVIEW_RULER_WIDTH)).cursor(self.text_cursor_style()).on_mouse_down(
                         MouseButton::Right,
                         // Below the last line (MouseTargetType.CONTENT_EMPTY): the position is the end of the last line.
                         cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
                             let last = workbench.editors.active().expect("the text area shows an editor").document().lines.len() - 1;
                             workbench.show_editor_context_menu(last, f32::MAX, event.position, window, cx);
+                        }),
+                    ).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|workbench, event: &MouseDownEvent, window, cx| {
+                            window.focus(&workbench.editor_focus, cx);
+                            let last = workbench.editors.active().expect("the text area shows an editor").document().lines.len() - 1;
+                            workbench.selecting_text = true;
+                            workbench.click_text(last, f32::MAX, event.modifiers, event.modifiers.shift, event.click_count, cx);
                         }),
                     ))
                     // editorScrollbar.ts clips the lines at contentWidth: the column right of the minimap stays empty.
@@ -1294,6 +1302,8 @@ impl Workbench {
                     .child(self.wrapped_segment_clip(content, segment, shift, scroll_left, char_width))
                     .children(self.word_wrap_indicator(editor, segment, scroll_left, char_width))
                     .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                        // The empty area under the lines (CONTENT_EMPTY) has its own press.
+                        cx.stop_propagation();
                         window.focus(&workbench.editor_focus, cx);
                         let modifiers = event.modifiers;
                         let visible = visible_at(workbench, event.position.x);
@@ -1308,6 +1318,7 @@ impl Workbench {
                         workbench.show_long_line(index, visible, char_width, cx);
                     }))
                     .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
                         let visible = visible_at(workbench, event.position.x);
                         workbench.show_editor_context_menu(index, visible, event.position, window, cx);
                         workbench.show_long_line(index, visible, char_width, cx);

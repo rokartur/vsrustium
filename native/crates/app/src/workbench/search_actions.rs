@@ -40,6 +40,12 @@ const SEARCH_HISTORY_KEY: &str = "workbench.search.history";
 const SLOW_SEARCH: Duration = Duration::from_secs(2);
 /// `searchMaxResultsWarning`.
 const LIMIT_HIT_WARNING: &str = "The result set only contains a subset of all matches. Be more specific in your search to narrow down the results.";
+/// replaceService.ts `toReplaceResource`: the file's path with the `private` scheme and its scheme in the query.
+const REPLACE_PREVIEW_QUERY: &str = r#"{"scheme":"file"}"#;
+
+fn replace_preview_path(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}?{REPLACE_PREVIEW_QUERY}", path.display()))
+}
 /// The text searchWidget.ts matches a regex against to scale the search-on-type delay.
 const MATCHINESS_TEXT: &str = "\n\t\t\t\t\t\t\t\t~!@#$%^&*()_+\n\t\t\t\t\t\t\t\t`1234567890-=\n\t\t\t\t\t\t\t\tqwertyuiop[]\\\n\t\t\t\t\t\t\t\tQWERTYUIOP{}|\n\t\t\t\t\t\t\t\tasdfghjkl;'\n\t\t\t\t\t\t\t\tASDFGHJKL:\"\n\t\t\t\t\t\t\t\tzxcvbnm,./\n\t\t\t\t\t\t\t\tZXCVBNM<>? ";
 
@@ -614,6 +620,7 @@ impl Workbench {
                 }
             }
             SearchField::Replace => {
+                self.update_replace_previews();
                 self.search.replace_history_update = Some(cx.spawn(async |workbench, cx| {
                     cx.background_executor().timer(Duration::from_millis(500)).await;
                     let _ = workbench.update(cx, |workbench, _| workbench.add_to_search_history(&[SearchField::Replace]));
@@ -957,6 +964,7 @@ impl Workbench {
             Err(_) => false,
         };
         let completed = !cancellation.is_cancelled();
+        self.update_replace_previews();
         if self.search.result.is_empty() {
             let (message, link) = no_results_message(completed, self.search.only_open_editors, include, exclude);
             self.search.message = Some(vec![MessagePart::Text(message), MessagePart::Link(link)]);
@@ -1178,20 +1186,39 @@ impl Workbench {
         }
     }
 
-    /// replaceService.ts `openReplacePreview` and `updateReplacePreview`: the file against a `private:` model of its
-    /// text with every match of the file replaced, in the diff editor.
+    /// replaceService.ts `openReplacePreview`: the file against its replace preview, in the diff editor.
     fn open_replace_preview(&mut self, path: &Path, preserve_focus: bool, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(pattern) = self.search.replace_pattern() else { return };
         let file_uri = crate::editor::uri_value("file", path);
         if self.editors.model("file", path).is_none()
             && let Err(error) = self.try_open_document(&file_uri, &Value::Null, &Value::Null, false, cx)
         {
             return eprintln!("replace preview of {}: {error}", path.display());
         }
-        let source = self.editors.model("file", path).expect("opened above").document();
-        let (mut lines, language_id) = (source.lines.clone(), source.language_id.clone());
-        drop(source);
-        let Some(file_match) = self.search.result.files.iter().find(|file| file.path == path) else { return };
+        if !self.write_replace_preview(path) {
+            return;
+        }
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let preview_uri = json!({ "$mid": 1, "scheme": "private", "path": path.to_string_lossy(), "query": REPLACE_PREVIEW_QUERY });
+        let options = json!([null, { "preserveFocus": preserve_focus, "pinned": pinned, "revealIfVisible": true }]);
+        drop(self.execute_command("_workbench.diff", vec![file_uri, preview_uri, json!(format!("{name} \u{2194} {name} (Replace Preview)")), options], window, cx));
+    }
+
+    /// `ReplacePreviewModel`'s `onReplaceTermChanged` and `fileMatch.onChange`: every open preview shows the file with
+    /// the current replace string and the file's current matches.
+    pub(super) fn update_replace_previews(&mut self) {
+        let paths: Vec<PathBuf> = self.search.result.files.iter().map(|file| file.path.clone()).filter(|path| self.editors.model("private", &replace_preview_path(path)).is_some()).collect();
+        for path in paths {
+            self.write_replace_preview(&path);
+        }
+    }
+
+    /// replaceService.ts `updateReplacePreview`: a `private:` model of the file's text with every match of the file
+    /// replaced; false when the file has no matches or no model.
+    fn write_replace_preview(&mut self, path: &Path) -> bool {
+        let Some(pattern) = self.search.replace_pattern() else { return false };
+        let Some(file_match) = self.search.result.files.iter().find(|file| file.path == path) else { return false };
+        let Some(source) = self.editors.model("file", path) else { return false };
+        let (mut lines, language_id) = (source.document().lines.clone(), source.document().language_id.clone());
         for found in file_match.matches.iter().rev() {
             let range = found.range;
             let byte = |line: &str, utf16: usize| line.char_indices().nth(char_column(line, utf16)).map_or(line.len(), |(index, _)| index);
@@ -1201,17 +1228,12 @@ impl Workbench {
             lines.splice(range.start_line..=range.end_line, replaced.split('\n').map(str::to_string).collect::<Vec<_>>());
         }
         let text = lines.join("\n");
-        // toReplaceResource: the file's path with the `private` scheme and its scheme in the query.
-        let query = r#"{"scheme":"file"}"#;
-        let preview_path = PathBuf::from(format!("{}?{query}", path.display()));
+        let preview_path = replace_preview_path(path);
         if !self.revert_model("private", &preview_path, text.as_bytes()) {
             let document = TextDocument::from_text("private", &preview_path, &text, "utf8".into(), Some(&language_id), &self.languages, &self.settings.lock().unwrap());
             self.editors.open_model(document);
         }
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
-        let preview_uri = json!({ "$mid": 1, "scheme": "private", "path": path.to_string_lossy(), "query": query });
-        let options = json!([null, { "preserveFocus": preserve_focus, "pinned": pinned, "revealIfVisible": true }]);
-        drop(self.execute_command("_workbench.diff", vec![file_uri, preview_uri, json!(format!("{name} \u{2194} {name} (Replace Preview)")), options], window, cx));
+        true
     }
 
     fn search_row_match(&self, key: &RowKey) -> Option<(PathBuf, crate::search_model::Match)> {
@@ -1279,6 +1301,7 @@ impl Workbench {
                 None => self.search.result.remove_file(file),
             }
         }
+        self.update_replace_previews();
     }
 
     /// `ReplaceService.replace`: one bulk edit of the matches' replace strings, then every edited model saves.

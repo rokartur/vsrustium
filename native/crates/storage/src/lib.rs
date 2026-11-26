@@ -44,6 +44,10 @@ impl Storage {
         self.items.get(key).map(String::as_str)
     }
 
+    pub fn items(&self) -> impl Iterator<Item = (&str, &String)> {
+        self.items.iter().map(|(key, value)| (key.as_str(), value))
+    }
+
     pub fn set(&mut self, key: &str, value: String) {
         if self.items.get(key) == Some(&value) {
             return;

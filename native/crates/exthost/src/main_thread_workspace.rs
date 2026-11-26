@@ -40,6 +40,10 @@ impl MainThreadWorkspace {
         MainThreadWorkspace { folders, settings, rg: search::ripgrep::rg_path(app_root), searches: HashMap::new(), sender, receiver }
     }
 
+    pub fn set_folders(&mut self, folders: Vec<PathBuf>) {
+        self.folders = folders;
+    }
+
     pub fn folders(&self) -> &[PathBuf] {
         &self.folders
     }

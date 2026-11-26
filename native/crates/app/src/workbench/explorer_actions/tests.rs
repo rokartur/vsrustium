@@ -119,17 +119,13 @@ fn files_dropped_from_finder_copy_into_the_folder_under_the_pointer(cx: &mut Tes
         cx.run_until_parked();
     };
     // Rows are 22px from y 96 under the section header: sub, then a.txt; the empty area follows.
-    let (sub_row, third_row, empty_area) = (point(px(120.), px(107.)), point(px(120.), px(151.)), point(px(120.), px(300.)));
+    let (sub_row, third_row) = (point(px(120.), px(107.)), point(px(120.), px(151.)));
 
     drop(&["dropped.txt"], sub_row, cx);
     assert_eq!(names(&dir.join("sub")), ["dropped.txt"]);
     assert_eq!(names(&finder), ["a.txt", "dropped.txt", "folder"], "a drop copies");
     let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().path.clone()));
     assert_eq!(opened, Some(dir.join("sub/dropped.txt")), "explorer.autoOpenDroppedFile");
-
-    // A folder dropped into a workspace folder asks first; the skipped dialog picks Add, which the port lacks.
-    drop(&["folder"], empty_area, cx);
-    assert!(!dir.join("folder").exists());
 
     // A name the folder has asks to replace it; the skipped dialog confirms. Revealing sub/dropped.txt expanded sub,
     // so a.txt is the third row.
@@ -214,20 +210,20 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     cx.simulate_mouse_up(file_row, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(menu_titles(&workbench, cx), ["Reveal in Finder", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
+    assert_eq!(menu_titles(&workbench, cx), ["Reveal in Finder", "---", "Select for Compare", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")]);
 
     // The pointer focuses the item under it; Down goes on from there and skips the separator; Enter runs it.
     let focused = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().levels[0].focused);
     cx.simulate_mouse_move(point(px(150.), px(148.)), None, Modifiers::none());
     assert_eq!(focused(cx), Some(0));
-    cx.simulate_mouse_move(point(px(150.), px(400.)), None, Modifiers::none());
+    cx.simulate_mouse_move(point(px(150.), px(700.)), None, Modifiers::none());
     assert_eq!(focused(cx), None);
     cx.simulate_mouse_move(point(px(150.), px(148.)), None, Modifiers::none());
     cx.simulate_keystrokes("pagedown");
-    assert_eq!(focused(cx), Some(11));
-    cx.simulate_keystrokes("pageup down down down down down down");
-    assert_eq!(focused(cx), Some(10));
+    assert_eq!(focused(cx), Some(13));
+    cx.simulate_keystrokes("pageup down down down down down down down");
+    assert_eq!(focused(cx), Some(12));
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_none() && workbench.explorer.edit.as_ref().is_some_and(|edit| edit.renamed.is_some())));
@@ -237,7 +233,9 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     let empty = point(px(120.), px(300.));
     cx.simulate_mouse_down(empty, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(menu_titles(&workbench, cx), ["New File...", "New Folder...", "---", "(Paste)"]);
+    // As the reference's (port/fixtures/ui-pair/m12/workspace-folders.json), less the commands the port lacks.
+    let below = ["New File...", "New Folder...", "Reveal in Finder", "---", "Add Folder to Workspace...", "Open Folder Settings", "Remove Folder from Workspace", "---", "Open Timeline", "---", "(Paste)", "---", "Copy Path", "Copy Relative Path"];
+    assert_eq!(menu_titles(&workbench, cx), below);
     cx.simulate_keystrokes("escape");
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.context_menu.is_none() && workbench.explorer.focus.is_focused(window)));
 
@@ -245,7 +243,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     // Items are 24px from the border and the 4px padding, the separators 11px.
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     let top = workbench.read_with(cx, |workbench, _| f32::from(workbench.context_menu.as_ref().unwrap().levels[0].origin.y));
-    let delete = point(px(150.), px(top + 5. + 24. * 7. + 11. * 4. + 12.));
+    let delete = point(px(150.), px(top + 5. + 24. * 8. + 11. * 5. + 12.));
     cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
     cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
     assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_some()), "too early");
@@ -319,7 +317,7 @@ fn extension_items_follow_the_right_clicked_rows_resource(cx: &mut TestAppContex
     let file_row = point(px(120.), px(129.));
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(menu_titles(&workbench, cx), ["Open Text Preview", "Reveal in Finder", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
+    assert_eq!(menu_titles(&workbench, cx), ["Open Text Preview", "Reveal in Finder", "---", "Select for Compare", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
     // markdown.showPreview opens only a `vscode.Uri`, which the host revives from `$mid` 1.
     let resource = workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().args[0].clone());
     assert_eq!(resource["$mid"], 1);
@@ -398,7 +396,7 @@ fn view_title_and_file_actions_collapse_reveal_and_copy_the_active_file(cx: &mut
     std::fs::create_dir_all(dir.join("sub/inner")).unwrap();
     std::fs::write(dir.join("sub/inner/x.txt"), "").unwrap();
     std::fs::write(dir.join("sub/y.txt"), "").unwrap();
-    let shows_title_actions = |cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, cx| workbench.explorer_title_actions(window, cx).is_some());
+    let shows_title_actions = |cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, _| workbench.explorer_title_actions_shown(window));
     assert!(shows_title_actions(cx), "the focused pane shows its title actions");
 
     workbench.update_in(cx, |workbench, window, cx| workbench.select_explorer_item(&dir.join("sub/inner/x.txt"), window, cx));

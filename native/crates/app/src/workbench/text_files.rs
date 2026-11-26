@@ -75,7 +75,7 @@ pub(super) struct TextFiles {
     pub conflict_messages: Vec<u64>,
     watcher: Option<Watcher>,
     /// editorService.ts `activeOutOfWorkspaceWatchers`, by watch id.
-    watched_files: HashMap<PathBuf, u64>,
+    pub(super) watched_files: HashMap<PathBuf, u64>,
     next_watch: u64,
     /// The model the group's code editor showed at the last editors change (`onDidChangeModel`).
     shown_model: Option<u32>,

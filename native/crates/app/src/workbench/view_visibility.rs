@@ -68,7 +68,7 @@ impl Workbench {
     fn container_view_entries(&self, container: &str) -> Vec<ViewEntry> {
         let mut entries = Vec::new();
         if container == "explorer" {
-            match self.folder.is_some() {
+            match self.workspace().is_some_and(|workspace| !workspace.folders.is_empty()) {
                 true => entries.push(ViewEntry { id: FILE_VIEW, name: "Folders".into(), can_toggle: false }),
                 false => entries.push(ViewEntry { id: EMPTY_VIEW, name: "No Folder Opened".into(), can_toggle: true }),
             }

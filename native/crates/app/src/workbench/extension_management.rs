@@ -8,7 +8,7 @@ use exthost::extension_management::Job;
 use exthost::gallery::{Gallery, Operation};
 use exthost::scan::ScannedExtension;
 use futures::channel::oneshot;
-use gpui::Context;
+use gpui::{Context, PromptLevel, Window};
 use serde_json::Value;
 
 use super::Workbench;
@@ -62,11 +62,15 @@ impl Workbench {
             }
             workbench.install_vsixs(vsixs, true, cx)
         });
-        self.commands.register("workbench.extensions.installExtension", |workbench, args, _, cx| match args.first() {
+        self.commands.register("workbench.extensions.installExtension", |workbench, args, window, cx| match args.first() {
             Some(Value::String(arg)) => {
                 let (id, version) = id_and_version(arg);
-                let pre_release = args.get(1).is_some_and(|options| options["installPreReleaseVersion"] == true);
-                workbench.install_from_gallery(id, version, pre_release, cx)
+                let options = args.get(1).cloned().unwrap_or_default();
+                let pre_release = options["installPreReleaseVersion"] == true;
+                match options.get("justification") {
+                    Some(justification) => workbench.install_with_justification(id, version, pre_release, justification.clone(), window, cx),
+                    None => workbench.install_from_gallery(id, version, pre_release, cx),
+                }
             }
             Some(uri) => match uri_parts(uri) {
                 Ok((_, path)) => workbench.install_vsixs(vec![path], false, cx),
@@ -97,6 +101,39 @@ impl Workbench {
             (true, _) => Some("Completed installing extensions."),
         };
         self.run_extension_jobs(vsixs.into_iter().map(Job::InstallVsix).collect(), done, cx, |error| error)
+    }
+
+    /// `extensionsWorkbenchService.installExtension` with `justification`: asks "Would you like to install ..." with the
+    /// gallery extension's names before installing; Cancel ends in a `CancellationError`, which no one shows.
+    fn install_with_justification(&mut self, id: String, version: Option<String>, pre_release: bool, justification: Value, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let lookup = {
+            let (id, version) = (id.clone(), version.clone());
+            cx.background_executor().spawn(async move { Gallery::open_vsx(crate::VERSION).installable_extension(&id, version.as_deref(), pre_release) })
+        };
+        let (sender, receiver) = oneshot::channel();
+        cx.spawn_in(window, async move |workbench, cx| {
+            let extension = match lookup.await {
+                Ok(extension) => extension,
+                Err(error) => {
+                    let error = format!("{error:#}");
+                    let _ = workbench.update(cx, |workbench, _| workbench.notify_error(error.clone()));
+                    return drop(sender.send(Err(serialized_error(&error))));
+                }
+            };
+            let (message, detail, install_label) = install_prompt(&extension.display_name, &extension.publisher_display_name, &justification);
+            let Ok(answer) = cx.update(|window, cx| crate::dialog::show_message_box(window, PromptLevel::Info, &message, Some(&detail), &[&install_label, "Cancel"], None, cx)) else {
+                return;
+            };
+            if !matches!(answer.await, Ok((0, _))) {
+                return drop(sender.send(Err(serialized_error("Canceled"))));
+            }
+            let Ok(Outcome::Pending(installed)) = workbench.update(cx, |workbench, cx| workbench.install_from_gallery(id, version, pre_release, cx)) else {
+                return;
+            };
+            let _ = sender.send(installed.await.unwrap_or(Ok(Value::Null)));
+        })
+        .detach();
+        Outcome::Pending(receiver)
     }
 
     /// `extensionsWorkbenchService.install(id)`: the gallery lookup and the download run off the UI thread, then the
@@ -257,6 +294,30 @@ fn id_and_version(arg: &str) -> (String, Option<String>) {
         Some((id, version)) => (id.to_lowercase(), Some(version.to_owned())),
         None => (arg.to_lowercase(), None),
     }
+}
+
+/// The prompt of `installExtension` with a justification: its message, its detail and the install button's label.
+fn install_prompt(display_name: &str, publisher_display_name: &str, justification: &Value) -> (String, String, String) {
+    let message = format!("Would you like to install '{display_name}' extension from '{publisher_display_name}'?");
+    let (detail, label) = match justification {
+        Value::String(reason) => (reason.clone(), "Install Extension".to_owned()),
+        _ => (
+            justification["reason"].as_str().unwrap_or_default().to_owned(),
+            justification["action"].as_str().map_or("Install Extension".to_owned(), |action| format!("Install Extension and {action}")),
+        ),
+    };
+    (message, detail, label)
+}
+
+#[cfg(test)]
+#[test]
+fn install_prompt_names_the_justification_action() {
+    let uri = serde_json::json!({ "reason": "This extension wants to open a URI:\ncode-oss://a.b/c", "action": "Open URI" });
+    let (message, detail, label) = install_prompt("B", "A", &uri);
+    assert_eq!(message, "Would you like to install 'B' extension from 'A'?");
+    assert_eq!(detail, "This extension wants to open a URI:\ncode-oss://a.b/c");
+    assert_eq!(label, "Install Extension and Open URI");
+    assert_eq!(install_prompt("B", "A", &Value::from("why")).2, "Install Extension");
 }
 
 #[cfg(test)]

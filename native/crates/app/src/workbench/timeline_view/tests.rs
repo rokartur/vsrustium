@@ -154,9 +154,9 @@ fn two_selected_items_compare_older_against_newer(cx: &mut TestAppContext) {
         (titles(menu_actions(&menus, MenuId::TimelineItemContext, &context)), context)
     };
     workbench.update_in(cx, |workbench, window, cx| {
-        workbench.click_timeline_row("git|old", Modifiers::default(), window, cx);
+        workbench.click_timeline_row("git|old", Modifiers::default(), 1, window, cx);
         assert!(!item_menu(workbench, "git|old", window).0.contains(&"Compare Selected".to_string()));
-        workbench.click_timeline_row("git|new", Modifiers { platform: true, ..Modifiers::default() }, window, cx);
+        workbench.click_timeline_row("git|new", Modifiers { platform: true, ..Modifiers::default() }, 1, window, cx);
         assert_eq!(workbench.timeline.selected, ["git|old", "git|new"]);
         let (titles, context) = item_menu(workbench, "git|new", window);
         assert!(titles.contains(&"Compare Selected".to_string()));
@@ -196,5 +196,27 @@ fn keys_move_the_selection_and_type_to_a_label(cx: &mut TestAppContext) {
     workbench.read_with(cx, |workbench, _| {
         assert!(workbench.timeline.selected.is_empty());
         assert_eq!(workbench.timeline.focused.as_deref(), Some("git|3"));
+    });
+}
+
+#[gpui::test]
+fn a_click_opens_the_comparison_and_keeps_the_row_selected_and_focused(cx: &mut TestAppContext) {
+    let (dir, workbench, receiver, cx) = workbench_in("timeline-click", cx);
+    workbench.update_in(cx, |workbench, window, cx| {
+        register_git(workbench, false, cx);
+        workbench.open_file(dir.join("a.txt"), true, window, cx);
+        workbench.update_timeline(cx);
+    });
+    cx.run_until_parked();
+    let mut requests = timeline_requests(&receiver);
+    let command = json!({ "id": "_workbench.diff", "arguments": [file_uri(&dir.join("b.txt")), file_uri(&dir.join("a.txt")), "a.txt (old) \u{2194} a.txt", null] });
+    answer(requests.last_mut().unwrap(), json!([{ "handle": "git|1", "label": "old", "timestamp": now_ms() - 60_000, "command": command }]));
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, cx| workbench.click_timeline_row("git|1", Modifiers::default(), 1, window, cx));
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, _| {
+        assert!(workbench.editors.active_diff().is_some());
+        assert_eq!(workbench.timeline.selected, ["git|1"]);
+        assert!(workbench.timeline.focus.is_focused(window), "a click opens the comparison with preserveFocus");
     });
 }

@@ -1,0 +1,10 @@
+[
+	{ "hotkey": ["cmd", "shift", "p"] },
+	{ "wait": 800 },
+	{ "type": "Manage Workspace Trust" },
+	{ "wait": 1500 },
+	{ "shot": "trust-palette" },
+	{ "key": "return" },
+	{ "wait": 2500 },
+	{ "shot": "trust-editor" }
+]

@@ -43,7 +43,9 @@ impl Workbench {
             }
         }
         let clipboard = cx.read_from_clipboard().and_then(|item| item.text());
+        let mut versions = Vec::new();
         for (scheme, ref path, group) in resources {
+            let before = self.editors.model(scheme, path).expect("resolved above").alternative_version_id();
             let in_active_editor = self.editors.active().is_some_and(|editor| editor.document().is(scheme, path));
             let model = self.editors.model_mut(scheme, path).expect("resolved above");
             let mut eol = None;
@@ -99,7 +101,13 @@ impl Workbench {
             for change in [change, eol_change].iter().flatten() {
                 self.send_model_edit(scheme, path, change);
             }
+            let after = self.editors.model(scheme, path).expect("resolved above").alternative_version_id();
+            if after != before {
+                versions.push((scheme.to_owned(), path.clone(), before, after));
+            }
         }
+        // bulkEditService.ts: a workspace edit without a label is "Workspace Edit".
+        self.push_workspace_text_edit("Workspace Edit".into(), versions);
         self.host.send_visible_ranges(&self.editors);
         cx.notify();
         Ok(Value::Null)

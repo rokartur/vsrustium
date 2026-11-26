@@ -115,7 +115,7 @@ impl Workbench {
             }
         }
         let column_and_options = args.get(3).cloned().unwrap_or_default();
-        let mut options = column_and_options[1].clone();
+        let mut options = super::super::actions::mixin_open_context(args.get(4), column_and_options[1].clone());
         if !column_and_options[0].is_null() {
             options["position"] = column_and_options[0].clone();
         }

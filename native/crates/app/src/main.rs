@@ -458,7 +458,7 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.refresh_keyboard_mapper();
                 workbench.extension_development = development.is_some();
                 workbench.load_keybindings(keybindings::default_keybindings(&extensions), keybindings_file.clone(), cx);
-                workbench.watch_settings_files(cx);
+                workbench.watch_settings_files(window, cx);
                 workbench.watch_policies(cx);
                 workbench.start_file_watcher(cx);
                 workbench.start_system_wide_keybindings(window, cx);
@@ -467,7 +467,6 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.menus.extend(menus::extension_menus(&extensions));
                 workbench.command_icons = menus::command_icons(&extensions);
                 workbench.status_entries = main_thread_status_bar::static_entries(&extensions);
-                workbench.urls.extensions = extensions.iter().map(|extension| (extension.id.to_lowercase(), extension.description["displayName"].as_str().unwrap_or(&extension.id).to_owned())).collect();
                 workbench.file_icons = file_icons;
                 workbench.color_themes = color_themes;
                 workbench.set_tree_views(&extensions);
@@ -744,7 +743,8 @@ fn icon_theme_follows_workbench_icon_theme() {
 /// windowsMainService.ts `open` with `addRecentlyOpened`: the window's folder or workspace and its file.
 fn add_recently_opened(shared: &mut storage::Storage, workspace: Option<&Workspace>, file: Option<&Path>) {
     let mut opened = Vec::new();
-    if let Some(workspace) = workspace {
+    // workspacesHistoryMainService.ts: untitled workspaces are not remembered.
+    if let Some(workspace) = workspace.filter(|workspace| !workspace.file.as_deref().is_some_and(config::workspace::is_untitled_workspace)) {
         opened.push(match &workspace.file {
             Some(file) => recently_opened::entry(recently_opened::Kind::Workspace, file, None),
             None => recently_opened::entry(recently_opened::Kind::Folder, &workspace.folders[0].path, None),

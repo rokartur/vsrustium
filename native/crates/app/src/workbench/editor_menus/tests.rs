@@ -209,6 +209,19 @@ fn the_floating_menu_shows_contributed_editor_content_items(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+fn a_press_below_the_last_line_puts_the_cursor_at_its_end(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("press-below", &["a.txt"], cx);
+    let lines = cx.debug_bounds("editor-view-lines").expect("the text area shows");
+    let line_height = workbench.read_with(cx, |workbench, _| workbench.editors.viewport.line_height);
+    let selections = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().selections.clone());
+    cx.simulate_click(point(lines.origin.x + px(16.), lines.origin.y + px(line_height / 2.)), gpui::Modifiers::none());
+    assert_eq!(selections(cx), [Selection::caret(Position::new(0, 2))], "a press on a line stays on it");
+    cx.simulate_click(point(lines.origin.x + px(16.), lines.origin.y + px(line_height * 5.)), gpui::Modifiers::none());
+    assert_eq!(selections(cx), [Selection::caret(Position::new(1, 11))]);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
 fn gutter_presses_select_whole_lines_and_drags_extend_them(cx: &mut TestAppContext) {
     let (dir, workbench, cx) = workbench_with("gutter-select", &["a.txt"], cx);
     workbench.update(cx, |workbench, _| {

@@ -146,10 +146,13 @@ async function run(app: string, pid: number, folder: string) {
 
 /** The window, or the sheet over it when one is open. */
 async function shot(app: string, pid: number, windowId: number, name: string) {
+	type Listed = { window_id: number; is_on_screen: boolean; bounds: { width: number } };
 	const { windows } = await cua('list_windows', { pid });
-	const sheet = windows.find((w: { window_id: number; is_on_screen: boolean; bounds: { width: number } }) => w.is_on_screen && w.window_id !== windowId && w.bounds.width < 1024);
+	// The port reopens its window when it enters a workspace: then the new 1024 wide window is the main one.
+	const main = windows.some((w: Listed) => w.window_id === windowId && w.is_on_screen) ? windowId : windows.find((w: Listed) => w.is_on_screen && w.bounds.width === 1024)?.window_id ?? windowId;
+	const sheet = windows.find((w: Listed) => w.is_on_screen && w.window_id !== main && w.bounds.width < 1024);
 	const file = resolve(outDir, `${app}-${name}.png`);
-	await cua('get_window_state', { pid, window_id: sheet?.window_id ?? windowId, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: file });
+	await cua('get_window_state', { pid, window_id: sheet?.window_id ?? main, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: file });
 	console.log(`${app}-${name}.png${sheet ? ' (sheet)' : ''}`);
 }
 

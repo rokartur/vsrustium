@@ -163,6 +163,8 @@ pub(super) struct ExplorerPanes {
     sash_hover: Option<(usize, Task<()>)>,
     /// The pane a header is dragged over, and whether over its lower half.
     drop: Option<(&'static str, bool)>,
+    /// The header a pointer focused: paneHeaders.css `:focus:not(:focus-visible)` draws no outline until a key.
+    pointer_focused: Option<&'static str>,
 }
 
 /// A view's body in the pane view: a header title and its content.
@@ -210,7 +212,7 @@ impl Workbench {
         // The card's borders, the composite title, the compact activity bar, and the pane view's 5px less.
         let compact = if self.compact_activity_bar_location().is_some() { 32. } else { 0. };
         let height = side_bar_height - 2. - 32. - compact - 5.;
-        let first = if self.folder.is_some() { FILE_VIEW } else { EMPTY_VIEW };
+        let first = if self.workspace().is_some_and(|workspace| !workspace.folders.is_empty()) { FILE_VIEW } else { EMPTY_VIEW };
         let contributed = self.shown_tree_views();
         let built_in = [first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().filter(|&id| id == FILE_VIEW || !self.view_hidden("explorer", id));
         let ids: Vec<&'static str> = built_in.chain(contributed.iter().copied()).collect();
@@ -417,14 +419,18 @@ impl Workbench {
                     div().ml(px(10.)).text_size(px(12.)).text_color(self.color("panelTitle.inactiveForeground")).overflow_hidden().whitespace_nowrap().child(description)
                 }))
                 .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().group_hover(id, |actions| actions.visible()).when(focused, |actions| actions.visible()).child(actions)))
-                .when(id == FILE_VIEW, |header| header.children(self.explorer_title_actions(window, cx)))
-                .when(focused, |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
-                .on_click(cx.listener(move |workbench, _, window, cx| {
+                .when(id == FILE_VIEW, |header| header.child(self.explorer_title_actions(window, cx)))
+                .when(focused && self.explorer_panes.pointer_focused != Some(id), |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
+                .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, window, cx| {
                     let focus = workbench.explorer_panes.focus[id].clone();
                     window.focus(&focus, cx);
+                    workbench.explorer_panes.pointer_focused = (!event.is_keyboard()).then_some(id);
                     workbench.set_pane_expanded(index, !expanded, cx);
                 }))
                 .on_key_down(cx.listener(move |workbench, event: &KeyDownEvent, window, cx| {
+                    if workbench.explorer_panes.pointer_focused.take().is_some() {
+                        cx.notify();
+                    }
                     let neighbour = match event.keystroke.key.as_str() {
                         // Enter and Space reach `on_click`: gpui clicks a focused element on its activation keys.
                         "left" => return workbench.set_pane_expanded(index, false, cx),

@@ -59,6 +59,8 @@ mod extensions_list_view;
 mod workspace_recommendations;
 pub(crate) mod localization;
 pub(crate) mod extensions_view;
+mod bulk_undo;
+mod file_compare;
 mod file_dialogs;
 mod file_participants;
 mod find_options_widget;
@@ -214,6 +216,8 @@ mod webview_panels;
 mod url_actions;
 pub(crate) mod url_handler;
 mod workspace_actions;
+mod workspace_editing;
+mod workspace_trust_editor;
 mod workspace_trust_view;
 
 use std::cell::Cell;
@@ -273,6 +277,7 @@ pub struct Workbench {
     pub unexpected_errors: crate::output::logger::UnexpectedErrorHandler,
     pub keybindings: keyboard::Keybindings,
     pub keybindings_editor: keybindings_editor_view::KeybindingsEditor,
+    pub trust_editor: workspace_trust_editor::TrustEditor,
     pub settings_editor: settings_editor_view::SettingsEditor,
     keybinding_marks: define_keybinding::KeybindingMarks,
     unsupported_settings_render: Option<Task<()>>,
@@ -421,6 +426,12 @@ pub struct Workbench {
     panel: panel::Panel,
     explorer_panes: view_panes::ExplorerPanes,
     pub workspace_trust: crate::workspace_trust::WorkspaceTrust,
+    /// fileCommands.ts `globalResourceToCompare`, set by Select for Compare (`resourceSelectedForCompare`).
+    resource_to_compare: Option<crate::diff_editor::Side>,
+    /// fileActions.ts `CompareWithClipboardAction.SCHEME_COUNTER`.
+    clipboard_compare_count: u32,
+    /// The multi-file text edits of `workspace.applyEdit`, the newest last.
+    workspace_text_edits: Vec<bulk_undo::WorkspaceTextEdit>,
     /// The APPLICATION_SHARED storage: trust and the recently opened list.
     pub shared_storage: Arc<Mutex<Storage>>,
     /// The recently opened list as last read, which the menu bar shows.
@@ -493,7 +504,7 @@ impl Render for Workbench {
             .children(self.banner_part(window, cx))
             .child(self.middle_section(viewport, editor, window, cx))
             .when(self.is_status_bar_visible(), |grid| grid.child(self.status_bar(window, cx)));
-        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx)).or_else(|| self.modal_group_widget(window, cx));
+        let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx)).or_else(|| self.workspace_trust_editor_widget(window, cx)).or_else(|| self.modal_group_widget(window, cx));
         let quick_input = self.quick_input_widget(window, cx);
         let notifications = self.notifications_widget(viewport, window, cx);
         let context_menu = self.context_menu_widget(cx);
@@ -559,6 +570,7 @@ impl Workbench {
             unexpected_errors: Default::default(),
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
+            trust_editor: Default::default(),
             settings_editor: settings_editor_view::SettingsEditor::new(cx),
             keybinding_marks: Default::default(),
             unsupported_settings_render: None,
@@ -682,6 +694,9 @@ impl Workbench {
             panel: panel::Panel::default(),
             explorer_panes: view_panes::ExplorerPanes::default(),
             workspace_trust: Default::default(),
+            resource_to_compare: None,
+            clipboard_compare_count: 0,
+            workspace_text_edits: Vec::new(),
             shared_storage: Arc::new(Mutex::new(Storage::in_memory())),
             recently_opened: Default::default(),
             dialogs: Vec::new(),
@@ -703,6 +718,7 @@ impl Workbench {
         workbench.register_workbench_actions();
         workbench.register_notebook_commands();
         workbench.register_diff_editor_commands();
+        workbench.register_file_compare_commands();
         workbench.register_diff_gutter_commands();
         workbench.register_unchanged_region_commands();
         workbench.register_scroll_locking_commands();
@@ -805,8 +821,10 @@ impl Workbench {
         workbench.register_profiles_editor_commands();
         workbench.register_settings_import_commands();
         workbench.register_workspace_trust_commands();
+        workbench.register_workspace_trust_editor_commands();
         workbench.register_host_commands();
         workbench.register_workspace_commands();
+        workbench.register_workspace_editing_commands();
         workbench.register_dialog_commands();
         workbench.register_lifecycle_commands();
         workbench.register_banner_commands();
@@ -1206,7 +1224,8 @@ impl Workbench {
         let title = self
             .side_bar_title("Explorer")
             .child(self.view_container_more_actions("explorer", cx));
-        let Some(tree) = self.folder.as_ref() else {
+        // explorerViewlet.ts: the empty view shows while `workspaceFolderCount` is 0, in an empty workspace too.
+        let Some(tree) = self.folder.as_ref().filter(|tree| !tree.workspace.folders.is_empty()) else {
             let empty = view_panes::ExplorerPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, body: self.empty_view(window, cx).into_any_element() };
             return self.side_bar_frame().text_color(foreground).child(title).child(self.explorer_pane_view(empty, window, cx)).child(div().h(px(5.)).flex_none());
         };
@@ -1421,10 +1440,6 @@ impl Workbench {
             .child(title)
             .child(self.explorer_pane_view(view_panes::ExplorerPane { id: view_panes::FILE_VIEW, title: folder_name, description: None, actions: None, body:
                 div().id("explorer-pane").relative().flex_1().min_h_0().flex().flex_col()
-                .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
-                    workbench.explorer.pane_hovered = *hovered;
-                    cx.notify();
-                }))
                 .child(
                 div()
                     .id("explorer-tree")
