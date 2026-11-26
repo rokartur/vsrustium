@@ -2,7 +2,7 @@
 // Runs the reference with CDP and dumps the boxes and computed styles of workbench elements and their descendants,
 // for parts a screenshot alone does not measure (toasts, the notification center, status bar entries, views).
 // Usage: port/tools/ref-dom <out-dir> <action>...   Actions: `dump:<selector>` (the element and its descendants),
-// `click:<selector>`, `hover:<selector>`, `key:<key>` (CDP key name, e.g. Escape), `wait:<ms>`, `shot:<name>`.
+// `click:<selector>`, `hover:<selector>`, `key:<key>` (CDP key name, e.g. Escape, with modifiers shift+alt+F12), `type:<text>`, `wait:<ms>`, `shot:<name>`.
 // `colors:<name>` (every --vscode-* variable of the workbench as <name>.json).
 // Env REF, FOLDER, FILE as port/tools/ref-screenshot, THEME (dark, light, hc, hclight; default dark), ARGS (more
 // arguments, space separated, e.g. --extensionDevelopmentPath=<abs path>), SETTLE (ms before the first action, default 8000),
@@ -24,7 +24,11 @@ const keys: Record<string, { key: string; code: string; windowsVirtualKeyCode: n
 	Escape: { key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 },
 	Enter: { key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 },
 	F2: { key: 'F2', code: 'F2', windowsVirtualKeyCode: 113 },
+	F12: { key: 'F12', code: 'F12', windowsVirtualKeyCode: 123 },
+	P: { key: 'p', code: 'KeyP', windowsVirtualKeyCode: 80 },
 };
+// CDP `modifiers` bits, for keys written as `shift+alt+F12`.
+const modifierBits: Record<string, number> = { alt: 1, ctrl: 2, meta: 4, shift: 8 };
 
 mkdirSync(outDir, { recursive: true });
 const userData = referenceUserData(themes[process.env.THEME ?? 'dark'], { 'editor.accessibilitySupport': 'off', ...JSON.parse(process.env.SETTINGS ?? '{}') });
@@ -50,9 +54,13 @@ try {
 			const { data } = await cdp('Page.captureScreenshot', { format: 'png' });
 			writeFileSync(join(outDir, `${argument}.png`), Buffer.from(data, 'base64'));
 			console.log(`${argument}.png`);
+		} else if (kind === 'type') {
+			await cdp('Input.insertText', { text: argument });
 		} else if (kind === 'key') {
+			const parts = argument.split('+');
+			const modifiers = parts.slice(0, -1).reduce((bits, name) => bits | modifierBits[name], 0);
 			for (const type of ['keyDown', 'keyUp']) {
-				await cdp('Input.dispatchKeyEvent', { type, ...keys[argument] });
+				await cdp('Input.dispatchKeyEvent', { type, modifiers, ...keys[parts.at(-1)!] });
 			}
 		} else if (kind === 'click' || kind === 'hover') {
 			const point = await evaluate(cdp, `(() => {
