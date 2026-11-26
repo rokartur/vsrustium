@@ -462,7 +462,12 @@ impl Workbench {
     fn pane_header(&self, container: PaneContainer, index: usize, id: &'static str, title: &str, description: Option<String>, actions: Option<AnyElement>, show_actions: bool, expanded: bool, count: usize, window: &Window, cx: &mut Context<Self>) -> Div {
         let focus = &self.panes(container).focus[id];
         let focused = focus.is_focused(window);
-        let show_actions = show_actions || focused || self.setting("workbench.view.alwaysShowHeaderActions") == json!(true);
+        // paneview.css: the actions show on `.pane:focus-within` and with `workbench.view.alwaysShowHeaderActions`.
+        let show_actions = show_actions
+            || focused
+            || (id == TIMELINE_VIEW && self.timeline.focus.is_focused(window))
+            || (id == OUTLINE_VIEW && self.outline_pane.focus.is_focused(window))
+            || self.setting("workbench.view.alwaysShowHeaderActions") == json!(true);
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
         let background = self.color("sideBar.background");
         let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| index > 0);

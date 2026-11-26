@@ -380,7 +380,11 @@ impl Workbench {
             context.insert("activeEditorIsLastInGroup".into(), json!(index == self.editors.editors.len() - 1));
         }
         if let Some(editor) = self.editors.active() {
-            let pane = if editor.document().scheme == super::welcome_page::WALKTHROUGH_SCHEME { "gettingStartedPage" } else { "workbench.editor.files" };
+            let pane = match editor.document().scheme.as_str() {
+                super::welcome_page::WALKTHROUGH_SCHEME => "gettingStartedPage",
+                _ if self.active_notebook_editor().is_some() => "workbench.editor.notebook",
+                _ => "workbench.editor.files",
+            };
             context.insert("activeEditor".into(), json!(pane));
             self.webview_editor_context(&mut context);
             self.insert_diff_editor_context(&mut context);
@@ -450,11 +454,7 @@ impl Workbench {
                 context.insert("resourceFilename".into(), json!(path.file_name().map(|name| name.to_string_lossy()).unwrap_or_default()));
                 context.insert("resourceExtname".into(), json!(path.extension().map(|ext| format!(".{}", ext.to_string_lossy())).unwrap_or_default()));
                 context.insert("resourceLangId".into(), json!(self.languages.guess_language(&path, "")));
-                // notebookContextKeys.ts; the list and its cells are the notebook editor's focus.
-                context.insert("notebookEditorFocused".into(), json!(true));
-                if let Some(model) = self.active_notebook_editor().and_then(|editor| self.host.notebooks.model(&editor.notebook)) {
-                    context.insert("notebookType".into(), json!(model.view_type));
-                }
+                self.notebook_context(editor, editor_focused, window, &mut context);
             }
         }
         self.quick_input_context(window, &mut context);
@@ -464,6 +464,10 @@ impl Workbench {
             SideBarView::Scm => {}
             SideBarView::Extensions => self.extensions_context(window, &mut context),
             SideBarView::Debug | SideBarView::Testing | SideBarView::Contributed(_) => {}
+        }
+        // After the side bar's keys, whose list is not focused: the notebook's cell list is a list (notebookCellList.ts).
+        if self.notebook_views.list_focus.is_focused(window) {
+            context.insert("listFocus".into(), json!(true));
         }
         self.scm_key_context(window, &mut context);
         self.debug_context(window, &mut context);

@@ -25,6 +25,11 @@ pub struct Kernel {
     /// Empty: every registered language.
     pub supported_languages: Vec<String>,
     pub supports_interrupt: bool,
+    /// `preloadUris`: the controller's `NotebookRendererScript` URIs, which its notebooks' webviews load.
+    pub preloads: Vec<Value>,
+    /// `localResourceRoot`: the extension's folder, which the webviews may load from while the kernel is theirs.
+    pub extension_location: Value,
+    pub has_variable_provider: bool,
     /// `$updateNotebookPriority` per notebook URI string.
     priorities: HashMap<String, i64>,
 }
@@ -54,6 +59,9 @@ pub struct Kernels {
     pub executions: HashMap<u64, Execution>,
     /// Cells with a running execution: (notebook URI string, cell handle).
     pub running: Vec<(String, u64)>,
+    /// `variableRequestMap`: the variables `$receiveVariable` brought per running `$provideVariables` request id.
+    pub variable_requests: HashMap<String, Vec<Value>>,
+    pub variable_request_index: u64,
 }
 
 fn binding_key(view_type: &str, notebook: &str) -> String {
@@ -73,6 +81,9 @@ impl Kernels {
             detail: text("detail"),
             supported_languages: languages(&data["supportedLanguages"]),
             supports_interrupt: data["supportsInterrupt"] == true,
+            preloads: data["preloads"].as_array().into_iter().flatten().map(|preload| preload["uri"].clone()).collect(),
+            extension_location: data["extensionLocation"].clone(),
+            has_variable_provider: data["hasVariableProvider"] == true,
             priorities: HashMap::new(),
         };
         let associations = self.bindings.values().filter(|(id, _)| *id == kernel.id).map(|(_, notebook)| Association { kernel_handle: handle, notebook: notebook.clone(), selected: true }).collect();
@@ -97,6 +108,9 @@ impl Kernels {
         }
         if let Some(interrupt) = data["supportsInterrupt"].as_bool() {
             kernel.supports_interrupt = interrupt;
+        }
+        if let Some(has_variable_provider) = data["hasVariableProvider"].as_bool() {
+            kernel.has_variable_provider = has_variable_provider;
         }
     }
 

@@ -15,7 +15,7 @@ use super::hover::HoverOptions;
 use super::layout::Part;
 use super::search_view::SideBarView;
 use super::tree_view::static_id;
-use super::view_panes::{HEADER_SIZE, PaneContainer};
+use super::view_panes::{FILE_VIEW, HEADER_SIZE, OUTLINE_VIEW, PaneContainer, TIMELINE_VIEW};
 use crate::commands::Outcome;
 
 pub(super) struct ViewContainer {
@@ -68,6 +68,46 @@ impl Workbench {
                     Outcome::done()
                 });
             }
+        }
+    }
+
+    /// viewsService.ts `registerFocusViewAction` of the built-in views: `<view id>.focus` runs `openView(id, true)`.
+    /// The panel's views register theirs in `register_panel_view`, the contributed ones above.
+    pub(super) fn register_view_focus_commands(&mut self) {
+        for id in [FILE_VIEW, OUTLINE_VIEW, TIMELINE_VIEW] {
+            self.commands.register(format!("{id}.focus"), move |workbench, _, window, cx| {
+                drop(workbench.execute_command("workbench.view.explorer", Vec::new(), window, cx));
+                workbench.expand_pane(PaneContainer::Explorer, id, cx);
+                let focus = match id {
+                    OUTLINE_VIEW => workbench.outline_pane.focus.clone(),
+                    TIMELINE_VIEW => workbench.timeline.focus.clone(),
+                    _ => workbench.explorer.focus.clone(),
+                };
+                window.focus(&focus, cx);
+                Outcome::done()
+            });
+        }
+        let containers = [
+            ("workbench.view.search", "workbench.view.search"),
+            ("workbench.scm", "workbench.view.scm"),
+            ("workbench.scm.repositories", "workbench.view.scm"),
+            ("workbench.scm.history", "workbench.view.scm"),
+            ("workbench.debug.welcome", "workbench.view.debug"),
+            ("workbench.view.testing", "workbench.view.testing"),
+        ];
+        for (view, container) in containers {
+            self.commands.register(format!("{view}.focus"), move |workbench, _, window, cx| workbench.execute_command(container, Vec::new(), window, cx));
+        }
+        // markers.contribution.ts: "Focus Problems (Errors, Warnings, Infos)" opens the Problems view focused.
+        self.commands.register("workbench.action.problems.focus", |workbench, _, window, cx| workbench.execute_command("workbench.panel.markers.view.focus", Vec::new(), window, cx));
+        for view in super::extensions_view::VIEW_IDS {
+            self.commands.register(format!("{view}.focus"), move |workbench, _, window, cx| {
+                workbench.open_extensions_viewlet(window, cx);
+                if workbench.extensions_viewlet.panes.iter().any(|pane| pane.descriptor.id == view) {
+                    window.focus(&workbench.extensions_viewlet.list_focus.clone(), cx);
+                }
+                Outcome::done()
+            });
         }
     }
 
@@ -228,3 +268,6 @@ impl Workbench {
         sections
     }
 }
+
+#[cfg(test)]
+mod tests;

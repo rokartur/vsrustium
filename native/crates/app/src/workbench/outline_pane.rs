@@ -110,6 +110,9 @@ impl Workbench {
 
     /// `.outline-pane`: the message, or the tree of the active editor's symbols.
     pub(super) fn outline_pane_body(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(body) = self.notebook_outline_pane_body(window, cx) {
+            return body;
+        }
         let message = |text: String| div().pt(px(10.)).px(px(22.)).opacity(0.5).line_height(px(18.2)).child(text).into_any_element();
         let (model_id, outline) = match &self.outline_pane.status {
             Status::NoProvider => return message("The active editor cannot provide outline information.".into()),
@@ -370,6 +373,9 @@ impl Workbench {
     /// The tree's keys: Up and Down move the selection, Left collapses or goes to the parent, Right expands or goes
     /// to the first child, Enter and Space open the selected symbol.
     fn outline_key_down(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        if self.active_notebook_editor().is_some() {
+            return false;
+        }
         let Status::Ready { model_id, outline, .. } = &self.outline_pane.status else { return false };
         let model_id = *model_id;
         let rows = self.outline_rows(model_id, outline);

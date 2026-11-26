@@ -91,6 +91,29 @@ impl ViewDescriptor {
     }
 }
 
+/// The ids of every view `visible_views` can show.
+pub const VIEW_IDS: [&str; 19] = [
+    "workbench.views.extensions.installed",
+    "workbench.views.extensions.popular",
+    "extensions.recommendedList",
+    "workbench.views.extensions.marketplace",
+    "workbench.views.extensions.searchInstalled",
+    "workbench.views.extensions.searchOutdated",
+    "workbench.views.extensions.searchRecentlyUpdated",
+    "workbench.views.extensions.searchEnabled",
+    "workbench.views.extensions.searchDisabled",
+    "workbench.views.extensions.searchBuiltin",
+    "workbench.views.extensions.untrustedUnsupportedExtensions",
+    "workbench.views.extensions.untrustedPartiallySupportedExtensions",
+    "workbench.views.extensions.workspaceRecommendations",
+    "workbench.views.extensions.otherRecommendations",
+    "workbench.views.extensions.builtinFeatureExtensions",
+    "workbench.views.extensions.builtinThemeExtensions",
+    "workbench.views.extensions.builtinProgrammingLanguageExtensions",
+    "workbench.views.extensions.deprecatedExtensions",
+    "workbench.views.extensions.restartRequired",
+];
+
 /// The views of extensionsViewlet.ts `registerViews` the search `value` shows, in their order, with
 /// `has_installed` (`hasInstalledExtensions`) and `has_workspace` (`WorkbenchStateContext` not empty).
 pub fn visible_views(value: &str, has_installed: bool, has_workspace: bool) -> Vec<ViewDescriptor> {

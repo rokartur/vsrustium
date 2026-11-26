@@ -266,9 +266,9 @@ fn the_editor_type_picker_switches_settings_json_between_split_and_text(cx: &mut
     run(&workbench, cx, "workbench.action.openSettingsJson", vec![]);
     workbench.update_in(cx, |workbench, window, cx| {
         let available = workbench.available_editor_types().expect("two editors for settings.json");
-        let ids: Vec<&str> = available.editors.iter().map(|editor| editor.id.as_str()).collect();
+        let ids: Vec<&str> = available.editors.iter().map(|(id, _, _)| id.as_str()).collect();
         assert_eq!(ids, ["workbench.editorinputs.sidebysideEditorInput", "default"]);
-        assert_eq!((available.current.as_str(), available.glob.as_str()), ("workbench.editorinputs.sidebysideEditorInput", "**/settings.json"));
+        assert_eq!((available.current.as_str(), available.pattern.as_str()), ("workbench.editorinputs.sidebysideEditorInput", "**/settings.json"));
         drop(workbench.reopen_editor_type(&available, "default", window, cx));
         assert!(workbench.editors.side_by_sides.is_empty());
         assert_eq!(workbench.editors.active().unwrap().document().path, dir.join("User/settings.json"));

@@ -182,8 +182,8 @@ impl Workbench {
         }
     }
 
-    /// `onDidChangeTrust`. shortcut: the port's extension host cannot add or remove extensions while it runs
-    /// (`$deltaExtensions`), so a trust change reloads the window instead of enabling the restricted extensions in place.
+    /// `onDidChangeTrust`. shortcut: a trust change reloads the window instead of delta-ing in the extensions it
+    /// enables (`$deltaExtensions`, which extension_management.rs uses) and their restricted settings; upgrade with that.
     fn workspace_trust_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.execute_command("workbench.action.reloadWindow", Vec::new(), window, cx);
     }
