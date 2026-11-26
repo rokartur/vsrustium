@@ -989,7 +989,7 @@ impl Workbench {
             // dropdown.css `.monaco-dropdown-with-primary`: New Terminal and its 12px profile chevron side by side.
             .child(div().flex().child(self.search_action("add", "workbench.action.terminal.new", true, cx)).child(self.terminal_profile_chevron(foreground, cx)))
             .when(show_inline_actions, |actions| {
-                actions.child(self.search_action("split-horizontal", "workbench.action.terminal.split", true, cx)).child(self.search_action("trash", "workbench.action.terminal.kill", true, cx))
+                actions.child(self.turned_action("split-horizontal", self.panel_title_icon_turns(), "workbench.action.terminal.split", true, cx)).child(self.search_action("trash", "workbench.action.terminal.kill", true, cx))
             })
     }
 

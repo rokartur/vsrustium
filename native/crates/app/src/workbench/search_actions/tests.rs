@@ -367,3 +367,14 @@ fn search_editor_keys_select_matches_delete_file_results_and_focus_the_query(cx:
 fn a_preview_keeps_its_space_and_punctuation_before_the_ellipsis() {
     assert_eq!(keep_before_ellipsis(" pixel check."), " \u{200B}pixel \u{200B}check.\u{200B}");
 }
+
+/// historyWidgetKeybindingHint.ts: the "(⇅ for history)" suffix only while Up and Down navigate the history.
+#[gpui::test]
+fn the_history_hint_follows_the_history_keybindings(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = search("history-hint", cx);
+    assert!(workbench.read_with(cx, |workbench, _| workbench.show_history_keybinding_hint()));
+    std::fs::write(dir.join("keybindings.json"), r#"[{ "key": "alt+up", "command": "history.showPrevious" }]"#).unwrap();
+    workbench.update(cx, |workbench, _| workbench.set_user_keybindings(crate::keybindings::user_keybindings(&dir.join("keybindings.json"))));
+    assert!(!workbench.read_with(cx, |workbench, _| workbench.show_history_keybinding_hint()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}

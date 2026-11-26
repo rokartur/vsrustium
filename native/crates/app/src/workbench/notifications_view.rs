@@ -391,7 +391,7 @@ impl Workbench {
     }
 
     /// `setFilter(NotificationsFilter)`: Do Not Disturb hides the center and silences new non-error notifications.
-    fn set_do_not_disturb(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn set_do_not_disturb(&mut self, enabled: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.notifications.model.do_not_disturb = enabled;
         self.application_storage.lock().unwrap().set(GLOBAL_FILTER_KEY, enabled.to_string());
         if enabled {

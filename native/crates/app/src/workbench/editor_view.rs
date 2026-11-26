@@ -411,6 +411,7 @@ impl Workbench {
         match setting.as_ref().and_then(|value| value.as_str()) {
             // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
             _ if editor.document().scheme == crate::output::OUTPUT_SCHEME => LineNumbers::Off,
+            _ if self.zen_mode_hides_line_numbers() => LineNumbers::Off,
             Some("off") => LineNumbers::Off,
             // gotoLineQuickAccess.ts: relative numbers switch to "on" while the picker previews in this editor.
             Some("relative") if self.quick_access.goto_line.as_ref().is_some_and(|state| state.previews(editor.model_id)) => LineNumbers::On,

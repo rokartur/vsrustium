@@ -831,27 +831,6 @@ impl Workbench {
             .child(self.hover_target(gpui::SharedString::from(format!("command-button-hover-{id}")), HoverContent::Text(title), HoverOptions::mouse()))
     }
 
-    /// activityaction.css `.badge .badge-content`: a `NumberBadge` at the item's bottom right, 16px high, 9px bold.
-    pub(in crate::workbench) fn activity_badge(&self, count: u64) -> Option<Div> {
-        (count > 0).then(|| {
-            div()
-                .absolute()
-                .top(px(21.))
-                .right(px(-1.))
-                .h(px(16.))
-                .min_w(px(16.))
-                .px(px(4.))
-                .rounded(px(20.))
-                .flex()
-                .items_center()
-                .justify_center()
-                .text_size(px(9.))
-                .font_weight(gpui::FontWeight::SEMIBOLD)
-                .bg(self.color("activityBarBadge.background"))
-                .text_color(self.color("activityBarBadge.foreground"))
-                .child(count.to_string())
-        })
-    }
 }
 
 #[cfg(test)]

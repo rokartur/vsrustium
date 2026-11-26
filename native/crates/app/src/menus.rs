@@ -33,6 +33,8 @@ pub enum MenuId {
     MenubarPreferencesMenu,
     MenubarAppearanceMenu,
     ActivityBarPositionMenu,
+    PanelPositionMenu,
+    PanelAlignmentMenu,
     ThemesSubMenu,
     /// userDataProfile.ts `ProfilesMenu` and `OpenProfileMenu`.
     ProfilesMenu,
@@ -255,7 +257,12 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarViewMenu, None, "workbench.action.showCommands", "&&Command Palette...", "1_open", 1., None, None),
     // layoutActions.ts, activitybarPart.ts and viewsService.ts `openCommandActionDescriptor` entries of the views the port has.
     (MenuId::MenubarViewMenu, Some(MenuId::MenubarAppearanceMenu), "", "&&Appearance", "2_appearance", 1., Some("!isSessionsWindow"), None),
+    (MenuId::MenubarAppearanceMenu, None, "workbench.action.toggleSidebarPosition", "&&Move Primary Side Bar Right", "3_workbench_layout_move", 2., Some("config.workbench.sideBar.location != 'right' && !isSessionsWindow"), None),
+    (MenuId::MenubarAppearanceMenu, None, "workbench.action.toggleSidebarPosition", "&&Move Primary Side Bar Left", "3_workbench_layout_move", 2., Some("config.workbench.sideBar.location == 'right' && !isSessionsWindow"), None),
     (MenuId::MenubarAppearanceMenu, Some(MenuId::ActivityBarPositionMenu), "", "Activity Bar Position", "3_workbench_layout_move", 2., Some("!isSessionsWindow"), None),
+    // panelActions.ts
+    (MenuId::MenubarAppearanceMenu, Some(MenuId::PanelPositionMenu), "", "Panel Position", "3_workbench_layout_move", 4., Some("!isSessionsWindow"), None),
+    (MenuId::MenubarAppearanceMenu, Some(MenuId::PanelAlignmentMenu), "", "Align Panel", "3_workbench_layout_move", 5., None, None),
     (MenuId::MenubarViewMenu, None, "workbench.view.explorer", "&&Explorer", "3_sidebar", 0., Some("viewContainer.workbench.view.explorer.enabled"), Some("viewContainer.workbench.view.explorer.enabled")),
     (MenuId::MenubarViewMenu, None, "workbench.view.search", "&&Search", "3_sidebar", 1., Some("workbench.view.search.active"), Some("workbench.view.search.active")),
     (MenuId::MenubarViewMenu, None, "workbench.view.scm", "Source &&Control", "3_sidebar", 2., Some("workbench.scm.active"), Some("workbench.scm.active")),
@@ -396,7 +403,18 @@ const WORKBENCH_MENUS: &[Row] = &[
 /// windowActions.ts, layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
 /// toggleRenderControlCharacter.ts: the Appearance items the port has, checked by their `toggled`.
 type ToggleRow = (MenuId, &'static str, &'static str, &'static str, f64, &'static str, &'static str);
-const APPEARANCE_TOGGLES: [ToggleRow; 12] = [
+const APPEARANCE_TOGGLES: [ToggleRow; 23] = [
+    (MenuId::MenubarAppearanceMenu, "workbench.action.toggleZenMode", "Zen Mode", "1_toggle_view", 2., "!isSessionsWindow", "inZenMode"),
+    (MenuId::MenubarAppearanceMenu, "workbench.action.toggleCenteredLayout", "&&Centered Layout", "1_toggle_view", 3., "!isSessionsWindow", "isCenteredLayout"),
+    (MenuId::MenubarAppearanceMenu, "workbench.action.toggleStatusbarVisibility", "S&&tatus Bar", "2_workbench_layout", 3., "!isSessionsWindow", "config.workbench.statusBar.visible == true"),
+    (MenuId::PanelPositionMenu, "workbench.action.positionPanelTop", "Top", "", 5., "", "panelPosition == 'top'"),
+    (MenuId::PanelPositionMenu, "workbench.action.positionPanelLeft", "Left", "", 6., "", "panelPosition == 'left'"),
+    (MenuId::PanelPositionMenu, "workbench.action.positionPanelRight", "Right", "", 7., "", "panelPosition == 'right'"),
+    (MenuId::PanelPositionMenu, "workbench.action.positionPanelBottom", "Bottom", "", 8., "", "panelPosition == 'bottom'"),
+    (MenuId::PanelAlignmentMenu, "workbench.action.alignPanelLeft", "Left", "", 5., "!isSessionsWindow", "panelAlignment == 'left'"),
+    (MenuId::PanelAlignmentMenu, "workbench.action.alignPanelRight", "Right", "", 5., "!isSessionsWindow", "panelAlignment == 'right'"),
+    (MenuId::PanelAlignmentMenu, "workbench.action.alignPanelCenter", "Center", "", 5., "", "panelAlignment == 'center'"),
+    (MenuId::PanelAlignmentMenu, "workbench.action.alignPanelJustify", "Justify", "", 5., "", "panelAlignment == 'justify'"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleFullScreen", "&&Full Screen", "1_toggle_view", 1., "", "isFullscreen"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleSidebarVisibility", "&&Primary Side Bar", "2_workbench_layout", 1., "!isSessionsWindow", "sideBarVisible"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleAuxiliaryBar", "&&Secondary Side Bar", "2_workbench_layout", 2., "!isSessionsWindow", "secondarySideBarVisible"),

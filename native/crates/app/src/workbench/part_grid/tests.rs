@@ -84,7 +84,13 @@ fn cmd_j_shows_the_panel_under_the_editor_and_maximize_hides_the_editor_until_th
     // The Output view, as the default Terminal view would start a shell the test scheduler cannot track.
     stores.workspace.lock().unwrap().set("workbench.panelpart.activepanelid", super::super::output_view::OUTPUT_VIEW_ID.to_string());
     let (workbench, window_cx) = open(None, &stores, cx);
-    let column = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.part_grid.grid.as_ref().unwrap().column_sizes());
+    let column = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let grid = workbench.part_grid.grid.as_ref().unwrap();
+            let height = |part| grid.part_bounds(part).map_or(0., |bounds| bounds[3]);
+            vec![height(Part::Editor), height(Part::Panel)]
+        })
+    };
     window_cx.simulate_keystrokes("cmd-j");
     assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_part_visible(Part::Panel)));
     assert_eq!(stores.workspace.lock().unwrap().get("workbench.panel.hidden"), Some("false"));
@@ -111,7 +117,7 @@ fn dragging_the_side_bar_sash_resizes_it_stores_the_size_and_past_half_its_minim
     let dir = std::env::temp_dir().join(format!("code-gpui-part-grid-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let (workbench, window_cx) = open(Some(dir.clone()), &stores, cx);
-    let side_bar_width = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.part_grid.grid.as_ref().unwrap().row_sizes()[1]);
+    let side_bar_width = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.part_grid.grid.as_ref().unwrap().part_bounds(Part::SideBar).map_or(0., |bounds| bounds[2]));
     let width = side_bar_width(window_cx);
     // The sash fills the 4px gap after the side bar, below the 35px title bar.
     let sash = point(px(48. + width + 2.), px(300.));
@@ -162,4 +168,103 @@ fn explorer_pane_headers_toggle_with_the_mouse_and_keys_and_their_state_is_resto
     assert!(!collapsed(&stores, "workbench.explorer.fileView"));
     assert!(collapsed(&stores, "outline"));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[gpui::test]
+fn the_panel_moves_and_aligns_and_comes_back_where_it_was(cx: &mut TestAppContext) {
+    use super::super::layout::{Alignment, Position};
+    let stores = stores();
+    stores.workspace.lock().unwrap().set("workbench.panelpart.activepanelid", super::super::output_view::OUTPUT_VIEW_ID.to_string());
+    let (workbench, window_cx) = open(None, &stores, cx);
+    let run = |command: &str, cx: &mut VisualTestContext| cx.update(|window, cx| workbench.update(cx, |workbench, cx| workbench.execute_command(command, Vec::new(), window, cx)));
+    let bounds = |part: Part, cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.part_grid.grid.as_ref().unwrap().part_bounds(part));
+
+    run("workbench.action.positionPanelRight", window_cx);
+    window_cx.run_until_parked();
+    let editor = bounds(Part::Editor, window_cx).unwrap();
+    let panel = bounds(Part::Panel, window_cx).unwrap();
+    assert_eq!(panel[0], editor[0] + editor[2]);
+    assert_eq!(panel[3], editor[3]);
+    assert_eq!(stores.workspace.lock().unwrap().get("workbench.panel.position"), Some("1"));
+    let context = workbench.update_in(window_cx, |workbench, window, _| workbench.key_context(window));
+    assert_eq!(context["panelPosition"], "right");
+
+    // Aligning moves a side panel back to the bottom; only a centered panel maximizes.
+    run("workbench.action.alignPanelJustify", window_cx);
+    window_cx.run_until_parked();
+    assert_eq!(stores.workspace.lock().unwrap().get("workbench.panel.position"), Some("2"));
+    assert_eq!(stores.profile.lock().unwrap().get("workbench.panel.alignment"), Some("justify"));
+    // Under the empty window's hidden side bar, from the activity bar to the window's edge.
+    assert_eq!(bounds(Part::Panel, window_cx).unwrap()[0], 48.);
+    run("workbench.action.toggleMaximizedPanel", window_cx);
+    assert!(workbench.read_with(window_cx, |workbench, _| !workbench.is_panel_maximized() && workbench.is_part_visible(Part::Editor)));
+
+    run("workbench.action.positionPanelLeft", window_cx);
+    window_cx.run_until_parked();
+    run("workbench.action.positionPanelTop", window_cx);
+    window_cx.run_until_parked();
+    run("workbench.action.positionPanelLeft", window_cx);
+    window_cx.run_until_parked();
+    run("workbench.action.toggleMaximizedPanel", window_cx);
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_panel_maximized()));
+    assert_eq!(stores.workspace.lock().unwrap().get("workbench.panel.wasLastMaximized"), Some("true"));
+    window_cx.update(|window, _| window.remove_window());
+
+    let (reopened, window_cx) = open(None, &stores, cx);
+    let arrangement = reopened.read_with(window_cx, |workbench, _| workbench.arrangement());
+    assert_eq!((arrangement.panel, arrangement.alignment), (Position::Left, Alignment::Justify));
+    assert!(reopened.read_with(window_cx, |workbench, _| workbench.is_panel_maximized()));
+}
+
+#[gpui::test]
+fn zen_mode_hides_the_parts_and_puts_back_the_ones_it_hid(cx: &mut TestAppContext) {
+    let stores = stores();
+    let dir = std::env::temp_dir().join(format!("code-gpui-zen-mode-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (workbench, window_cx) = open(Some(dir.clone()), &stores, cx);
+    let shown = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| (workbench.is_part_visible(Part::SideBar), workbench.is_part_visible(Part::ActivityBar), workbench.is_status_bar_visible()));
+    assert_eq!(shown(window_cx), (true, true, true));
+    window_cx.simulate_keystrokes("cmd-k z");
+    assert_eq!(shown(window_cx), (false, false, false));
+    let context = workbench.update_in(window_cx, |workbench, window, _| workbench.key_context(window));
+    assert_eq!((context["inZenMode"].clone(), context["isCenteredLayout"].clone()), (true.into(), true.into()));
+    assert_eq!(stores.workspace.lock().unwrap().get("workbench.zenMode.active"), Some("true"));
+    window_cx.update(|window, _| window.remove_window());
+
+    // zenMode.restore: the next window opens in zen mode, and leaving it shows the side bar again.
+    let (reopened, window_cx) = open(Some(dir.clone()), &stores, cx);
+    assert!(reopened.read_with(window_cx, |workbench, _| workbench.zen_mode.active && !workbench.is_part_visible(Part::SideBar)));
+    window_cx.simulate_keystrokes("escape escape");
+    assert!(reopened.read_with(window_cx, |workbench, _| !workbench.zen_mode.active && workbench.is_part_visible(Part::SideBar) && workbench.is_status_bar_visible()));
+    assert!(!reopened.read_with(window_cx, |workbench, _| workbench.is_main_editor_centered()));
+
+    // The first escape reaches a focused text editor first, the chord still completes.
+    std::fs::write(dir.join("notes.txt"), "text\n").unwrap();
+    reopened.update_in(window_cx, |workbench, window, cx| workbench.open_file(dir.join("notes.txt"), true, window, cx));
+    window_cx.run_until_parked();
+    window_cx.simulate_keystrokes("cmd-k z");
+    assert!(reopened.read_with(window_cx, |workbench, _| workbench.zen_mode.active));
+    window_cx.simulate_keystrokes("escape escape");
+    assert!(reopened.read_with(window_cx, |workbench, _| !workbench.zen_mode.active));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// progressService.ts `showOnActivityBar`: the badge after the 300 ms delay, kept 300 ms once shown.
+#[gpui::test]
+fn progress_at_a_view_container_badges_its_activity_bar_item(cx: &mut TestAppContext) {
+    use super::super::activity::Badge;
+    use std::time::Duration;
+    let stores = stores();
+    let (workbench, window_cx) = open(None, &stores, cx);
+    let badges = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.container_badges("workbench.view.explorer"));
+    workbench.update_in(window_cx, |workbench, window, cx| drop(workbench.start_progress(&[serde_json::json!(7), serde_json::json!({ "location": 1 })], window, cx)));
+    window_cx.executor().advance_clock(Duration::from_millis(299));
+    assert!(!badges(window_cx).contains(&Badge::Progress));
+    window_cx.executor().advance_clock(Duration::from_millis(1));
+    assert!(badges(window_cx).contains(&Badge::Progress));
+    workbench.update_in(window_cx, |workbench, window, cx| drop(workbench.end_progress(&[serde_json::json!(7)], window, cx)));
+    window_cx.executor().advance_clock(Duration::from_millis(100));
+    assert!(badges(window_cx).contains(&Badge::Progress));
+    window_cx.executor().advance_clock(Duration::from_millis(200));
+    assert!(!badges(window_cx).contains(&Badge::Progress));
 }
