@@ -462,7 +462,10 @@ impl Workbench {
             let [left, top, right, bottom] = card_margins(part, rect, &parts, arrangement, width, height, false);
             let content = match part {
                 Part::ActivityBar => self.activity_bar(window, cx),
-                Part::SideBar => self.side_bar(window, cx),
+                Part::SideBar => {
+                    self.prepare_moved_view_panes(window, cx);
+                    self.side_bar(window, cx)
+                }
                 Part::Editor => editor.take().expect("one editor part"),
                 Part::Panel => self.panel_part(window, cx),
                 Part::AuxiliaryBar => self.auxiliary_bar_part(window, cx),

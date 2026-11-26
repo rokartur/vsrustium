@@ -24,7 +24,7 @@ use crate::markers_filter::matches_fuzzy2;
 use crate::menus::MenuAction;
 
 /// mainThreadComments.ts `COMMENTS_VIEW_ID`.
-const COMMENTS_VIEW_ID: &str = "workbench.panel.comments";
+pub(super) const COMMENTS_VIEW_ID: &str = "workbench.panel.comments";
 /// commentsView.ts `VIEW_STORAGE_ID` in a `Memento`.
 const MEMENTO_KEY: &str = "memento/commentsViewState";
 const ROW_HEIGHT: f32 = 22.;

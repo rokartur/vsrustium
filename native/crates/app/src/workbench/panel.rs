@@ -10,21 +10,18 @@ use gpui::{
     AnyElement, AppContext, Bounds, Context, Div, DragMoveEvent, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Render, Rgba, SharedString, StatefulInteractiveElement, Styled, TextRun, Window, div,
     prelude::FluentBuilder, px,
 };
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::Workbench;
 use super::hover::HoverOptions;
 use super::layout::{Alignment, Part, Position};
+use super::view_locations::{is_generated_container, location_code};
 use crate::commands::Outcome;
 use crate::menus::MenuAction;
 
 /// paneCompositePart.ts `ACTIVE_PANEL_SETTINGS_KEY` of the panel and of the secondary side bar, in workspace storage.
 const ACTIVE_PANEL_KEY: &str = "workbench.panelpart.activepanelid";
 const ACTIVE_AUXILIARY_BAR_KEY: &str = "workbench.auxiliarybar.activepanelid";
-/// viewDescriptorService.ts `VIEWS_CUSTOMIZATIONS`, in profile storage.
-const VIEWS_CUSTOMIZATIONS_KEY: &str = "views.customizations";
-/// `ViewContainerLocation.AuxiliaryBar`.
-const AUXILIARY_BAR_LOCATION: u64 = 2;
 /// The composite title's height (`--vscode-workbench-titleHeight` of a pane composite part).
 const TITLE_HEIGHT: f32 = 32.;
 /// views.css `.viewpane-filter-container` `max-width` in a panel title.
@@ -71,7 +68,7 @@ struct CompositeBar {
 
 #[derive(Default)]
 pub(super) struct Panel {
-    views: Vec<PanelView>,
+    pub(super) views: Vec<PanelView>,
     active: Option<&'static str>,
     auxiliary_active: Option<&'static str>,
     panel_bar: CompositeBar,
@@ -168,10 +165,8 @@ impl Workbench {
 
     /// `getViewContainerLocation`: the panel, unless `views.customizations` moved the container to the secondary side bar.
     pub(super) fn view_container_part(&self, id: &str) -> Part {
-        let storage = self.profile_storage.lock().unwrap();
-        let customizations: Option<Value> = storage.get(VIEWS_CUSTOMIZATIONS_KEY).and_then(|stored| serde_json::from_str(stored).ok());
-        match customizations.and_then(|customizations| customizations["viewContainerLocations"][id].as_u64()) {
-            Some(AUXILIARY_BAR_LOCATION) => Part::AuxiliaryBar,
+        match self.view_customizations()["viewContainerLocations"][id].as_u64() {
+            Some(2) => Part::AuxiliaryBar,
             _ => Part::Panel,
         }
     }
@@ -179,28 +174,40 @@ impl Workbench {
     /// `moveViewContainerToLocation` and `openPaneComposite(id, true)` of a container dropped on `part`. Only moved
     /// containers keep an entry (`saveViewCustomizations` skips the default location).
     pub(super) fn move_view_container(&mut self, id: &'static str, part: Part, window: &mut Window, cx: &mut Context<Self>) {
-        let mut storage = self.profile_storage.lock().unwrap();
-        let stored: Option<Value> = storage.get(VIEWS_CUSTOMIZATIONS_KEY).and_then(|stored| serde_json::from_str(stored).ok());
-        let mut customizations = stored.filter(Value::is_object).unwrap_or_else(|| json!({ "viewContainerLocations": {}, "viewLocations": {}, "viewContainerBadgeEnablementStates": {} }));
-        let locations = &mut customizations["viewContainerLocations"];
-        // Storage written by another version may lack the map.
-        if !locations.is_object() {
-            *locations = json!({});
-        }
-        let locations = locations.as_object_mut().expect("just made an object");
+        let mut customizations = self.view_customizations();
+        let generated = is_generated_container(id);
+        let locations = customizations["viewContainerLocations"].as_object_mut().expect("normalized");
         match part {
-            Part::AuxiliaryBar => drop(locations.insert(id.to_owned(), json!(AUXILIARY_BAR_LOCATION))),
+            Part::AuxiliaryBar => drop(locations.insert(id.to_owned(), json!(location_code(part)))),
+            _ if generated => drop(locations.insert(id.to_owned(), json!(location_code(part)))),
             _ => drop(locations.remove(id)),
         }
-        storage.set(VIEWS_CUSTOMIZATIONS_KEY, customizations.to_string());
-        drop(storage);
-        let open = self.panel.views.iter().find(|view| view.id == id).expect("a registered panel view").open;
-        open(self, window, cx);
+        self.save_view_customizations(&customizations);
+        match self.panel.views.iter().find(|view| view.id == id) {
+            Some(view) => (view.open)(self, window, cx),
+            None => self.show_panel_container(id, cx),
+        }
     }
 
     /// `openPaneComposite` where the container is: shows its part with the view and stores it as the last active one.
+    /// A panel container's view moved to another container opens there (`viewsService.openView`).
     pub(super) fn open_panel_view(&mut self, id: &'static str, cx: &mut Context<Self>) {
-        let part = self.view_container_part(id);
+        if let Some(view) = self.moved_panel_view(id) {
+            self.open_moved_view(view, cx);
+            return;
+        }
+        self.show_panel_container(id, cx);
+    }
+
+    /// The view of a built-in panel container when it is no longer in it.
+    fn moved_panel_view(&self, container: &str) -> Option<&'static str> {
+        let view = self.panel.views.iter().find(|view| view.id == container)?;
+        let moved = self.views_in(container).iter().all(|in_container| in_container.id != view.view_id);
+        moved.then_some(view.view_id)
+    }
+
+    pub(super) fn show_panel_container(&mut self, id: &'static str, cx: &mut Context<Self>) {
+        let part = self.container_location(id);
         let key = match part {
             Part::AuxiliaryBar => {
                 self.panel.auxiliary_active = Some(id);
@@ -221,15 +228,18 @@ impl Workbench {
     /// `setPanelHidden(false)`: opens the last active view, or the default one.
     fn show_panel(&mut self, cx: &mut Context<Self>) {
         self.set_part_hidden(Part::Panel, false, cx);
-        if let Some(id) = self.active_view_in(Part::Panel).map(|view| view.id) {
-            self.open_panel_view(id, cx);
+        if let Some(id) = self.active_container_in(Part::Panel) {
+            self.show_panel_container(id, cx);
         }
     }
 
     /// `isViewVisible`: the view's part shows and `id` is its active view.
     pub(super) fn panel_view_visible(&self, id: &str) -> bool {
+        if let Some(view) = self.moved_panel_view(id) {
+            return self.is_view_visible(view);
+        }
         let part = self.view_container_part(id);
-        self.is_part_visible(part) && self.active_view_in(part).is_some_and(|view| view.id == id)
+        self.is_part_visible(part) && self.active_container_in(part) == Some(id)
     }
 
     /// `viewsService.closeView`: the view's part hides when the view is its active one.
@@ -237,7 +247,12 @@ impl Workbench {
         if !self.panel_view_visible(id) {
             return;
         }
-        match self.view_container_part(id) {
+        let container = match self.moved_panel_view(id).and_then(|view| self.movable_views().into_iter().find(|movable| movable.id == view)) {
+            Some(view) => self.view_container(&view),
+            None => id,
+        };
+        match self.container_location(container) {
+            Part::SideBar => self.set_part_hidden(Part::SideBar, true, cx),
             Part::AuxiliaryBar => self.set_part_hidden(Part::AuxiliaryBar, true, cx),
             _ => self.hide_panel(cx),
         }
@@ -251,29 +266,45 @@ impl Workbench {
 
     /// `getActivePaneComposite(ViewContainerLocation.Panel)`, while the panel shows.
     pub(super) fn active_panel_id(&self) -> Option<&'static str> {
-        self.is_part_visible(Part::Panel).then(|| self.active_view_in(Part::Panel).map(|view| view.id)).flatten()
+        self.is_part_visible(Part::Panel).then(|| self.active_container_in(Part::Panel)).flatten()
     }
 
-    /// The views with a tab in the part's composite bar, by registration order.
-    pub(super) fn part_tabs(&self, part: Part) -> Vec<&PanelView> {
-        self.panel.views.iter().filter(|view| (view.visible)(self) && self.view_container_part(view.id) == part).collect()
+    /// The containers with a tab in the part's composite bar: the built-in ones by registration order while their
+    /// view is in them, then the generated ones.
+    pub(super) fn part_tabs(&self, part: Part) -> Vec<CompositeTab> {
+        self.part_containers(part).into_iter().filter(|tab| self.panel.views.iter().find(|view| view.view_id == tab.view).is_none_or(|view| (view.visible)(self))).collect()
+    }
+
+    /// The part's containers that hold a view, shown or not.
+    fn part_containers(&self, part: Part) -> Vec<CompositeTab> {
+        let mut tabs = Vec::new();
+        for view in &self.panel.views {
+            if self.view_container_part(view.id) == part && self.moved_panel_view(view.id).is_none() {
+                tabs.push(CompositeTab { id: view.id, title: view.title, view: view.view_id });
+            }
+        }
+        for id in self.generated_containers_in(part) {
+            let view = self.generated_container_view(id).expect("a container with a view");
+            tabs.push(CompositeTab { id, title: view.name, view: view.id });
+        }
+        tabs
     }
 
     /// The part's last active view, else its default: Terminal in the panel (terminal.contribution.ts registers it
     /// with `isDefault`), the first container in the secondary side bar.
-    fn active_view_in(&self, part: Part) -> Option<&PanelView> {
+    pub(super) fn active_container_in(&self, part: Part) -> Option<&'static str> {
         let (active, key) = match part {
             Part::AuxiliaryBar => (self.panel.auxiliary_active, ACTIVE_AUXILIARY_BAR_KEY),
             _ => (self.panel.active, ACTIVE_PANEL_KEY),
         };
-        let storage = self.workspace_storage.lock().unwrap();
-        let id = active.or(storage.get(key));
-        let mut views = self.panel.views.iter().filter(|view| self.view_container_part(view.id) == part);
+        let stored = self.workspace_storage.lock().unwrap().get(key).map(str::to_owned);
+        let id = active.map(str::to_owned).or(stored);
+        let containers = self.part_containers(part);
         let default = match part {
-            Part::AuxiliaryBar => views.clone().next(),
-            _ => views.clone().find(|view| view.id == super::terminal_view::TERMINAL_VIEW_ID),
+            Part::AuxiliaryBar => containers.first(),
+            _ => containers.iter().find(|tab| tab.id == super::terminal_view::TERMINAL_VIEW_ID),
         };
-        views.find(|view| Some(view.id) == id).or(default)
+        containers.iter().find(|tab| Some(tab.id) == id.as_deref()).or(default).map(|tab| tab.id)
     }
 
     /// panelpart.css: a left, right or top panel turns its split and maximize icons to face the editor.
@@ -315,27 +346,25 @@ impl Workbench {
     /// actions over the active view, or the empty message. Dropping a dragged tab anywhere on the part moves its
     /// container here; over a part without an active view the title and the message take `editorGroup.dropBackground`.
     fn pane_composite_part(&mut self, part: Part, actions: Vec<GlobalAction>, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let active = self.active_view_in(part).map(|view| view.id);
+        let active = self.active_container_in(part);
         let shown = self.tabs_that_fit(part, active, window);
         self.composite_bar(part).actions_view.set(active);
         let background = if part == Part::AuxiliaryBar { "sideBar.background" } else { "panel.background" };
         let mut tabs: Vec<AnyElement> = Vec::new();
         let mut overflowing = Vec::new();
-        for view in self.part_tabs(part) {
-            match shown.contains(&view.id) {
-                true => tabs.push(self.panel_tab(view, Some(view.id) == active, background, window, cx)),
-                false => overflowing.push(MenuAction::Command { id: format!("{}.focus", view.view_id), title: panel_tab_label(view, self), enabled: true, checked: Some(view.id) == active, alt: None }),
+        for tab in self.part_tabs(part) {
+            match shown.contains(&tab.id) {
+                true => tabs.push(self.panel_tab(&tab, Some(tab.id) == active, background, window, cx)),
+                false => overflowing.push(MenuAction::Command { id: format!("{}.focus", tab.view), title: panel_tab_label(&tab, self), enabled: true, checked: Some(tab.id) == active, alt: None }),
             }
         }
         if !overflowing.is_empty() {
             tabs.push(self.panel_overflow_action(part, overflowing, cx));
         }
-        let view = self.active_view_in(part).map(|view| (view.render, view.actions));
-        let view_actions = view.map(|(_, actions)| actions(self, window, cx));
-        let drop_feedback = view.is_none() && self.panel.drop_target == Some(part);
-        let content = match view {
-            Some((render, _)) => render(self, window, cx),
-            None => self.empty_pane_message(drop_feedback).into_any_element(),
+        let drop_feedback = active.is_none() && self.panel.drop_target == Some(part);
+        let (content, view_actions) = match active {
+            Some(container) => self.panel_container_content(container, window, cx),
+            None => (self.empty_pane_message(drop_feedback).into_any_element(), None),
         };
         let content_bounds = self.composite_bar(part).content_bounds.clone();
         self.pane_composite_card(background)
@@ -351,8 +380,27 @@ impl Workbench {
                 workbench.panel.drop_target = None;
                 workbench.move_view_container(dragged.id, part, window, cx);
             }))
-            .child(self.pane_composite_title(part, tabs, view_actions, actions, drop_feedback, cx))
+            .child(self.pane_composite_title(part, tabs, view_actions, actions, drop_feedback, cx).on_drop(cx.listener(move |workbench, dragged: &super::view_panes::DraggedPane, _, cx| {
+                workbench.drop_view_on_location(dragged.id, part, cx);
+            })))
             .child(div().relative().flex_1().min_h_0().flex().flex_col().child(size_tracker(content_bounds)).child(content))
+    }
+
+    /// The container's content and title actions: a single view merged into it (its body, its actions in the
+    /// composite title), several as panes.
+    fn panel_container_content(&mut self, container: &'static str, window: &mut Window, cx: &mut Context<Self>) -> (AnyElement, Option<AnyElement>) {
+        let views: Vec<&'static str> = self.views_in(container).into_iter().filter(|view| self.movable_view_shown(view)).map(|view| view.id).collect();
+        if let [view] = views[..] {
+            let pane = self.movable_view_pane(view, window, cx);
+            return (pane.body, pane.actions);
+        }
+        // shortcut: several views in a panel container stack vertically; upstream lays a bottom panel's panes side by side.
+        let height = f32::from(self.composite_bar(self.container_location(container)).content_bounds.get().size.height);
+        let generated = super::view_panes::PaneContainer::Generated(container);
+        self.layout_panes(generated, height, views.iter().map(|&view| (view, false)).collect(), cx);
+        let panes = views.into_iter().map(|view| self.movable_view_pane(view, window, cx)).collect();
+        let ordered = self.ordered_panes(&self.panes(generated).view.as_ref().expect("laid out above").ids(), panes, window, cx);
+        (self.pane_view_element(generated, ordered, window, cx).into_any_element(), None)
     }
 
     fn composite_bar(&self, part: Part) -> &CompositeBar {
@@ -400,11 +448,11 @@ impl Workbench {
     /// A composite bar tab (`.action-item` with 16px padding); the checked one is the part's own fill, connected to
     /// the content. Its width is the fractional one Chromium lays out: GPUI rounds a text element's width up, which
     /// made the Problems tab with its badge 2px wider than the reference's.
-    fn panel_tab(&self, view: &PanelView, active: bool, background: &str, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    fn panel_tab(&self, view: &CompositeTab, active: bool, background: &str, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let foreground = if active { self.foreground_or("panelTitle.activeForeground") } else { self.foreground_or("panelTitle.inactiveForeground") };
         let id = view.id;
         let dragged = DraggedComposite { id, label: view.title.into(), foreground, background: self.color(background) };
-        let badge = (view.badge)(self).filter(|count| *count > 0).map(|count| {
+        let badge = self.tab_badge(view).map(|count| {
             let text = count.to_string();
             let text_width = text_width(&text, 10., window);
             let width = badge_width(text_width);
@@ -439,9 +487,9 @@ impl Workbench {
             .child(div().flex_none().w(px(text_width(view.title, 13., window))).whitespace_nowrap().line_height(px(24.)).child(view.title))
             .children(badge)
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
-            .on_click(cx.listener(move |workbench, _, window, cx| {
-                let view = workbench.panel.views.iter().find(|view| view.id == id).expect("a registered panel view");
-                (view.open)(workbench, window, cx);
+            .on_click(cx.listener(move |workbench, _, window, cx| match workbench.panel.views.iter().find(|view| view.id == id) {
+                Some(view) => (view.open)(workbench, window, cx),
+                None => workbench.show_panel_container(id, cx),
             }))
             .into_any_element()
     }
@@ -452,7 +500,7 @@ impl Workbench {
     /// (a started terminal's actions); not when they shrink, as the reference (View as Table drops Collapse All without
     /// bringing Terminal back).
     fn tabs_that_fit(&self, part: Part, active: Option<&'static str>, window: &Window) -> Vec<&'static str> {
-        let tabs: Vec<(&'static str, f32)> = self.part_tabs(part).into_iter().map(|view| (view.id, panel_tab_width(view, self, window))).collect();
+        let tabs: Vec<(&'static str, f32)> = self.part_tabs(part).into_iter().map(|view| (view.id, panel_tab_width(&view, self, window))).collect();
         let bar = self.composite_bar(part);
         let title = bar.title_bounds.get().size.width;
         if title <= px(0.) {
@@ -544,17 +592,32 @@ impl Workbench {
     }
 }
 
+/// A container's tab: its id, title and the view whose name and badge it shows.
+pub(super) struct CompositeTab {
+    pub id: &'static str,
+    pub title: &'static str,
+    view: &'static str,
+}
+
+impl Workbench {
+    /// The activity count of the tab's view (`IActivity.badge`).
+    fn tab_badge(&self, tab: &CompositeTab) -> Option<usize> {
+        let view = self.panel.views.iter().find(|view| view.view_id == tab.view)?;
+        (view.badge)(self).filter(|count| *count > 0)
+    }
+}
+
 /// compositeBarActions.ts `getActions`: a tab's name with its number badge, "{0} ({1})".
-fn panel_tab_label(view: &PanelView, workbench: &Workbench) -> String {
-    match (view.badge)(workbench).filter(|count| *count > 0) {
+fn panel_tab_label(view: &CompositeTab, workbench: &Workbench) -> String {
+    match workbench.tab_badge(view) {
         Some(count) => format!("{} ({count})", view.title),
         None => view.title.to_string(),
     }
 }
 
 /// The width `panel_tab` paints: 16px padding each side, the title, and the badge 2px after it.
-fn panel_tab_width(view: &PanelView, workbench: &Workbench, window: &Window) -> f32 {
-    let badge = (view.badge)(workbench).filter(|count| *count > 0).map_or(0., |count| 2. + badge_width(text_width(&count.to_string(), 10., window)));
+fn panel_tab_width(view: &CompositeTab, workbench: &Workbench, window: &Window) -> f32 {
+    let badge = workbench.tab_badge(view).map_or(0., |count| 2. + badge_width(text_width(&count.to_string(), 10., window)));
     32. + text_width(view.title, 13., window) + badge
 }
 
