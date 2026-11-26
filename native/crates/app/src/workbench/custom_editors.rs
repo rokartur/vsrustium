@@ -42,6 +42,8 @@ pub struct CustomEditors {
     providers: HashMap<String, Provider>,
     /// Opens waiting for their view type's provider, which `onCustomEditor:<viewType>` registers.
     pending: Vec<PendingOpen>,
+    /// Opens answered once their editor's `$resolveCustomEditor` settles (WebviewEditor.setInput awaits `resolveWebview`).
+    opening: HashMap<String, Vec<oneshot::Sender<Result<Value, Value>>>>,
     next_handle: u64,
     /// The custom documents the host created, by resource and view type (custom_documents.rs).
     pub(super) documents: Vec<super::custom_documents::CustomDocument>,
@@ -161,10 +163,12 @@ impl Workbench {
 
     /// The command line's file on startup. editorResolverService.ts `resolveEditor` runs before the extensions
     /// registered their editors and waits for them only when the cache or a user association names the file's glob,
-    /// so on a first start a `.ipynb` opens as JSON in the text editor.
+    /// so on a first start a `.ipynb` opens as JSON in the text editor. The media previews are registered by then.
     pub fn open_startup_file(&mut self, path: PathBuf, resolver_cache: &[String], window: &mut Window, cx: &mut Context<Self>) {
         let waits_for_extensions = resource_matcher("file", &path).is_some_and(|matches| {
-            resolver_cache.iter().any(|pattern| matches(pattern)) || self.editor_associations().iter().any(|(pattern, view_type)| view_type != TEXT_EDITOR_ID && matches(pattern))
+            resolver_cache.iter().any(|pattern| matches(pattern))
+                || self.editor_associations().iter().any(|(pattern, view_type)| view_type != TEXT_EDITOR_ID && matches(pattern))
+                || media_preview_contributions().iter().flat_map(|contribution| &contribution.patterns).any(|pattern| matches(pattern))
         });
         match waits_for_extensions {
             true => self.open_file(path, true, window, cx),
@@ -270,24 +274,28 @@ impl Workbench {
         self.open_with_resolver(resource, Some(editor_id), json!({ "preserveFocus": preserve_focus }), window, cx)
     }
 
-    /// The editors that can open the resource (in a diff editor with `diff`): the text editor, then the contributed
-    /// ones matching it (by glob or a user association) by rank, as id, label, provider, rank and whether it is a `*`
-    /// option nobody associated.
+    /// editorResolverService.ts `getEditorMatches` (in a diff editor with `diff`): the editors that open the resource
+    /// (by glob or a user association) by priority, then the longer glob, the text editor registering `*` as builtin;
+    /// as id, label, provider, rank and whether it is an unconfigured `*` option editor
+    /// (`isUnconfiguredUniversalOptionalEditorMatch`).
     pub(super) fn resource_editors(&self, scheme: &str, path: &Path, diff: bool) -> Vec<(String, String, String, u8, bool)> {
-        let mut editors = vec![(TEXT_EDITOR_ID.to_owned(), "Text Editor".to_owned(), "Built-in".to_owned(), RANK_TEXT_EDITOR, false)];
+        let mut editors = vec![(RANK_BUILTIN, 1, (TEXT_EDITOR_ID.to_owned(), "Text Editor".to_owned(), "Built-in".to_owned(), RANK_BUILTIN, false))];
         if let Some(matches) = resource_matcher(scheme, path) {
             let associated: Vec<String> = self.matching_associations(&matches, diff).into_iter().map(|(_, view_type)| view_type).collect();
             for contribution in self.editor_contributions() {
                 let is_associated = associated.contains(&contribution.view_type);
-                if is_associated || contribution.patterns.iter().any(|pattern| matches(pattern)) {
-                    let rank = contribution.rank_for(diff);
-                    let universal_option = !is_associated && rank == RANK_OPTION && contribution.patterns.iter().all(|pattern| pattern == "*");
-                    editors.push((contribution.view_type, contribution.display_name, contribution.provider, rank, universal_option));
+                let pattern = contribution.patterns.iter().filter(|pattern| matches(pattern)).max_by_key(|pattern| pattern.len());
+                if !is_associated && pattern.is_none() {
+                    continue;
                 }
+                let rank = contribution.rank_for(diff);
+                let universal_option = !is_associated && rank == RANK_OPTION && pattern.is_some_and(|pattern| pattern == "*");
+                let glob_length = pattern.map_or(0, String::len);
+                editors.push((rank, glob_length, (contribution.view_type, contribution.display_name, contribution.provider, rank, universal_option)));
             }
         }
-        editors[1..].sort_by_key(|(_, _, _, rank, _)| std::cmp::Reverse(*rank));
-        editors
+        editors.sort_by_key(|(rank, glob_length, _)| std::cmp::Reverse((*rank, *glob_length)));
+        editors.into_iter().map(|(_, _, editor)| editor).collect()
     }
 
     /// `getAssociationsForResourceByType`: a diff takes `workbench.diffEditorAssociations`, else the editor
@@ -313,7 +321,9 @@ impl Workbench {
         let (default_id, pattern) = self.default_editor(scheme, &path, true, false);
         let mut entries = Vec::new();
         let mut ids = Vec::new();
-        for (id, label, detail, _, _) in self.resource_editors(scheme, &path, false) {
+        let mut editors = self.resource_editors(scheme, &path, false);
+        editors.sort_by_key(|(id, ..)| id != TEXT_EDITOR_ID);
+        for (id, label, detail, _, _) in editors {
             let description = match (id == current, id == default_id) {
                 (true, true) => Some("Active and Default".to_owned()),
                 (true, false) => Some("Active".to_owned()),
@@ -418,15 +428,19 @@ impl Workbench {
             std::mem::take(&mut custom_editors.pending).into_iter().partition(|open| custom_editors.providers.contains_key(&open.view_type));
         custom_editors.pending = waiting;
         for open in ready {
-            let result = self.show_custom_editor(&open.view_type, &open.resource, &open.options, window, cx);
-            let _ = open.reply.send(result.map(|_| Value::Null));
+            match self.show_custom_editor(&open.view_type, &open.resource, &open.options, window, cx) {
+                Ok(handle) if self.webview_panel_mut(&handle).is_some_and(|panel| panel.custom.as_ref().is_some_and(|custom| !custom.resolved)) => {
+                    self.webview_panels.custom_editors.opening.entry(handle).or_default().push(open.reply);
+                }
+                result => _ = open.reply.send(result.map(|_| Value::Null)),
+            }
         }
         self.resolve_custom_editors(cx);
     }
 
     /// A custom text editor attaches a webview to the resource's text editor, opened or shown as `$tryShowTextDocument`
     /// does; a custom document gets a webview panel's editor of its own, one per resource and view type.
-    fn show_custom_editor(&mut self, view_type: &str, resource: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> Result<(), Value> {
+    fn show_custom_editor(&mut self, view_type: &str, resource: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> Result<String, Value> {
         let (scheme, path) = uri_parts(resource)?;
         let scheme = scheme.to_owned();
         let provider = &self.webview_panels.custom_editors.providers[view_type];
@@ -465,7 +479,7 @@ impl Workbench {
         if options["preserveFocus"] != true {
             self.focus_webview_panel(&handle, window, cx);
         }
-        Ok(())
+        Ok(handle)
     }
 
     /// A custom document's own editor: a webview panel with the placeholder model `webview-panel/webview-<viewType>-<handle>`.
@@ -525,7 +539,8 @@ impl Workbench {
         for (handle, view_type, create, resolve) in resolves {
             let document = create.as_ref().map(|args| (args[0].clone(), args[2].is_string()));
             let created = create.map(|args| self.host.call("ExtHostCustomEditors", "$createCustomDocument", args));
-            let resolved = self.host.call("ExtHostCustomEditors", "$resolveCustomEditor", resolve);
+            // mainThreadCustomEditors.ts resolves the editor once `$createCustomDocument` answered: the host's
+            // `$resolveCustomEditor` looks the document up.
             cx.spawn(async move |workbench, cx| {
                 let canceled = |_| Err(serialized_error("Canceled"));
                 let result = match created {
@@ -538,13 +553,21 @@ impl Workbench {
                     let _ = workbench.update(cx, |workbench, cx| workbench.custom_document_created(resource, view_type, editable, from_backup, cx));
                 }
                 let result = match result {
-                    Ok(_) => resolved.await.unwrap_or_else(canceled),
+                    Ok(_) => match workbench.update(cx, |workbench, _| workbench.host.call("ExtHostCustomEditors", "$resolveCustomEditor", resolve)) {
+                        Ok(resolved) => resolved.await.unwrap_or_else(canceled),
+                        Err(_) => return,
+                    },
                     Err(error) => Err(error),
                 };
-                if let Err(error) = result {
-                    eprintln!("[custom editor] {view_type}: {error}");
-                    let _ = workbench.update(cx, |workbench, _| workbench.show_resolve_failure(&handle, &view_type));
-                }
+                let _ = workbench.update(cx, |workbench, _| {
+                    if let Err(error) = result {
+                        eprintln!("[custom editor] {view_type}: {error}");
+                        workbench.show_resolve_failure(&handle, &view_type);
+                    }
+                    for reply in workbench.webview_panels.custom_editors.opening.remove(&handle).unwrap_or_default() {
+                        let _ = reply.send(Ok(Value::Null));
+                    }
+                });
             })
             .detach();
         }

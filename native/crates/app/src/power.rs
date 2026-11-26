@@ -12,7 +12,7 @@ use core_foundation::dictionary::{CFDictionary, CFDictionaryRef};
 use core_foundation::number::CFNumber;
 use core_foundation::string::{CFString, CFStringRef};
 use futures::channel::mpsc::UnboundedSender;
-use objc2_app_kit::{NSWorkspace, NSWorkspaceDidWakeNotification, NSWorkspaceWillPowerOffNotification, NSWorkspaceWillSleepNotification};
+use objc2_app_kit::{NSWorkspace, NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification, NSWorkspaceDidWakeNotification, NSWorkspaceWillPowerOffNotification, NSWorkspaceWillSleepNotification};
 use objc2_foundation::{NSDistributedNotificationCenter, NSNotification, NSNotificationCenter, NSOperationQueue, NSProcessInfo, NSProcessInfoThermalStateDidChangeNotification, NSString};
 use serde_json::{Value, json};
 
@@ -203,6 +203,15 @@ pub fn watch(events: UnboundedSender<PowerEvent>) {
     let mut token = 0;
     let handler = RcBlock::new(move |_: i32| send(("$onDidChangeSpeedLimit", vec![json!(speed_limit())])));
     unsafe { notify_register_dispatch(c"com.apple.system.power.CPU".as_ptr(), &mut token, &_dispatch_main_q as *const _, &handler) };
+}
+
+/// Electron's `nativeTheme` `updated` for `prefersReducedMotion` (accessibilityService.ts): the macOS accessibility
+/// display options changed. Call once; the observer lives as long as the app.
+pub fn watch_accessibility_display(changed: UnboundedSender<()>) {
+    let block = RcBlock::new(move |_: NonNull<NSNotification>| drop(changed.unbounded_send(())));
+    let center = NSWorkspace::sharedWorkspace().notificationCenter();
+    let observer = unsafe { center.addObserverForName_object_queue_usingBlock(Some(NSWorkspaceAccessibilityDisplayOptionsDidChangeNotification), None, Some(&NSOperationQueue::mainQueue()), &block) };
+    std::mem::forget(observer);
 }
 
 /// powerMonitor `on-ac` and `on-battery`: sent when the providing source changes, not on every battery update.

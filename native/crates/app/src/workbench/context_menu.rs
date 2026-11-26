@@ -31,8 +31,9 @@ const MIN_WIDTH: f32 = 160.;
 const RADIUS: f32 = 8.;
 const ITEM_RADIUS: f32 = 6.;
 
-/// The submenu indicator: a 16px chevron in `padding: 0 1.8em` of its 16px font, pulled 20px right.
-const SUBMENU_INDICATOR_WIDTH: f32 = 2. * 1.8 * 16. + 16. - 20.;
+/// The submenu indicator: a 16px chevron in `padding: 0 1.8em` of its 16px font, pulled 20px right. The pull does not
+/// shrink its max-content width: the reference's indicator is 73.6px wide.
+const SUBMENU_INDICATOR_WIDTH: f32 = 2. * 1.8 * 16. + 16.;
 /// `SubmenuMenuActionViewItem`'s `showScheduler` and `hideScheduler`.
 const SUBMENU_SHOW_DELAY: Duration = Duration::from_millis(250);
 const SUBMENU_HIDE_DELAY: Duration = Duration::from_millis(750);
@@ -403,8 +404,17 @@ impl Workbench {
         }
         .unwrap_or_else(|| self.foreground_or("menu.foreground"));
         let trailing = match submenu {
+            // A submenu item keeps the empty `.keybinding` span and its 2em padding (`BaseMenuActionViewItem.render`), then
             // `.submenu-indicator`: the `menu-submenu` chevron at 0.7 opacity, 8.8px from the item's right edge.
-            true => div().flex_1().flex().justify_end().pr(px(1.8 * 16. - 20.)).opacity(0.7).child(self.icon("chevron-right", 16., 16., foreground)).into_any_element(),
+            true => div()
+                .flex_1()
+                .flex()
+                .justify_end()
+                .min_w(px(2. * LABEL_PADDING + SUBMENU_INDICATOR_WIDTH))
+                .pr(px(1.8 * 16. - 20.))
+                .opacity(0.7)
+                .child(self.icon("chevron-right", 16., 16., foreground))
+                .into_any_element(),
             false => div().px(px(LABEL_PADDING)).line_height(px(FONT_SIZE)).opacity(keybinding_opacity).child(id.and_then(|id| menu.keybindings.get(id).cloned()).unwrap_or_default()).into_any_element(),
         };
         let run = |alt_held: fn(&MouseUpEvent) -> bool| {
@@ -457,7 +467,7 @@ fn menu_width(actions: &[MenuAction], keybindings: &HashMap<String, String>, win
     for action in actions {
         let trailing = match action {
             MenuAction::Command { id, .. } => keybindings.get(id).map_or(0., |label| text_width(label, window)) + 2. * LABEL_PADDING,
-            MenuAction::Submenu { .. } => SUBMENU_INDICATOR_WIDTH,
+            MenuAction::Submenu { .. } => 2. * LABEL_PADDING + SUBMENU_INDICATOR_WIDTH,
             MenuAction::Separator => continue,
         };
         let (MenuAction::Command { title, .. } | MenuAction::Submenu { title, .. }) = action else { continue };

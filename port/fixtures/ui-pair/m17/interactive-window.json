@@ -1,0 +1,10 @@
+[
+	{ "wait": 12000 },
+	{ "shot": "open" },
+	{ "type": "hello", "foreground": true },
+	{ "wait": 800 },
+	{ "shot": "typed" },
+	{ "key": "return" },
+	{ "wait": 3000 },
+	{ "shot": "executed" }
+]

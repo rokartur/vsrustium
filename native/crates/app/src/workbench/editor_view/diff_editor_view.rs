@@ -281,6 +281,8 @@ impl Workbench {
             .text_color(foreground)
             .when_some(self.theme.color("contrastBorder"), |widget, border| widget.border_1().border_color(border))
             .child("Show Whitespace Differences")
+            // The editor under the widget would take the press and move its cursor.
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .on_click(cx.listener(|workbench, _, _, cx| {
                 workbench.update_setting("diffEditor.ignoreTrimWhitespace", json!(false));
                 cx.notify();
@@ -358,26 +360,32 @@ impl Workbench {
         let Some(input) = self.editors.active_diff() else { return Vec::new() };
         let has_changes = input.diff.as_ref().is_some_and(|diff| !diff.diff.changes.is_empty());
         let mut actions = vec![
-            (10., "workbench.action.compareEditor.previousChange", "arrow-up", "Previous Change", has_changes),
-            (11., "workbench.action.compareEditor.nextChange", "arrow-down", "Next Change", has_changes),
+            (10., "workbench.action.compareEditor.previousChange", "arrow-up", "Previous Change", has_changes, false),
+            (11., "workbench.action.compareEditor.nextChange", "arrow-down", "Next Change", has_changes, false),
         ];
         if self.diff_can_swap(input) {
-            actions.push((15., "workbench.action.compareEditor.swapSides", "arrow-swap", "Swap Left and Right Side", true));
+            actions.push((15., "workbench.action.compareEditor.swapSides", "arrow-swap", "Swap Left and Right Side", true, false));
         }
-        actions.push((20., "toggle.diff.ignoreTrimWhitespace", "whitespace", "Show Leading/Trailing Whitespace Differences", true));
-        actions.push((22., "diffEditor.toggleCollapseUnchangedRegions", "map", "Toggle Collapse Unchanged Regions", true));
+        // editor.contribution.ts: toggled when `config.diffEditor.ignoreTrimWhitespace` is false.
+        let shows_whitespace = self.setting("diffEditor.ignoreTrimWhitespace") == json!(false);
+        actions.push((20., "toggle.diff.ignoreTrimWhitespace", "whitespace", "Show Leading/Trailing Whitespace Differences", true, shows_whitespace));
+        actions.push((22., "diffEditor.toggleCollapseUnchangedRegions", "map", "Toggle Collapse Unchanged Regions", true, false));
         let icon_color = self.color("icon.foreground");
         let disabled_color = self.color("disabledForeground");
+        // editorGroupView.ts `highlightToggledItems`: a checked action label gets `actionBar.toggledBackground`.
+        let toggled_background = self.theme.color("actionBar.toggledBackground").unwrap_or(self.color("inputOption.activeBackground"));
         actions
             .into_iter()
-            .map(|(order, command, icon, title, enabled)| {
+            .map(|(order, command, icon, title, enabled, toggled)| {
                 let color = if enabled { icon_color } else { disabled_color };
                 let element = self
                     .icon(icon, 22., 16., color)
                     .id(command)
                     .rounded(px(5.))
+                    .when(toggled, |icon| icon.bg(toggled_background))
                     .when(enabled, |icon| {
-                        icon.cursor_pointer().hover(|icon| icon.bg(self.color("toolbar.hoverBackground"))).on_click(cx.listener(move |workbench, _, window, cx| {
+                        let hover_background = if toggled { toggled_background } else { self.color("toolbar.hoverBackground") };
+                        icon.cursor_pointer().hover(|icon| icon.bg(hover_background)).on_click(cx.listener(move |workbench, _, window, cx| {
                             drop(workbench.execute_command(command, Vec::new(), window, cx));
                         }))
                     })

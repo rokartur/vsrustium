@@ -292,7 +292,10 @@ impl Workbench {
     fn tab_is_dirty(&self, index: usize) -> bool {
         let editor = &self.editors.editors[index];
         match editor.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME {
-            true => self.host.notebooks.model(&editor.document().path.to_string_lossy()).is_some_and(|model| model.dirty),
+            true => {
+                let key = editor.document().path.to_string_lossy().into_owned();
+                self.host.notebooks.model(&key).is_some_and(|model| model.dirty) && !self.is_scratchpad_repl(&key)
+            }
             false => editor.is_dirty(),
         }
     }

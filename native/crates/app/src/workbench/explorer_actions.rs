@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use super::explorer_find::ExplorerFind;
+use super::hover::HoverOptions;
 use super::input_box_view::{InputId, InputLook, InputView};
 use super::search_view::SideBarView;
 use crate::commands::Outcome;
@@ -44,7 +45,8 @@ pub struct ExplorerState {
     /// The folder a drag over the tree would drop into; it and its rows draw `list.dropBackground`.
     pub drop_target: Option<PathBuf>,
     expand_timer: Option<Task<()>>,
-    undo: UndoRedo<FileUndo>,
+    /// The workbench's file elements: the Explorer's and `workspace.applyEdit`'s (bulk_undo.rs).
+    pub(super) undo: UndoRedo<FileUndo>,
     pub scroll: ScrollHandle,
     pub find: ExplorerFind,
     pub type_navigation: super::type_navigation::TypeNavigation,
@@ -185,22 +187,22 @@ impl Workbench {
         let shown = self.explorer_title_actions_shown(window);
         let refresh_enabled = !self.folder.as_ref().is_some_and(|tree| tree.is_filtering());
         let actions = [
-            ("new-file", "workbench.files.action.createFileFromExplorer", true),
-            ("new-folder", "workbench.files.action.createFolderFromExplorer", true),
-            ("refresh", "workbench.files.action.refreshFilesExplorer", refresh_enabled),
-            ("collapse-all", "workbench.files.action.collapseExplorerFolders", true),
+            ("new-file", "New File...", "workbench.files.action.createFileFromExplorer", true),
+            ("new-folder", "New Folder...", "workbench.files.action.createFolderFromExplorer", true),
+            ("refresh", "Refresh Explorer", "workbench.files.action.refreshFilesExplorer", refresh_enabled),
+            ("collapse-all", "Collapse Folders in Explorer", "workbench.files.action.collapseExplorerFolders", true),
         ];
         let hover = self.color("toolbar.hoverBackground");
         // 4px from the header's end, measured against the reference with ui-pair (m12/workspace-folders.json).
-        let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(4.)).when(!shown && !self.pane_hovered(super::view_panes::FILE_VIEW, window), |bar| bar.invisible());
-        for (icon, command, enabled) in actions {
+        let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(4.)).when(!shown && !self.pane_hovered(super::view_panes::PaneContainer::Explorer, super::view_panes::FILE_VIEW, window), |bar| bar.invisible());
+        for (icon, title, command, enabled) in actions {
             let foreground = if enabled { self.foreground_or("icon.foreground") } else { self.color("disabledForeground") };
             bar = bar.child(self.icon(icon, 20., 16., foreground).id(command).rounded(px(4.)).when(enabled, |action| {
                 action.cursor_pointer().hover(|action| action.bg(hover)).on_click(cx.listener(move |workbench, _: &gpui::ClickEvent, window, cx| {
                     cx.stop_propagation();
                     workbench.execute_command(command, Vec::new(), window, cx);
                 }))
-            }));
+            }).child(self.action_hover(title, command, HoverOptions::action_item())));
         }
         bar
     }
@@ -800,34 +802,13 @@ impl Workbench {
             return None;
         }
         let element = self.explorer.undo.closest(UNDO_SOURCE, direction)?;
-        let (id, label, confirm_first) = (element.id, element.label.clone(), element.confirm_before_undo && direction == Direction::Undo);
+        let (id, group, label, confirm_first) = (element.id, element.group, element.label.clone(), element.confirm_before_undo && direction == Direction::Undo);
         cx.spawn_in(window, async move |workbench, cx| {
             if confirm_first && !confirm(&workbench, cx, PromptLevel::Info, format!("Would you like to undo '{label}'?"), None, "Yes").await {
                 return;
             }
-            let job = workbench.update(cx, |workbench, _| workbench.explorer.undo.begin(id, direction).map(|undo| workbench.host.run_files(FileJob::Reverse(undo))));
-            let receiver = match job {
-                Ok(Ok(receiver)) => receiver,
-                Ok(Err(warning)) => return notify_error(&workbench, cx, warning).await,
-                Err(_) => return,
-            };
-            let result = receiver.await.unwrap_or_else(|_| Err(files::FileError { name: "Error".into(), message: "Canceled".into(), operation: None }));
-            let failed = workbench.update(cx, |workbench, cx| {
-                cx.notify();
-                match result {
-                    Ok(undo) => {
-                        workbench.follow_explorer_moves(&undo);
-                        workbench.explorer.undo.finish(id, undo);
-                        None
-                    }
-                    Err(error) => {
-                        workbench.explorer.undo.fail(id);
-                        Some(error.message)
-                    }
-                }
-            });
-            if let Ok(Some(error)) = failed {
-                notify_error(&workbench, cx, error).await;
+            if run_file_element(&workbench, cx, id, direction).await {
+                super::bulk_undo::run_undo_group(&workbench, cx, group, direction).await;
             }
         })
         .detach();
@@ -1244,6 +1225,43 @@ async fn delete_files(workbench: WeakEntity<Workbench>, cx: &mut AsyncWindowCont
     }
 }
 
+/// `_workspaceUndo`/`_workspaceRedo` of a file element: the edits that reverse it run on the host thread, the
+/// models follow its moves. False when it could not run (the warning or error is shown).
+pub(super) async fn run_file_element(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, id: u64, direction: Direction) -> bool {
+    let job = workbench.update(cx, |workbench, _| workbench.explorer.undo.begin(id, direction).map(|undo| workbench.host.run_files(FileJob::Reverse(undo))));
+    let receiver = match job {
+        Ok(Ok(receiver)) => receiver,
+        Ok(Err(warning)) => {
+            notify_error(workbench, cx, warning).await;
+            return false;
+        }
+        Err(_) => return false,
+    };
+    let result = receiver.await.unwrap_or_else(|_| Err(files::FileError { name: "Error".into(), message: "Canceled".into(), operation: None }));
+    let failed = workbench.update(cx, |workbench, cx| {
+        cx.notify();
+        match result {
+            Ok(undo) => {
+                workbench.follow_explorer_moves(&undo);
+                workbench.explorer.undo.finish(id, undo);
+                None
+            }
+            Err(error) => {
+                workbench.explorer.undo.fail(id);
+                Some(error.message)
+            }
+        }
+    });
+    match failed {
+        Ok(None) => true,
+        Ok(Some(error)) => {
+            notify_error(workbench, cx, error).await;
+            false
+        }
+        Err(_) => false,
+    }
+}
+
 /// `explorerService.applyBulkEdit`: the edits run with the extension host's participants and their undo joins
 /// the workbench undo stack under the Explorer's source.
 async fn apply_bulk_edit(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindowContext, edits: Vec<FileEdit>, label: String, confirm_before_undo: bool) -> Result<(), String> {
@@ -1253,7 +1271,7 @@ async fn apply_bulk_edit(workbench: &WeakEntity<Workbench>, cx: &mut AsyncWindow
         .update(cx, |workbench, cx| {
             workbench.follow_explorer_moves(&undo);
             let resources = undo.resources().iter().map(|resource| (resource.path.to_lowercase(), resource.path.clone())).collect();
-            workbench.explorer.undo.push(label, resources, UNDO_SOURCE, confirm_before_undo, undo);
+            workbench.explorer.undo.push(label, resources, UNDO_SOURCE, undo.group, confirm_before_undo, undo);
             cx.notify();
         })
         .map_err(|error| error.to_string())

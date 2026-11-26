@@ -22,7 +22,10 @@ fn workbench_with_cells(cells: serde_json::Value, cx: &mut TestAppContext) -> (g
     let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
-    let dir = std::env::temp_dir().join(format!("vsrustium-notebook-editor-{}", std::process::id()));
+    // One folder per call: tests run in parallel threads of one process and would remove each other's.
+    static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let run = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("vsrustium-notebook-editor-{}-{run}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("User")).unwrap();
     let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None);
@@ -193,4 +196,47 @@ fn the_variable_provider_command_collects_what_the_bound_kernel_sends(cx: &mut T
     cx.run_until_parked();
     let collected = futures::executor::block_on(answer).unwrap().unwrap();
     assert_eq!(collected[0]["variable"]["name"], "a");
+}
+
+/// editActions.ts `ChangeCellLanguageAction`: the status bar's language item opens the picker (Auto Detect, then
+/// markdown and the cell's language, then the others by id); markdown turns the code cell into a markup cell with
+/// its text, another language back into a code cell, each one undo step.
+#[gpui::test]
+fn the_cell_language_picker_changes_the_language_and_the_kind(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = workbench_with_cells(json!([{ "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} }]), cx);
+    let languages = json!({ "contributes": { "languages": [
+        { "id": "python", "aliases": ["Python"] },
+        { "id": "rust", "aliases": ["Rust"] },
+        { "id": "markdown", "aliases": ["Markdown"] },
+        { "id": "css", "aliases": ["CSS"] },
+    ] } });
+    workbench.update(cx, |workbench, _| workbench.languages = Languages::new(&[exthost::scan::ScannedExtension { id: "port.languages".into(), location: "/ext".into(), description: languages }]));
+    let handle = workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].cells[0].handle);
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("notebook.cell.changeLanguage", vec![json!({ "$mid": 13, "cell": { "handle": handle, "index": 0 } })], window, cx)));
+    cx.run_until_parked();
+    let rows = workbench.read_with(cx, |workbench, _| {
+        let input = workbench.quick_inputs.current().unwrap();
+        input.order.iter().map(|row| &input.rows[*row]).map(|row| format!("{}{} {}", row.separator.as_ref().map(|label| format!("--{label}--")).unwrap_or_default(), row.item.label, row.item.description.clone().unwrap_or_default())).collect::<Vec<_>>()
+    });
+    assert_eq!(rows, ["Auto Detect ", "--languages (identifier)--Python (python) - Current Language", "Markdown (markdown)", "----Binary (code-text-binary)", "CSS (css)", "Plain Text (plaintext)", "Rust (rust)"]);
+    workbench.update_in(cx, |workbench, window, cx| {
+        let input = workbench.quick_inputs.find_mut(|owner| matches!(owner, crate::main_thread_quick_open::Owner::EditorStatus(_))).unwrap();
+        let handle = input.rows.iter().find(|row| row.item.label == "Markdown").unwrap().item.handle;
+        input.set_active_items(&[handle]);
+        workbench.flush_quick_input_events(window, cx);
+    });
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let cell = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| {
+        let cell = &workbench.host.notebooks.models[0].cells[0];
+        (cell.kind, cell.language.clone(), workbench.cell_text(&cell.uri))
+    });
+    assert_eq!(cell(cx), (crate::notebook::MARKUP, "markdown".into(), "x".into()));
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("notebook.cell.changeLanguage", vec![json!({ "start": 0, "end": 1 }), json!("rust")], window, cx)));
+    cx.run_until_parked();
+    assert_eq!(cell(cx), (crate::notebook::CODE, "rust".into(), "x".into()));
+    run(&workbench, "undo", cx);
+    assert_eq!(cell(cx).0, crate::notebook::MARKUP);
+    run(&workbench, "undo", cx);
+    assert_eq!(cell(cx), (crate::notebook::CODE, "python".into(), "x".into()));
 }

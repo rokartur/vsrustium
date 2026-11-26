@@ -1,0 +1,7 @@
+[
+	{ "wait": 5000 },
+	{ "shot": "start" },
+	{ "click": [500, 400] },
+	{ "wait": 3000 },
+	{ "shot": "after-click" }
+]

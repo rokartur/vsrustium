@@ -9,7 +9,7 @@ use crate::languages::Languages;
 use crate::menus::MenuAction;
 use crate::theme::load_theme;
 use crate::workbench::Workbench;
-use crate::workbench::view_panes::FILE_VIEW;
+use crate::workbench::view_panes::{FILE_VIEW, PaneContainer};
 
 fn explorer<'a>(name: &str, cx: &'a mut TestAppContext) -> (PathBuf, gpui::Entity<Workbench>, &'a mut VisualTestContext) {
     let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
@@ -240,11 +240,11 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     assert_eq!(menu_titles(&workbench, cx), below);
     // The menu takes the focus and `.context-view-block` the pane's hover: the title actions hide.
     assert!(workbench.update_in(cx, |workbench, window, _| !workbench.explorer_title_actions_shown(window)));
-    assert!(workbench.update_in(cx, |workbench, window, _| !workbench.pane_hovered(FILE_VIEW, window)));
+    assert!(workbench.update_in(cx, |workbench, window, _| !workbench.pane_hovered(PaneContainer::Explorer, FILE_VIEW, window)));
     cx.simulate_keystrokes("escape");
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.context_menu.is_none() && workbench.explorer.focus.is_focused(window)));
     // A key leaves `:hover` as it is: the header actions stay under the pointer (the reference with a quick pick open).
-    assert!(workbench.update_in(cx, |workbench, window, _| workbench.pane_hovered(FILE_VIEW, window)));
+    assert!(workbench.update_in(cx, |workbench, window, _| workbench.pane_hovered(PaneContainer::Explorer, FILE_VIEW, window)));
 
     // A click runs the item only 100ms after the menu showed; with Alt, Delete is Delete Permanently.
     // Items are 24px from the border and the 4px padding, the separators 11px.

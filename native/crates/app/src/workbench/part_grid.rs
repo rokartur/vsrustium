@@ -46,6 +46,9 @@ pub(super) struct PartGrid {
     grippers_hidden: bool,
     grippers_timer: Option<Task<()>>,
     last_pointer: Option<gpui::Point<Pixels>>,
+    /// The main part's visible editors (each grid group's active editor) at the last editor change; `None` until the
+    /// first one, as layout.ts listens only after `whenRestored`.
+    visible_editors: Option<Vec<u32>>,
 }
 
 /// `LayoutStateKeys`' visibility key of a part and its default; the side bar defaults to hidden in an empty window.
@@ -191,6 +194,21 @@ impl Workbench {
             self.set_part_hidden(Part::Panel, false, cx);
         }
         cx.notify();
+    }
+
+    /// layout.ts `showEditorIfHidden` on the main part's `onDidVisibleEditorsChange`: an editor to show brings the
+    /// hidden editor area back, restoring a maximized secondary side bar, else the maximized panel.
+    pub(super) fn show_editor_if_hidden(&mut self, cx: &mut Context<Self>) {
+        let visible: Vec<u32> = self.groups_in_grid_order().into_iter().filter_map(|group| self.editors.group_active_tab(group).map(|editor| editor.model_id)).collect();
+        let Some(before) = self.part_grid.visible_editors.replace(visible.clone()) else { return };
+        if before == visible || visible.is_empty() || self.is_part_visible(Part::Editor) {
+            return;
+        }
+        if self.is_auxiliary_bar_maximized() {
+            self.set_auxiliary_bar_maximized(false, cx);
+        } else {
+            self.toggle_maximized_panel(cx);
+        }
     }
 
     /// `isPanelMaximized`: the editor hidden while the panel is centered or on a side, the secondary side bar not maximized.
@@ -435,7 +453,7 @@ impl Workbench {
         let sashes = grid.sashes();
         let dragging = grid.dragged_sash().is_some();
         if self.is_part_visible(Part::SideBar) {
-            self.layout_explorer_panes(parts.iter().find(|(part, _)| *part == Part::SideBar).map_or(height, |(_, [_, _, _, h])| *h) - super::layout::CARD_MARGIN, cx);
+            self.layout_view_panes(parts.iter().find(|(part, _)| *part == Part::SideBar).map_or(height, |(_, [_, _, _, h])| *h) - super::layout::CARD_MARGIN, cx);
         }
         self.sync_tree_views(cx);
         let mut editor = Some(editor);

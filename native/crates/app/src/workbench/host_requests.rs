@@ -137,7 +137,7 @@ impl Workbench {
         let count = self.editors.models.len();
         let scm_inputs = self.scm_input_models();
         // A notebook cell's text model lives as long as its notebook.
-        self.editors.release_models_except(Instant::now(), |model| model.document().scheme == crate::notebook::CELL_SCHEME || scm_inputs.iter().any(|(scheme, path)| model.document().is(scheme, path)));
+        self.editors.release_models_except(Instant::now(), |model| matches!(model.document().scheme.as_str(), crate::notebook::CELL_SCHEME | super::interactive::INPUT_SCHEME) || scm_inputs.iter().any(|(scheme, path)| model.document().is(scheme, path)));
         if self.editors.models.len() != count {
             self.editors_changed(cx);
         }

@@ -70,6 +70,8 @@ pub enum Owner {
     Snippets(crate::workbench::snippet_actions::SnippetPicker),
     /// The snippet file name input of Configure Snippets.
     SnippetFileName(crate::workbench::snippet_actions::SnippetFileInput),
+    /// The Graph view's history item reference picker.
+    GraphRefs(crate::workbench::scm_graph_view::RefPicker),
     /// File > New File...
     NewFile(crate::workbench::new_file::NewFilePicker),
     /// Configure Metered Connection.
@@ -274,6 +276,7 @@ impl Workbench {
             Owner::ProfileTemplateImport => self.profile_template_import_event(id, event, window, cx),
             Owner::Snippets(_) => self.snippet_picker_event(id, event, window, cx),
             Owner::SnippetFileName(_) => self.snippet_file_name_event(id, event, window, cx),
+            Owner::GraphRefs(_) => self.graph_ref_picker_event(id, event, window, cx),
         }
     }
 

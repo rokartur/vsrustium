@@ -16,12 +16,13 @@ use serde_json::{Value, json};
 use super::Workbench;
 use super::host_requests::uri_parts;
 use crate::commands::Outcome;
-use crate::default_settings::raw_default_settings;
+use crate::default_settings::{default_settings_content, raw_default_settings};
 use crate::editor::{EditReason, Position, Selection, TextDocument, VerticalReveal};
 use crate::keybindings::{self, Item as KeybindingItem};
 use crate::keybindings_editor;
 use crate::quick_input::{Entry, Item, Kind, QuickInput, path_label};
 
+pub(super) mod edit_setting;
 mod unsupported_settings;
 
 #[cfg(test)]
@@ -31,6 +32,26 @@ mod tests;
 const RAW_DEFAULT_SETTINGS: &str = "//defaultsettings/defaultSettings.jsonc";
 /// `defaultKeybindingsResource`.
 const DEFAULT_KEYBINDINGS: &str = "//defaultsettings/keybindings.json";
+
+/// preferences.ts `getDefaultSettingsResource`: the default settings beside a split settings.json of `target`.
+fn default_settings_resource(target: Target) -> &'static str {
+    match target {
+        Target::Workspace => "//defaultsettings/workspaceSettings.json",
+        Target::WorkspaceFolder => "//defaultsettings/resourceSettings.json",
+        _ => "//defaultsettings/settings.json",
+    }
+}
+
+impl Workbench {
+    /// preferencesContribution.ts `createEditorInput`: the default settings beside a settings file the split settings
+    /// editor opens: the user's, a single folder's, or a folder's of a multi-root workspace.
+    pub(super) fn split_settings_secondary(&self, path: &Path) -> Option<&'static str> {
+        match unsupported_settings::settings_file_target(&self.settings.lock().unwrap(), path)? {
+            (_, true) => None,
+            (target, false) => Some(default_settings_resource(target)),
+        }
+    }
+}
 
 /// `sanitizeOpenSettingsArgs`: the query and the setting to reveal (`revealSetting.key`, `.edit`).
 // shortcut: `openToSide` opens in the active group; editor groups are milestone 11.
@@ -108,9 +129,14 @@ impl Workbench {
         self.commands.register("workbench.action.openDefaultKeybindingsFile", |workbench, _, window, cx| workbench.open_preferences_resource(DEFAULT_KEYBINDINGS, window, cx));
     }
 
+    /// The Default Keybindings editor in the active group, as `openDefaultKeybindingsFile` opens it.
+    pub(super) fn open_default_keybindings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        drop(self.open_preferences_resource(DEFAULT_KEYBINDINGS, window, cx));
+    }
+
     /// `openEditor` of a read-only `vscode://defaultsettings` resource: its open editor, its model, or a new model.
-    fn open_preferences_resource(&mut self, resource: &str, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let path = PathBuf::from(resource);
+    pub(super) fn open_preferences_resource(&mut self, resource: impl AsRef<Path>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let path = resource.as_ref().to_path_buf();
         if let Some(index) = self.editors.editors.iter().position(|editor| editor.document().is("vscode", &path)) {
             self.editors.activate(index);
         } else {
@@ -134,7 +160,11 @@ impl Workbench {
         match path.to_str()? {
             RAW_DEFAULT_SETTINGS => Some(raw_default_settings(&self.settings.lock().unwrap().registry)),
             DEFAULT_KEYBINDINGS => Some(self.default_keybindings_content()),
-            _ => None,
+            // `getDefaultSettingsContent` of a split JSON editor's default half.
+            path => {
+                let target = [Target::UserLocal, Target::Workspace, Target::WorkspaceFolder].into_iter().find(|target| default_settings_resource(*target) == path)?;
+                Some(default_settings_content(&self.settings.lock().unwrap().registry, target))
+            }
         }
     }
 
@@ -173,8 +203,6 @@ impl Workbench {
     }
 
     /// `open` with `jsonEditor: true`, then `openSettingsJson`: a query naming a setting reveals it.
-    // shortcut: `workbench.settings.useSplitJSON` and `openDefaultSettings` open the plain JSON editor; the split
-    // settings editor (a side by side editor) is not ported yet.
     fn open_settings_json(&mut self, target: Target, folder: Option<&Path>, mut options: OpenSettingsOptions, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         if let Some(query) = options.query.take().filter(|_| options.reveal_setting.is_none()) {
             let query = query.trim();
@@ -191,6 +219,10 @@ impl Workbench {
             None => return Outcome::done(),
         };
         self.open_preferences_file(path, window, cx);
+        // `doOpenSplitJSON`: the default settings of the target beside the file, read-only (`SplitSettingsEditorInput`).
+        if self.setting("workbench.settings.useSplitJSON") == json!(true) || self.setting("workbench.settings.openDefaultSettings") == json!(true) {
+            self.show_side_by_side(Path::new(default_settings_resource(target)), window, cx);
+        }
         if let Some((key, edit)) = options.reveal_setting {
             self.reveal_setting(&key, edit, cx);
         }

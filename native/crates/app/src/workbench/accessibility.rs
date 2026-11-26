@@ -10,6 +10,7 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use gpui::{A11ySubtreeBuilder, Context, Role, Task, Window, accesskit, div, prelude::*};
+use objc2::ClassType;
 use serde_json::{Value, json};
 
 use super::Workbench;
@@ -138,8 +139,8 @@ impl Workbench {
 
     /// Runs on every render: picks up a screen reader attaching or leaving, and plays the line signals of a
     /// cursor that moved to another line.
-    pub(super) fn accessibility_frame(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let attached = window.is_a11y_active();
+    pub(super) fn accessibility_frame(&mut self, cx: &mut Context<Self>) {
+        let attached = screen_reader_running();
         if attached != self.accessibility.screen_reader_attached {
             self.accessibility.screen_reader_attached = attached;
             self.screen_reader_mode_changed(cx);
@@ -498,6 +499,73 @@ impl Workbench {
         let page = screen_reader_page(&editor.document().lines, editor.selections[0].anchor, editor.selections[0].head, page_size);
         element.a11y_synthetic_children(move |builder| page.build(builder))
     }
+}
+
+/// Electron's `app.isAccessibilitySupportEnabled` on macOS: on while VoiceOver runs (Chromium observes NSWorkspace
+/// `voiceOverEnabled`) or after an assistive app set `AXEnhancedUserInterface` or `AXManualAccessibility` on the
+/// application (electron_application.mm), as cua-driver does; reading the tree alone does not turn it on.
+pub(crate) fn screen_reader_running() -> bool {
+    objc2_app_kit::NSWorkspace::sharedWorkspace().isVoiceOverEnabled() || ASSISTIVE_APP_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static ASSISTIVE_APP_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// Redraws the windows once an assistive app switched support, so `accessibility_frame` sees it (Electron's
+/// `accessibility-support-changed`).
+static ASSISTIVE_APP_CHANGED: std::sync::OnceLock<futures::channel::mpsc::UnboundedSender<()>> = std::sync::OnceLock::new();
+
+/// electron_application.mm `accessibilitySetValue:forAttribute:` and `accessibilityAttributeValue:` on the
+/// application class (GPUI's `GPUIApplication`): the two attributes switch accessibility support. Run once at startup.
+pub(crate) fn watch_assistive_apps(cx: &mut gpui::App) {
+    use futures::StreamExt;
+    use objc2::runtime::{AnyObject, Imp, Sel};
+    use objc2::sel;
+    let (sender, mut changes) = futures::channel::mpsc::unbounded();
+    ASSISTIVE_APP_CHANGED.set(sender).expect("watched once");
+    cx.spawn(async move |cx| {
+        while changes.next().await.is_some() {
+            cx.update(|cx| cx.refresh_windows());
+        }
+    })
+    .detach();
+    let mtm = objc2::MainThreadMarker::new().expect("startup runs on the main thread");
+    let application = objc2_app_kit::NSApplication::sharedApplication(mtm);
+    let class = application.class();
+    let set_value: unsafe extern "C-unwind" fn(&AnyObject, Sel, *mut AnyObject, &objc2_foundation::NSString) = set_accessibility_value;
+    let attribute_value: unsafe extern "C-unwind" fn(&AnyObject, Sel, &objc2_foundation::NSString) -> *mut AnyObject = accessibility_attribute_value;
+    // SAFETY: NSApplication implements both selectors (NSAccessibility's informal protocol); the added methods have
+    // their signatures, `v@:@@` and `@@:@`, and call NSApplication's own for every other attribute.
+    unsafe {
+        let class_ptr = std::ptr::from_ref(class).cast_mut();
+        objc2::ffi::class_addMethod(class_ptr, sel!(accessibilitySetValue:forAttribute:), std::mem::transmute::<_, Imp>(set_value), c"v@:@@".as_ptr());
+        objc2::ffi::class_addMethod(class_ptr, sel!(accessibilityAttributeValue:), std::mem::transmute::<_, Imp>(attribute_value), c"@@:@".as_ptr());
+    }
+}
+
+unsafe extern "C-unwind" fn set_accessibility_value(this: &objc2::runtime::AnyObject, _: objc2::runtime::Sel, value: *mut objc2::runtime::AnyObject, attribute: &objc2_foundation::NSString) {
+    let attribute_name = attribute.to_string();
+    let manual = attribute_name == "AXManualAccessibility";
+    if manual || attribute_name == "AXEnhancedUserInterface" {
+        // SAFETY: an AX client sets these attributes to an NSNumber.
+        let enabled: bool = unsafe { value.as_ref().is_some_and(|value| objc2::msg_send![value, boolValue]) };
+        if ASSISTIVE_APP_ENABLED.swap(enabled, std::sync::atomic::Ordering::Relaxed) != enabled {
+            drop(ASSISTIVE_APP_CHANGED.get().expect("set before the method was added").unbounded_send(()));
+        }
+        // Electron keeps AXManualAccessibility from AppKit, which does not know it.
+        if manual {
+            return;
+        }
+    }
+    // SAFETY: NSApplication's implementation of the method this one overrides on the subclass.
+    unsafe { objc2::msg_send![super(this, objc2_app_kit::NSApplication::class()), accessibilitySetValue: value, forAttribute: attribute] }
+}
+
+unsafe extern "C-unwind" fn accessibility_attribute_value(this: &objc2::runtime::AnyObject, _: objc2::runtime::Sel, attribute: &objc2_foundation::NSString) -> *mut objc2::runtime::AnyObject {
+    if attribute.to_string() == "AXManualAccessibility" {
+        let enabled = objc2_foundation::NSNumber::new_bool(ASSISTIVE_APP_ENABLED.load(std::sync::atomic::Ordering::Relaxed));
+        return objc2::rc::Retained::autorelease_return(enabled).cast();
+    }
+    // SAFETY: NSApplication's `accessibilityAttributeValue:`, which this method overrides on the subclass.
+    unsafe { objc2::msg_send![super(this, objc2_app_kit::NSApplication::class()), accessibilityAttributeValue: attribute] }
 }
 
 /// `Owner::AccessibilitySignals`: the help picker's modality and the settings key of each item by handle.

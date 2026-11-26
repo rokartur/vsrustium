@@ -264,6 +264,7 @@ fn main() -> anyhow::Result<()> {
     application.on_open_urls(move |opened| opened.into_iter().for_each(|url| drop(url_sender.unbounded_send(url))));
     application.run(move |cx: &mut App| {
         perf::mark("code/mainAppReady");
+        workbench::accessibility::watch_assistive_apps(cx);
         cx.spawn(async move |cx| {
             while let Some(url) = futures::StreamExt::next(&mut urls).await {
                 drop(cx.update(|cx| workbench::url_handler::open_system_url(url, cx)));
@@ -529,7 +530,7 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.start_terminal_host();
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
-                workbench.start_backups(&user_data, backup_folder, cx);
+                workbench.start_backups(&user_data, backup_folder, window, cx);
                 perf::mark("code/willRestoreEditors");
                 let resolver_cache = workbench.take_editor_resolver_cache();
                 workbench.set_restored_editor_type_controls();

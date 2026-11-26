@@ -71,7 +71,7 @@ impl FileWork {
         let result = match self.job {
             FileJob::Apply(edits) => operations::apply(fs, edits, None),
             FileJob::Reverse(mut undo) => undo.reverse(fs).map(|()| undo),
-            FileJob::Write(resource, bytes) => files::write_file(fs, &resource, &bytes).map(|()| FileUndo { operations: Vec::new() }),
+            FileJob::Write(resource, bytes) => files::write_file(fs, &resource, &bytes).map(|()| FileUndo::default()),
         };
         let _ = self.reply.send(result);
     }
@@ -637,6 +637,20 @@ fn tab_dto(group: u32, editor: &OpenEditor, active: bool, sync: &HostSync) -> Va
         tab["input"] = json!({ "kind": 4, "notebookType": model.view_type, "uri": model.uri });
         tab["editorId"] = json!(model.view_type);
         tab["isDirty"] = json!(model.dirty);
+        // TabInputKind.InteractiveEditorInput of an interactive window.
+        if let Some(interactive) = sync.notebooks.interactives.iter().find(|interactive| interactive.notebook == resource && !interactive.repl) {
+            tab["id"] = json!(format!("{group}~workbench.input.interactive-interactive-{resource} "));
+            tab["label"] = json!(crate::notebook::interactive_name(&model.uri, interactive));
+            tab["input"] = json!({ "kind": 9, "uri": model.uri, "inputBoxUri": interactive.input });
+            tab["editorId"] = json!("interactive");
+        }
+        // A REPL editor: ReplEditorInput is a NotebookEditorInput of type `jupyter-notebook` and editor `repl`.
+        if let Some(interactive) = sync.notebooks.interactives.iter().find(|interactive| interactive.notebook == resource && interactive.repl) {
+            tab["id"] = json!(format!("{group}~repl-workbench.editorinputs.replEditorInput-{resource} "));
+            tab["label"] = json!(crate::notebook::interactive_name(&model.uri, interactive));
+            tab["input"] = json!({ "kind": 4, "notebookType": "jupyter-notebook", "uri": model.uri });
+            tab["editorId"] = json!("repl");
+        }
     }
     // mainThreadEditorTabs.ts: TabInputKind.WebviewEditorInput or CustomEditorInput, its editor id is the view type.
     if let Some(webview) = webview_tabs.get(&editor.document().path) {

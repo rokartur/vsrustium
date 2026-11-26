@@ -23,7 +23,13 @@
 			user-select: none;
 		}
 
+		/* The workbench's `[tabindex="0"]:focus` ring, not drawn for a mouse click (imagePreviewEditor.css). */
 		.image-viewer:focus {
+			outline: 1px solid var(--vscode-focusBorder);
+			outline-offset: -1px;
+		}
+
+		.image-viewer:focus:not(:focus-visible) {
 			outline: none;
 		}
 
@@ -309,13 +315,15 @@
 
 			document.querySelector('.image-preview-message button').addEventListener('click', () => vscode.postMessage({ type: 'reopen-as-text' }));
 
+			// imagePreviewEditor.ts `focus`: the editor's focus, which reaches this frame as window focus, goes to the viewer.
+			window.addEventListener('focus', () => container.focus());
+
 			window.addEventListener('message', e => {
 				switch (e.data?.type) {
 					case 'set-source': setSource(e.data.src, e.data.viewState); break;
 					case 'set-scale': applyScale(e.data.scale); break;
 					case 'zoom-in': zoomIn(); break;
 					case 'zoom-out': zoomOut(); break;
-					case 'focus': container.focus(); break;
 				}
 			});
 

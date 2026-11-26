@@ -197,7 +197,7 @@ impl OpenEditor {
             return self.text_model().associated_file || self.document().lines != [""];
         }
         // A notebook cell's text is no working copy: its notebook is the one dirty.
-        if self.document().scheme == crate::notebook::CELL_SCHEME {
+        if matches!(self.document().scheme.as_str(), crate::notebook::CELL_SCHEME | crate::workbench::interactive::INPUT_SCHEME) {
             return false;
         }
         if self.document().scheme == crate::workbench::webview_panels::WEBVIEW_PANEL_SCHEME {

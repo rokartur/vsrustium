@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Save As and hot exit of an editable custom document in both apps: ui-pair with port/fixtures/ui-steps/custom-document.json
+# on a folder with a.cdoc (opened through Quick Open: the reference opens a file given on the command line as text
+# before its extensions registered) and port/fixtures/extensions/custom-document-tests installed as a user extension
+# (backups are off while developing an extension). Prints each folder's files after the run. Run on the Studio after a
+# release build. Usage: port/tools/custom-document-pair <out-dir>
+set -uo pipefail
+out=${1:?out dir}
+for app in reference port; do
+  dir=$(mktemp -d)
+  mkdir -p "$dir/workspace" "$dir/extensions"
+  printf a >"$dir/workspace/a.cdoc"
+  cp -R port/fixtures/extensions/custom-document-tests "$dir/extensions/port.custom-document-tests-0.0.1"
+  # The reference reads the profile's extensions.json (extensionsProfileScannerService.ts), not the folder.
+  printf '[{"identifier":{"id":"port.custom-document-tests"},"version":"0.0.1","location":{"$mid":1,"scheme":"file","path":"%s"},"relativeLocation":"port.custom-document-tests-0.0.1"}]' \
+    "$dir/extensions/port.custom-document-tests-0.0.1" >"$dir/extensions/extensions.json"
+  ONLY=$app FOLDER="$dir/workspace" ARGS="--extensions-dir $dir/extensions" port/tools/ui-pair "$out" port/fixtures/ui-steps/custom-document.json
+  echo "== $app"
+  for file in "$dir"/workspace/*; do printf '%s: %q\n' "$(basename "$file")" "$(cat "$file")"; done
+  rm -rf "$dir"
+done

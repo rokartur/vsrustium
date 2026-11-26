@@ -192,9 +192,11 @@ impl Webview {
 
     /// The Web Inspector of the view, as the Electron webview's dev tools; WebKit has no public call to open it.
     pub fn open_inspector(&self) {
-        // SAFETY: `_inspector` returns the view's `_WKInspector`, whose `show` opens its window; both exist since
-        // macOS 10.14 and the view is inspectable.
+        // SAFETY: `_setDeveloperExtrasEnabled:`, `_inspector` and its `show` exist since macOS 10.14. Without developer
+        // extras `show` neither connects nor opens a window, `isInspectable` alone serves remote inspection only.
         unsafe {
+            let preferences = self.view.configuration().preferences();
+            let _: () = msg_send![&*preferences, _setDeveloperExtrasEnabled: true];
             let inspector: *mut objc2::runtime::AnyObject = msg_send![&*self.view, _inspector];
             if let Some(inspector) = inspector.as_ref() {
                 let _: () = msg_send![inspector, show];

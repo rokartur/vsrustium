@@ -1,8 +1,10 @@
 #!/bin/bash
 # Starts the packaged VSRustium.app (port/tools/package-app) from outside the checkout on a copy of
 # port/fixtures/workspace with notes.txt, without VSCODE_GPUI_EXTENSIONS, so every file comes from the bundle, and
-# checks the extension host started from the bundled bun and activated the eager built-ins. Run on the Studio.
+# checks the extension host started from the bundled bun and activated the eager built-ins; then runs
+# port/fixtures/extensions/encoding-guess-tests in it with files.autoGuessEncoding on. Run on the Studio.
 set -uo pipefail
+repo=$PWD
 APP=${APP:-$PWD/native/target/VSRustium.app}
 source port/tools/gui-lock.sh
 dir=$(mktemp -d)
@@ -18,6 +20,17 @@ echo "host: $(ps -o comm= -p "$host" 2>/dev/null)"
 kill "$pid"; wait "$pid" 2>/dev/null
 grep -E "eager extensions activated|failed|error" "$dir/log" | head -5
 grep -q "eager extensions activated: .*vscode.git" "$dir/log" && code=0 || code=1
+
+fixtures=$repo/src/vs/workbench/services/textfile/test/node/encoding/fixtures
+cp "$fixtures/some.shiftjis.txt" "$fixtures/some.cp1252.txt" "$dir/workspace/"
+echo '{"workbench.startupEditor":"none","files.autoGuessEncoding":true}' >"$dir/user-data/User/settings.json"
+tests=$repo/port/fixtures/extensions/encoding-guess-tests
+env -u VSCODE_GPUI_EXTENSIONS PATH=/usr/bin:/bin timeout 120 "$APP/Contents/MacOS/vsrustium" "$dir/workspace" --user-data-dir "$dir/user-data" --skip-welcome \
+  --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/tests" >"$dir/guess-log" 2>&1
+guess=$?
+grep -E '^(ok|FAILED) ' "$dir/guess-log" || tail -20 "$dir/guess-log"
+echo "encoding guess: exit $guess"
+[[ $guess == 0 ]] || code=1
 rm -rf "$dir"
 echo "app smoke: exit $code"
 exit $code

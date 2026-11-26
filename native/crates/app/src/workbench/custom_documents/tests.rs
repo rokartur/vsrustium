@@ -34,9 +34,9 @@ fn open<'a>(cx: &'a mut TestAppContext, dir: &Path) -> (gpui::Entity<Workbench>,
     let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), dir.join("user/User"), Some(workspace.clone()))));
     let (sender, receiver) = std::sync::mpsc::channel();
     let user_data = dir.join("user");
-    let (workbench, cx) = cx.add_window_view(|_, cx| {
+    let (workbench, cx) = cx.add_window_view(|window, cx| {
         let mut workbench = Workbench::new(theme, app_root.clone(), Some(workspace), Languages::new(&[]), settings, HostSync::new(sender), cx);
-        workbench.start_backups(&user_data, None, cx);
+        workbench.start_backups(&user_data, None, window, cx);
         workbench
     });
     cx.run_until_parked();
@@ -101,7 +101,11 @@ fn edits_undo_redo_save_and_revert_through_the_host(cx: &mut TestAppContext) {
     let resource = resource(&dir);
     assert!(!active_dirty(&workbench, cx));
 
-    host_event(&workbench, "$onDidEdit", vec![resource.clone(), json!(VIEW_TYPE), json!(1), json!("Edit")], cx);
+    // As the host revives and sends it: `$mid` and `external` besides the parts the workbench sent.
+    let mut host_resource = resource.clone();
+    host_resource["$mid"] = json!(1);
+    host_resource["external"] = json!(format!("file://{}", dir.join("folder/a.bin").display()));
+    host_event(&workbench, "$onDidEdit", vec![host_resource, json!(VIEW_TYPE), json!(1), json!("Edit")], cx);
     assert!(active_dirty(&workbench, cx));
 
     run(&workbench, "undo", cx);
@@ -155,7 +159,7 @@ fn a_dirty_document_backs_up_and_opens_from_its_backup(cx: &mut TestAppContext) 
     assert_eq!(backups.len(), 1);
     let backup = backups::resolve(&backups[0]).unwrap();
     assert_eq!(backup.resource, working_copy_uri(&resource, VIEW_TYPE).unwrap());
-    assert_eq!((backup.meta.as_ref().unwrap()["backupId"].clone(), backup.content), (json!("backup-7"), String::new()));
+    assert_eq!((backup.meta.as_ref().unwrap()["backupId"].clone(), backup.content), (json!("backup-7"), Vec::new()));
 
     let (workbench, receiver, cx) = open(cx, &dir);
     register_provider(&workbench, cx);

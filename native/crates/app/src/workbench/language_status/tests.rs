@@ -190,6 +190,62 @@ fn too_many_problems_warn_whether_the_editor_or_the_source_cut_them(cx: &mut Tes
     assert_eq!(details, expected);
 }
 
+fn problems_limit_count(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -> usize {
+    view(workbench, cx).combined.iter().filter(|status| status.id == "diagnosticsLimitInfo").count()
+}
+
+fn change_markers(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext, uri: &Value, count: usize) {
+    let markers: Vec<Value> = (0..count).map(|index| json!({ "severity": 8, "message": format!("problem {}", index + 1), "startLineNumber": index + 1, "startColumn": 1, "endLineNumber": index + 1, "endColumn": 2 })).collect();
+    workbench.update(cx, |workbench, cx| workbench.change_many_markers("test", &json!([[uri, markers, false]]), cx));
+}
+
+/// limitIndicator.test.ts "respects validation visibility and read-only changes": the workbench's text editors get
+/// `renderValidationDecorations` `on` or `off` from `problems.visibility` (textEditor.ts), never `editable`.
+#[gpui::test]
+fn the_problems_limit_follows_problems_visibility(cx: &mut TestAppContext) {
+    let (workbench, cx) = open(cx, "limit-visibility");
+    let uri = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().uri());
+    change_markers(&workbench, cx, &uri, 5001);
+    let mut counts = vec![problems_limit_count(&workbench, cx)];
+    for visible in [false, true] {
+        workbench.update(cx, |workbench, cx| {
+            let before = workbench.model_creation_options();
+            let change = workbench.settings.lock().unwrap().update_value("problems.visibility", Some(&json!(visible)), config::service::Target::User, None, &[]).unwrap();
+            workbench.configuration_changed(&change, before, cx);
+        });
+        counts.push(problems_limit_count(&workbench, cx));
+        let error_ruler_lines = workbench.read_with(cx, |workbench, _| workbench.marker_ruler_lines(workbench.editors.active().unwrap())[2].0.len());
+        assert_eq!(error_ruler_lines > 0, visible);
+    }
+    assert_eq!(counts, [1, 0, 1]);
+}
+
+/// limitIndicator.test.ts "uses the modified editor in a diff".
+#[gpui::test]
+fn a_diff_editor_reports_the_limit_of_its_modified_side(cx: &mut TestAppContext) {
+    let (workbench, cx) = open(cx, "limit-diff");
+    let (original, modified) = workbench.update_in(cx, |workbench, window, cx| {
+        let active = |workbench: &Workbench| {
+            let document = workbench.editors.active().unwrap().document();
+            (crate::diff_editor::Side { scheme: document.scheme.clone(), path: document.path.clone() }, document.uri())
+        };
+        let original = active(workbench);
+        let path = original.0.path.with_file_name("b.txt");
+        std::fs::write(&path, "other\n").unwrap();
+        workbench.open_file(path, true, window, cx);
+        let modified = active(workbench);
+        workbench.show_diff_editor(original.0, modified.0, None, &Value::Null, window, cx);
+        (original.1, modified.1)
+    });
+    change_markers(&workbench, cx, &original, 5001);
+    let mut counts = vec![problems_limit_count(&workbench, cx)];
+    change_markers(&workbench, cx, &modified, 5001);
+    counts.push(problems_limit_count(&workbench, cx));
+    change_markers(&workbench, cx, &modified, 5000);
+    counts.push(problems_limit_count(&workbench, cx));
+    assert_eq!(counts, [0, 1, 0]);
+}
+
 /// limitIndicator.test.ts "keeps Configure actions for folding and color limits".
 #[gpui::test]
 fn folding_and_color_limits_warn_with_a_configure_command(cx: &mut TestAppContext) {

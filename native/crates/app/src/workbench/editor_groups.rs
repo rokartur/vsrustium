@@ -57,6 +57,9 @@ pub(super) struct EditorGroups {
     part_bounds: Rc<Cell<Bounds<f32>>>,
     /// Set while another group draws through the active group's code.
     pub(super) drawing_inactive: bool,
+    /// The active group while groups draw swapped in: a side by side editor's secondary group, active, draws inside
+    /// its owner's swapped body.
+    really_active: Option<u32>,
     hovered_sash: Option<SashId>,
     /// editorDropTarget.ts: the group a dragged tab is over and the side it would split, `None` to move into it.
     drop_target: Option<(u32, Option<Direction>)>,
@@ -283,6 +286,7 @@ impl Workbench {
             let group = self.editor_group_id();
             self.activate_group(group);
         }
+        self.leave_side_group();
     }
 
     /// `preferredSideBySideGroupDirection`: `workbench.editor.openSideBySideDirection`.
@@ -594,7 +598,7 @@ impl Workbench {
             if self.editors.group_tabs(group).0.is_empty() {
                 return card.flex().flex_col().items_center().justify_center().child(self.watermark(256.));
             }
-            let body = if group == self.editors.id { self.text_editor_part(window, cx) } else { self.inactive_group_body(group, window, cx) };
+            let body = if group == self.editors.id { self.editor_group_body(window, cx) } else { self.inactive_group_body(group, window, cx) };
             let area = self.group_drop_area(group, div().flex_1().min_h_0().relative().flex().flex_col().child(body), cx);
             return card.flex().flex_col().child(area).child(self.part_top_border());
         };
@@ -629,9 +633,12 @@ impl Workbench {
 
     /// A group's tabs and editor, or the watermark of an empty group (editorgroupview.css: at most 200px in a part of
     /// several groups, without the shortcuts).
-    fn editor_group_body(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    fn editor_group_body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         match self.editors.active() {
-            Some(_) => self.text_editor_part(window, cx),
+            Some(_) => {
+                let secondary = self.side_by_side_secondary(window, cx);
+                self.text_editor_part(secondary, window, cx)
+            }
             None => div().size_full().flex().flex_col().items_center().justify_center().child(self.watermark(200.)),
         }
     }
@@ -643,12 +650,18 @@ impl Workbench {
     /// Another group drawn by `draw` while swapped in. A press in it activates it before the press reaches its
     /// editor; moves and the wheel over it go to it alone (editorGroupView.ts focuses the group on mousedown).
     pub(super) fn swapped_group_body(&mut self, group: u32, draw: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) -> Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let outermost = self.editor_groups.really_active.is_none();
+        let really_active = *self.editor_groups.really_active.get_or_insert(self.editors.id);
+        let was_inactive = self.editor_groups.drawing_inactive;
         let body = self.with_group(group, |workbench| {
-            workbench.editor_groups.drawing_inactive = true;
+            workbench.editor_groups.drawing_inactive = group != really_active;
             let body = draw(workbench, window, cx);
-            workbench.editor_groups.drawing_inactive = false;
+            workbench.editor_groups.drawing_inactive = was_inactive;
             body
         });
+        if outermost {
+            self.editor_groups.really_active = None;
+        }
         let workbench = cx.entity();
         let guard = canvas(
             |_, _, _| (),

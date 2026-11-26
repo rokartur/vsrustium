@@ -10,6 +10,8 @@ use crate::menus::MenuAction;
 use crate::theme::load_theme;
 use crate::workbench::Workbench;
 
+use super::{available_editors, label_with_source};
+
 fn titles(actions: &[MenuAction]) -> Vec<String> {
     let mut titles = Vec::new();
     for action in actions {
@@ -50,7 +52,7 @@ fn markdown_editor_files_offer_their_editors_in_the_breadcrumbs(cx: &mut TestApp
                 let (id, label, _) = types.editors.iter().find(|(id, _, _)| *id == types.current).unwrap();
                 types.label(id, label)
             });
-            workbench.show_editor_type_menu(gpui::Bounds::default(), window, cx);
+            workbench.show_editor_type_menu(window, cx);
             let actions = workbench.context_menu.as_ref().map(|menu| titles(&menu.levels[0].actions)).unwrap_or_default();
             workbench.hide_context_menu(window, cx);
             (available, actions)
@@ -83,4 +85,40 @@ fn markdown_editor_files_offer_their_editors_in_the_breadcrumbs(cx: &mut TestApp
     let first = workbench.update(cx, |workbench, _| workbench.groups_in_grid_order()[0]);
     assert!(!workbench.update(cx, |workbench, _| workbench.with_group(first, |workbench| workbench.editor_type_control().is_some())));
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+fn editor(id: &str, universal_option: bool) -> (String, String, String, u8, bool) {
+    (id.into(), id.into(), "Built-in".into(), 0, universal_option)
+}
+
+fn ids(editors: Option<Vec<(String, String, String)>>) -> Option<Vec<String>> {
+    editors.map(|editors| editors.into_iter().map(|(id, _, _)| id).collect())
+}
+
+// editorTypePicker.test.ts 'hidden editor types are omitted unless currently active'.
+#[test]
+fn hidden_editor_types_are_omitted_unless_currently_active() {
+    let editors = || vec![editor("default", false), editor("test.markdownEditor", false), editor("test.markdownPreview", false)];
+    let hidden = ["test.markdownPreview"];
+    assert_eq!(ids(available_editors(editors(), "test.markdownEditor", &hidden)), Some(vec!["default".into(), "test.markdownEditor".into()]));
+    assert_eq!(ids(available_editors(editors(), "test.markdownPreview", &hidden)), Some(vec!["default".into(), "test.markdownEditor".into(), "test.markdownPreview".into()]));
+}
+
+// editorTypePicker.test.ts 'unconfigured universal optional matches only make the picker visible while active'.
+#[test]
+fn unconfigured_universal_optional_matches_only_make_the_picker_visible_while_active() {
+    let editors = || vec![editor("default", false), editor("test.universalPreview", true)];
+    assert_eq!(ids(available_editors(editors(), "default", &[])), None);
+    assert_eq!(ids(available_editors(editors(), "test.universalPreview", &[])), Some(vec!["default".into(), "test.universalPreview".into()]));
+}
+
+#[test]
+fn a_resource_with_only_the_text_editor_has_no_picker() {
+    assert_eq!(ids(available_editors(vec![editor("default", false)], "default", &[])), None);
+}
+
+#[test]
+fn an_extension_editor_names_its_extension() {
+    assert_eq!(label_with_source("Markdown Preview", "Markdown Language Features"), "Markdown Preview - Markdown Language Features");
+    assert_eq!(label_with_source("Markdown Preview", "Built-in"), "Markdown Preview");
 }

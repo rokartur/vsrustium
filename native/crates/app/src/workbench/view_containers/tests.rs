@@ -10,7 +10,7 @@ use crate::host_sync::HostSync;
 use crate::languages::Languages;
 use crate::theme::load_theme;
 use crate::workbench::Workbench;
-use crate::workbench::view_panes::{OUTLINE_VIEW, TIMELINE_VIEW};
+use crate::workbench::view_panes::{OUTLINE_VIEW, PaneContainer, TIMELINE_VIEW};
 
 #[gpui::test]
 fn focus_view_commands_open_the_explorer_pane_and_focus_it(cx: &mut TestAppContext) {
@@ -33,7 +33,7 @@ fn focus_view_commands_open_the_explorer_pane_and_focus_it(cx: &mut TestAppConte
         workbench.update_in(cx, |workbench, window, cx| _ = workbench.execute_command(&format!("{view}.focus"), vec![], window, cx));
         cx.run_until_parked();
         workbench.update_in(cx, |workbench, window, _| {
-            assert!(workbench.explorer_pane_expanded(view), "{view} expanded");
+            assert!(workbench.view_pane_expanded(PaneContainer::Explorer, view), "{view} expanded");
             let focus = if view == TIMELINE_VIEW { &workbench.timeline.focus } else { &workbench.outline_pane.focus };
             assert!(focus.is_focused(window), "{view} focused");
         });

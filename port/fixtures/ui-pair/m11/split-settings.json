@@ -1,0 +1,9 @@
+[
+  {"hotkey": ["cmd", "shift", "p"]},
+  {"wait": 800},
+  {"type": "Open User Settings (JSON)"},
+  {"wait": 800},
+  {"key": "return"},
+  {"wait": 2500},
+  {"shot": "split-settings"}
+]

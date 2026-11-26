@@ -455,7 +455,6 @@ impl Resolver {
     }
 
     /// Keybindings of a command, the one that wins first.
-    #[cfg(test)]
     pub fn lookup_keybindings(&self, command: &str) -> Vec<&Item> {
         self.lookup.get(command).map(|entries| entries.iter().rev().map(|&index| &self.keybindings[index]).collect()).unwrap_or_default()
     }

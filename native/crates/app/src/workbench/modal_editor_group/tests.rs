@@ -68,3 +68,32 @@ fn use_modal_off_opens_keybindings_json_in_the_active_group(cx: &mut TestAppCont
         assert!(!workbench.modal_group_open());
     });
 }
+
+/// preferencesService.ts `openGlobalKeybindingSettings(true)` with `workbench.settings.openDefaultKeybindings`: the
+/// default keybindings in the active group, keybindings.json in a group added to its right, not in the modal group.
+#[gpui::test]
+fn open_default_keybindings_opens_keybindings_json_beside_the_defaults(cx: &mut TestAppContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = load_theme(&[themes], "Dark Modern").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-default-keybindings-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let keybindings = dir.join("keybindings.json");
+    let (workbench, cx) = cx.add_window_view(|_, cx| {
+        std::fs::write(dir.join("settings.json"), r#"{ "workbench.settings.openDefaultKeybindings": true }"#).unwrap();
+        let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.clone(), None);
+        let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), std::sync::Arc::new(std::sync::Mutex::new(settings)), HostSync::new(std::sync::mpsc::channel().0), cx);
+        workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), keybindings.clone(), cx);
+        workbench
+    });
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.openGlobalKeybindingsFile", vec![], window, cx)));
+    cx.run_until_parked();
+    workbench.read_with(cx, |workbench, _| {
+        assert!(!workbench.modal_group_open());
+        assert_ne!(workbench.editors.id, 0);
+        assert_eq!(workbench.editors.active().unwrap().document().path, keybindings);
+        let (defaults, active) = workbench.editors.group_tabs(0);
+        assert_eq!(defaults[active.unwrap()].document().path, Path::new("//defaultsettings/keybindings.json"));
+    });
+}

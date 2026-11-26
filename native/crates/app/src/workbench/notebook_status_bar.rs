@@ -9,8 +9,13 @@ use gpui::{ClickEvent, Context, Div, Window, div, prelude::*, px};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::editor_status::{StatusPick, label_item};
+use crate::quick_input::{Entry, Item, Kind, QuickInput};
 use crate::notebook::kernels::ExecutionState;
 use crate::notebook::{self, NotebookModel};
+
+/// notebookBrowser.ts `CHANGE_CELL_LANGUAGE`.
+const CHANGE_CELL_LANGUAGE: &str = "notebook.cell.changeLanguage";
 
 struct Provider {
     handle: u64,
@@ -141,10 +146,12 @@ impl Workbench {
         let cell = &model.cells[index];
         let key = model.uri_string();
         let mut items = self.builtin_cell_status_items(&key, cell, window);
-        items.extend(self.notebook_views.status_bars.items(&key, cell.handle).iter().cloned());
-        // statusBarProviders.ts `CellStatusBarLanguagePickerProvider`. shortcut: without its command, the port has no
-        // notebook.cell.changeLanguage picker yet; add it with the language picker for cells.
-        items.push(json!({ "text": self.languages.name(&cell.language), "alignment": 2, "priority": -9007199254740991i64 }));
+        // interactiveEditor.ts and replEditor.ts take only the execution state and timer contributions, not the
+        // status bar controller with the language picker and the extensions' providers.
+        if !self.host.notebooks.interactives.iter().any(|interactive| interactive.notebook == key) {
+            items.extend(self.notebook_views.status_bars.items(&key, cell.handle).iter().cloned());
+            items.extend(self.cell_language_status_items(cell));
+        }
         items.retain(|item| focused || item["onlyShowWhenActive"] != true);
         items.sort_by(|a, b| b["priority"].as_f64().unwrap_or(0.).total_cmp(&a["priority"].as_f64().unwrap_or(0.)));
         let (left, mut right): (Vec<Value>, Vec<Value>) = items.into_iter().partition(|item| item["alignment"] != 2);
@@ -166,6 +173,162 @@ impl Workbench {
             .text_color(self.color("foreground"))
             .child(div().flex_1().flex().overflow_hidden().ml(px(10.)).children(left))
             .child(div().flex().justify_end().overflow_hidden().children(right))
+    }
+
+    /// statusBarProviders.ts `CellStatusBarLanguagePickerProvider`: the cell's language, which opens the language
+    /// picker, after a warning that searches extensions for a language no extension registers.
+    fn cell_language_status_items(&self, cell: &notebook::Cell) -> Vec<Value> {
+        let mut items = Vec::new();
+        let display = match cell.kind == notebook::MARKUP {
+            true => "markdown".to_owned(),
+            false if self.languages.id_by_name(&cell.language).is_some() => self.languages.name(&cell.language).to_owned(),
+            false => {
+                items.push(json!({
+                    "text": "$(dialog-warning)",
+                    "command": { "id": "workbench.extensions.search", "arguments": [format!("@tag:{}", cell.language)], "title": "Search Extensions" },
+                    "tooltip": format!("Unknown cell language. Click to search for '{}' extensions", cell.language),
+                    "alignment": 2,
+                    "priority": -9007199254740990i64,
+                }));
+                cell.language.clone()
+            }
+        };
+        items.push(json!({ "text": display, "command": CHANGE_CELL_LANGUAGE, "tooltip": "Select Cell Language Mode", "alignment": 2, "priority": -9007199254740991i64 }));
+        items
+    }
+
+    /// editActions.ts `ChangeCellLanguageAction`: a `{ start, end }` range with a language sets the language of
+    /// the range's first cell; a cell context (a status bar click) or nothing (Cmd+K M) picks the language of that
+    /// cell or the focused one.
+    pub(super) fn change_cell_language(&mut self, args: &[Value], window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.active_notebook_editor() else { return };
+        let key = editor.notebook.clone();
+        let model = self.host.notebooks.model(&key).expect("an editor shows an open notebook");
+        let first = args.first().unwrap_or(&Value::Null);
+        let index = match (first["start"].as_u64(), first["end"].as_u64()) {
+            (Some(start), Some(end)) if start < end && (start as usize) < model.cells.len() => start as usize,
+            (Some(_), Some(_)) => return,
+            _ => match first["cell"]["handle"].as_u64() {
+                Some(handle) => match model.index_of_handle(handle) {
+                    Some(index) => index,
+                    None => return,
+                },
+                None => editor.focus,
+            },
+        };
+        let Some(cell) = model.cells.get(index) else { return };
+        let handle = cell.handle;
+        if let Some(language) = args.get(1).and_then(Value::as_str) {
+            return self.set_cell_language(&key, handle, language, window, cx);
+        }
+        self.show_cell_language_picker(&key, handle, window, cx);
+    }
+
+    /// `showLanguagePicker`: Auto Detect, then markdown and the cell's language, then the other languages of the
+    /// notebook's kernel (else of every matching kernel, else every registered language) by `(id)`.
+    fn show_cell_language_picker(&mut self, key: &str, handle: u64, window: &mut Window, cx: &mut Context<Self>) {
+        let model = self.host.notebooks.model(key).expect("an editor shows an open notebook");
+        let cell = &model.cells[model.index_of_handle(handle).expect("picked from the notebook")];
+        let kernel_languages = |kernel: &notebook::kernels::Kernel| match kernel.supported_languages.is_empty() {
+            true => self.languages.ids().to_vec(),
+            false => kernel.supported_languages.clone(),
+        };
+        let (all, selected) = self.host.notebooks.kernels.matching(&model.view_type, key);
+        let mut languages = match selected {
+            Some(kernel) => kernel_languages(kernel),
+            None => all.into_iter().flat_map(kernel_languages).collect(),
+        };
+        if languages.is_empty() {
+            languages = self.languages.ids().to_vec();
+        }
+        languages.push("markdown".into());
+        let mut seen = std::collections::HashSet::new();
+        languages.retain(|language| seen.insert(language.clone()));
+        let (mut top, mut main) = (Vec::new(), Vec::new());
+        for language in languages {
+            let current = match cell.kind == notebook::MARKUP {
+                true => language == "markdown",
+                false => language == cell.language,
+            };
+            if !self.languages.is_registered(&language) {
+                continue;
+            }
+            let description = match current {
+                true => format!("({language}) - Current Language"),
+                false => format!("({language})"),
+            };
+            let item = Item { description: Some(description), language_icon: Some(language.clone()), ..label_item(self.languages.name(&language)) };
+            let pick = StatusPick::CellLanguage { notebook: key.to_owned(), handle, language: Some(language.clone()) };
+            match language == "markdown" || language == cell.language {
+                true => top.push((Entry::Item(item), pick)),
+                false => main.push((item, pick)),
+            }
+        }
+        main.sort_by(|(a, _), (b, _)| a.description.cmp(&b.description));
+        let mut rows = vec![
+            (Entry::Item(label_item("Auto Detect")), StatusPick::CellLanguage { notebook: key.to_owned(), handle, language: None }),
+            (Entry::Separator(Some("languages (identifier)".into())), StatusPick::Nothing),
+        ];
+        rows.extend(top);
+        rows.push((Entry::Separator(None), StatusPick::Nothing));
+        rows.extend(main.into_iter().map(|(item, pick)| (Entry::Item(item), pick)));
+        let mut input = QuickInput::new(0, Kind::QuickPick);
+        input.placeholder = Some("Select Language Mode".into());
+        self.show_status_picker(input, rows, window, cx);
+    }
+
+    /// A pick of the cell language picker: Auto Detect runs language detection on the cell's text first.
+    pub(super) fn accept_cell_language(&mut self, key: &str, handle: u64, language: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(language) = language {
+            return self.set_cell_language(key, handle, &language, window, cx);
+        }
+        let Some(cell) = self.host.notebooks.model(key).and_then(|model| model.index_of_handle(handle).map(|index| model.cells[index].uri.clone())) else { return };
+        let Ok((scheme, path)) = super::host_requests::uri_parts(&cell) else { return };
+        let detection = self.detect_language(scheme, &path);
+        let key = key.to_owned();
+        cx.spawn_in(window, async move |workbench, cx| {
+            let detection = detection.await;
+            let _ = workbench.update_in(cx, |workbench, window, cx| {
+                if let Some(language) = workbench.detected_language(detection) {
+                    workbench.set_cell_language(&key, handle, &language, window, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// `setCellToLanguage`: markdown makes a code cell a markup cell and another language a markup cell a code cell
+    /// (`changeCellToKind`: the cell replaced by one of the other kind with its text, outputs and metadata), else
+    /// the cell's language changes; one step on the notebook's undo stack.
+    fn set_cell_language(&mut self, key: &str, handle: u64, language: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(model) = self.host.notebooks.model(key) else { return };
+        let Some(index) = model.index_of_handle(handle) else { return };
+        let cell = &model.cells[index];
+        let to_markup = language == "markdown" && cell.language != "markdown";
+        let to_code = language != "markdown" && cell.kind == notebook::MARKUP;
+        let edit = match (to_markup, to_code) {
+            (true, _) if cell.kind == notebook::MARKUP => return,
+            (true, _) | (_, true) => {
+                let mut data = self.cell_data(cell);
+                data["cellKind"] = json!(if to_markup { notebook::MARKUP } else { notebook::CODE });
+                data["language"] = json!(language);
+                if to_markup {
+                    data["mime"] = json!("text/markdown");
+                }
+                json!({ "editType": 1, "index": index, "count": 1, "cells": [data] })
+            }
+            _ => json!({ "editType": 4, "index": index, "language": language }),
+        };
+        let Ok(applied) = self.apply_notebook_edits(key, std::slice::from_ref(&edit), cx) else { return };
+        if !applied.undo.is_empty() {
+            self.push_cells_undo(key, applied.undo, vec![edit]);
+        }
+        if to_markup {
+            let handle = self.host.notebooks.model(key).expect("still open").cells[index].handle;
+            self.edit_markup_cell(handle);
+            window.focus(&self.editor_focus, cx);
+        }
+        cx.notify();
     }
 
     /// `ExecutionStateCellStatusBarItem` and `TimerCellStatusBarItem` of a code cell.

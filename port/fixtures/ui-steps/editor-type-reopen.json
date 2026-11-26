@@ -1,0 +1,16 @@
+[
+	{ "wait": 5000 },
+	{ "hotkey": ["cmd", "p"] },
+	{ "wait": 800 },
+	{ "type": "image.png" },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 2000 },
+	{ "click": [960, 78], "foreground": true },
+	{ "wait": 1500 },
+	{ "shot": "picker" },
+	{ "key": "escape", "foreground": true },
+	{ "click": [370, 51], "foreground": true },
+	{ "wait": 1500 },
+	{ "shot": "text-editor" }
+]

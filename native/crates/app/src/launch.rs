@@ -98,10 +98,8 @@ pub fn handle_launches(mut launches: UnboundedReceiver<Launch>, cx: &mut App) {
 fn main_diagnostics(cx: &mut App) -> crate::diagnostics::MainDiagnostics {
     let main_pid = std::process::id();
     let mut windows = Vec::new();
-    let mut screen_reader = false;
     for handle in cx.windows().into_iter().filter_map(|handle| handle.downcast::<crate::workbench::Workbench>()) {
-        let _ = handle.update(cx, |workbench, window, _| {
-            screen_reader |= window.is_a11y_active();
+        let _ = handle.update(cx, |workbench, _, _| {
             let folders = workbench.workspace().map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone()).collect()).unwrap_or_default();
             windows.push(crate::diagnostics::WindowDiagnostics { id: handle.window_id().as_u64(), pid: main_pid, title: workbench.window_title(), folders });
         });
@@ -110,6 +108,7 @@ fn main_diagnostics(cx: &mut App) -> crate::diagnostics::MainDiagnostics {
     // per window, so the hosts are numbered in start (pid) order.
     let hosts = crate::ps::list_processes(main_pid, 0.).map(|root| root.children).unwrap_or_default();
     let pid_to_names = hosts.iter().filter(|child| child.cmd.contains("bootstrap-exthost.js")).enumerate().map(|(index, host)| (host.pid, format!("extension-host [{}]", index + 1))).collect();
+    let screen_reader = crate::workbench::accessibility::screen_reader_running();
     crate::diagnostics::MainDiagnostics { main_pid, main_arguments: std::env::args().skip(1).collect(), windows, pid_to_names, screen_reader }
 }
 

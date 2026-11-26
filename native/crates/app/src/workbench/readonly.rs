@@ -97,6 +97,10 @@ impl Workbench {
         if scheme == crate::output::OUTPUT_SCHEME {
             return Some(Readonly::Editor);
         }
+        // The interactive window's and REPL editor's lists are read-only (`isReadOnly: true`), their input is not.
+        if scheme == crate::notebook::CELL_SCHEME && self.is_composite_history_cell(path) {
+            return Some(Readonly::Editor);
+        }
         if scheme == "vscode" || scheme == super::local_history_actions::LOCAL_HISTORY_SCHEME || scheme == super::perf_view::PERF_SCHEME {
             return Some(Readonly::Provider);
         }

@@ -790,6 +790,9 @@ pub struct EditorGroup {
     pub multi_diffs: HashMap<u32, MultiDiffInput>,
     /// The merge editors among `editors`, by their entry's model id: each edits its result model.
     pub merges: HashMap<u32, crate::merge_editor::MergeInput>,
+    /// The side by side editors among `editors` (`SideBySideEditorInput`), by their entry's model id: the entry is
+    /// the primary side, the secondary is the one editor of a group of its own, outside the grid and the group list.
+    pub side_by_sides: HashMap<u32, u32>,
     /// For an editor among `editors` that stacks several live code editors (a notebook's cells), by its entry's
     /// model id: the model the group's code editor edits, the focused one (`INotebookEditor.activeCodeEditor`).
     /// The others draw as `embedded_code_editor`s without the focus.
@@ -1013,7 +1016,36 @@ impl EditorGroup {
 
     /// The editor groups, most recently active first; the panel's group is not one.
     pub fn group_ids_mru(&self) -> Vec<u32> {
-        std::iter::once(self.id).chain(self.group_mru.iter().copied()).filter(|id| *id != PANEL_GROUP).collect()
+        std::iter::once(self.id).chain(self.group_mru.iter().copied()).filter(|id| *id != PANEL_GROUP && !self.is_side_group(*id)).collect()
+    }
+
+    /// Whether `id` is the group of a side by side editor's secondary side.
+    pub fn is_side_group(&self, id: u32) -> bool {
+        self.side_by_sides.values().any(|group| *group == id)
+    }
+
+    /// The secondary side's group of the active side by side editor.
+    pub fn side_group(&self) -> Option<u32> {
+        self.side_by_sides.get(&self.active_tab()?.model_id).copied()
+    }
+
+    /// The group whose side by side editor shows the secondary group `side`.
+    pub fn side_group_owner(&self, side: u32) -> Option<u32> {
+        let (entry, _) = self.side_by_sides.iter().find(|(_, group)| **group == side)?;
+        let owns = |editors: &[OpenEditor]| editors.iter().any(|editor| editor.model_id == *entry);
+        if owns(&self.editors) {
+            return Some(self.id);
+        }
+        self.other_groups.iter().find(|group| owns(&group.editors)).map(|group| group.id)
+    }
+
+    /// A new group outside the grid for the secondary side of the side by side editor `entry` of the active group.
+    pub fn add_side_group(&mut self, entry: u32) -> u32 {
+        self.next_group_id += 1;
+        let id = self.next_group_id;
+        self.other_groups.push(GroupState { id, editors: Vec::new(), recent: Vec::new(), viewport: self.viewport, unicode_banner_closed: false });
+        self.side_by_sides.insert(entry, id);
+        id
     }
 
     pub fn group(&self, id: u32) -> Option<&GroupState> {
@@ -1072,7 +1104,7 @@ impl EditorGroup {
 
     /// Whether the part has more than one editor group.
     pub fn has_several_groups(&self) -> bool {
-        std::iter::once(self.id).chain(self.other_groups.iter().map(|group| group.id)).filter(|id| *id != PANEL_GROUP && *id != MODAL_GROUP).count() > 1
+        std::iter::once(self.id).chain(self.other_groups.iter().map(|group| group.id)).filter(|id| *id != PANEL_GROUP && *id != MODAL_GROUP && !self.is_side_group(*id)).count() > 1
     }
 
     /// The panel's group, made on first use.
@@ -1190,12 +1222,24 @@ impl EditorGroup {
         model.is_dirty() || shown_in_diff || model.text_model().host_reference.is_some_and(|opened| now.duration_since(opened) < HOST_REFERENCE_AGE)
     }
 
-    /// Forgets the diff, multi diff or merge editor whose entry was `model_id`.
+    /// Forgets the diff, multi diff, merge or side by side editor whose entry was `model_id`.
     fn remove_input(&mut self, model_id: &u32) {
         self.diffs.remove(model_id);
         self.multi_diffs.remove(model_id);
         self.merges.remove(model_id);
+        self.remove_side_by_side(*model_id);
         self.stacked_editors.remove(model_id);
+    }
+
+    /// Makes the side by side editor `entry` its primary side's editor again: its secondary group closes.
+    pub fn remove_side_by_side(&mut self, entry: u32) {
+        let Some(side) = self.side_by_sides.remove(&entry) else { return };
+        let index = self.other_groups.iter().position(|group| group.id == side).expect("the secondary side is not the active group when its editor closes");
+        let group = self.other_groups.remove(index);
+        self.group_mru.retain(|id| *id != side);
+        for editor in group.editors {
+            self.keep_or_dispose(editor);
+        }
     }
 
     fn insert(&mut self, mut editor: OpenEditor, preview: bool) {

@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use exthost::scan::ScannedExtension;
@@ -12,6 +13,7 @@ use serde_json::Value;
 use crate::semantic_tokens::{SemanticTheme, SemanticTokenRule, TokenClassificationRegistry, read_semantic_token_customizations, read_theme_file_semantics, semantic_highlighting};
 
 mod debug_colors;
+mod notebook_colors;
 mod welcome_colors;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -52,7 +54,13 @@ pub struct Theme {
     pub semantic: SemanticTheme,
     /// The `ColorThemeData.semanticHighlighting` getter.
     pub semantic_highlighting: bool,
+    /// colorExtensionPoint.ts: the `contributes.colors` defaults of every extension, by color id.
+    extension_colors: Arc<ExtensionColors>,
 }
+
+/// A contributed color's defaults for dark, light, high contrast and high contrast light themes: a hex value or the
+/// id of the color that provides it.
+type ExtensionColors = HashMap<String, [Option<String>; 4]>;
 
 /// A contributed color theme before its file is read (`ColorThemeData.fromExtensionTheme`).
 #[derive(Clone, Debug)]
@@ -63,6 +71,7 @@ pub struct ColorThemeEntry {
     pub kind: ThemeKind,
     pub extension_id: String,
     path: PathBuf,
+    extension_colors: Arc<ExtensionColors>,
 }
 
 impl ColorThemeEntry {
@@ -82,6 +91,7 @@ impl ColorThemeEntry {
             file_semantic_highlighting,
             semantic,
             semantic_highlighting: file_semantic_highlighting,
+            extension_colors: self.extension_colors.clone(),
         };
         theme.tokens = crate::syntax::token_theme(&theme, &theme.token_rules);
         theme.set_semantic_customizations(&Value::Null, &Value::Null);
@@ -91,6 +101,7 @@ impl ColorThemeEntry {
 
 /// `contributes.themes` of every extension (`ThemeRegistry.onExtensionsRead`); a contribution without a path is skipped.
 pub fn color_themes(extensions: &[ScannedExtension]) -> anyhow::Result<Vec<ColorThemeEntry>> {
+    let extension_colors = Arc::new(extension_colors(extensions));
     let mut entries = Vec::new();
     for extension in extensions {
         let Some(themes) = extension.description["contributes"]["themes"].as_array() else { continue };
@@ -106,10 +117,23 @@ pub fn color_themes(extensions: &[ScannedExtension]) -> anyhow::Result<Vec<Color
                 other => bail!("theme {settings_id}: unknown ui theme {other}"),
             };
             let description = theme["description"].as_str().map(str::to_owned);
-            entries.push(ColorThemeEntry { settings_id, label, description, kind, extension_id: extension.id.clone(), path: extension.location.join(path) });
+            entries.push(ColorThemeEntry { settings_id, label, description, kind, extension_id: extension.id.clone(), path: extension.location.join(path), extension_colors: extension_colors.clone() });
         }
     }
     Ok(entries)
+}
+
+/// colorExtensionPoint.ts: each `contributes.colors` entry's defaults; high contrast light falls back to light.
+fn extension_colors(extensions: &[ScannedExtension]) -> ExtensionColors {
+    let mut colors = HashMap::new();
+    for extension in extensions {
+        for color in extension.description["contributes"]["colors"].as_array().into_iter().flatten() {
+            let Some(id) = color["id"].as_str() else { continue };
+            let value = |key: &str| color["defaults"][key].as_str().map(str::to_owned);
+            colors.insert(id.to_owned(), [value("dark"), value("light"), value("highContrast"), value("highContrastLight").or_else(|| value("light"))]);
+        }
+    }
+    colors
 }
 
 fn file_name(path: &str) -> String {
@@ -155,6 +179,19 @@ impl Theme {
                     return Some(*color);
                 }
             }
+        }
+        if let Some(defaults) = self.extension_colors.get(key) {
+            let index = match self.kind {
+                ThemeKind::Dark => 0,
+                ThemeKind::Light => 1,
+                ThemeKind::HighContrastDark => 2,
+                ThemeKind::HighContrastLight => 3,
+            };
+            // `parseColorValue`: a `#` value is a color, anything else the id of another color.
+            return match defaults[index].as_deref()? {
+                hex if hex.starts_with('#') => parse_hex(hex),
+                id => self.color(id),
+            };
         }
         self.evaluate(&registry_default(key, self.kind))
     }
@@ -422,7 +459,7 @@ fn registry_default(key: &str, kind: ThemeKind) -> ColorValue {
             ThemeKind::HighContrastLight => hc_light,
         };
     }
-    if let Some([dark, light, hc, hc_light]) = debug_colors::debug_default(key).or_else(|| welcome_colors::welcome_default(key)) {
+    if let Some([dark, light, hc, hc_light]) = debug_colors::debug_default(key).or_else(|| welcome_colors::welcome_default(key)).or_else(|| notebook_colors::notebook_default(key)) {
         return match kind {
             ThemeKind::Dark => dark,
             ThemeKind::Light => light,
@@ -1384,6 +1421,16 @@ mod tests {
         assert_eq!(hex(darken(color("#3794ff80"), 0.3)), "#0065d980");
     }
 
+    /// colorExtensionPoint.ts: git's `gitDecoration.modifiedResourceForeground` default for dark themes, and a default
+    /// naming another color resolves through it.
+    #[test]
+    fn a_contributed_color_has_its_default_in_themes_without_it() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../extensions");
+        let extensions = [scan_extension(&root.join("theme-defaults"), true).unwrap(), scan_extension(&root.join("git"), true).unwrap()];
+        let theme = load_theme(&extensions, "Dark Modern").unwrap();
+        assert_eq!(hex(theme.color("gitDecoration.modifiedResourceForeground").unwrap()), "#e2c08dff");
+        assert_eq!(theme.color("git.blame.editorDecorationForeground"), theme.color("editorInlayHint.foreground"));
+    }
     /// theme.ts title bar and command center defaults for the inactive window, and titlebarPart.ts `makeOpaque` over
     /// WORKBENCH_BACKGROUND (#252526 dark): #CCCCCC at 0.6 gives 37 + 0.6 * (204 - 37) = 137.2, truncated to 0x89.
     #[test]
