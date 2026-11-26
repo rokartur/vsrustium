@@ -2,14 +2,15 @@
 //! the workspace memento `memento/workbench.parts.editor` under `editorpart.state`, in upstream's shape
 //! (`ISerializedGrid` of `ISerializedEditorGroupModel` leaves, file editors as `workbench.editors.files.fileEditorInput`).
 //! Upstream saves on shutdown; the port saves on each editor change, as the editor history does.
-// Not ported yet: editors other than file and untitled text editors (upstream serializes every editor with a
-// serializer), sticky editors, locked groups.
+// Not ported yet: editors other than file, untitled text and webview panel editors (upstream serializes every
+// editor with a serializer), sticky editors, locked groups.
 
 use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
 use super::super::Workbench;
+use super::super::webview_panels::WEBVIEW_INPUT;
 use crate::editor::MODAL_GROUP;
 use crate::editor_grid::{EditorGrid, Orientation, SerializedNode};
 
@@ -55,21 +56,29 @@ impl Workbench {
         }
     }
 
-    /// `EditorGroupModel.serialize`: the file editors and, with hot exit on (untitledTextEditorHandler.ts
-    /// `canSerialize`), the untitled ones in tab order, their MRU and the preview editor by index.
+    /// `EditorGroupModel.serialize`: the file editors, with hot exit on (untitledTextEditorHandler.ts
+    /// `canSerialize`) the untitled ones, and the webview panels that persist, in tab order, their MRU and the
+    /// preview editor by index.
     fn serialized_group(&self, group: u32) -> Value {
         let untitled = self.setting("files.hotExit") != "off";
-        let editors: Vec<_> = self.editors.group_tabs(group).0.iter().filter(|editor| editor.document().scheme == "file" || untitled && editor.document().scheme == "untitled").collect();
-        let serialized: Vec<Value> = editors.iter().map(|editor| {
+        let mut editors = Vec::new();
+        let mut serialized = Vec::new();
+        for editor in self.editors.group_tabs(group).0 {
             let document = editor.document();
-            match document.scheme.as_str() {
+            let entry = match document.scheme.as_str() {
                 "file" => json!({ "id": FILE_EDITOR_INPUT, "value": json!({ "resourceJSON": exthost::scan::file_uri(&document.path) }).to_string() }),
-                _ => {
+                "untitled" if untitled => {
                     let resource = json!({ "$mid": 1, "scheme": "untitled", "path": document.path.to_string_lossy() });
                     json!({ "id": UNTITLED_EDITOR_INPUT, "value": json!({ "resourceJSON": resource, "modeId": document.language_id }).to_string() })
                 }
-            }
-        }).collect();
+                _ => match self.serialized_webview_editor(editor) {
+                    Some(webview) => json!({ "id": WEBVIEW_INPUT, "value": webview.to_string() }),
+                    None => continue,
+                },
+            };
+            editors.push(editor);
+            serialized.push(entry);
+        }
         let by_recency = self.editors.group_editors_by_recency(group);
         let mru: Vec<usize> = by_recency.iter().filter_map(|recent| editors.iter().position(|editor| editor.model_id == recent.model_id)).collect();
         let preview = editors.iter().position(|editor| editor.preview);
@@ -115,15 +124,19 @@ impl Workbench {
         let mut opened = Vec::new();
         for (index, editor) in group["editors"].as_array().into_iter().flatten().enumerate() {
             let value: Value = editor["value"].as_str().and_then(|value| serde_json::from_str(value).ok()).unwrap_or_default();
-            let Some(path) = value["resourceJSON"]["path"].as_str().map(PathBuf::from) else { continue };
-            let document = match editor["id"].as_str() {
+            let path = value["resourceJSON"]["path"].as_str().map(PathBuf::from);
+            let document = match (editor["id"].as_str(), path) {
                 // A file deleted since is left out, as `FileEditorInput` would show its error placeholder.
-                Some(FILE_EDITOR_INPUT) => match self.read_document(&path) {
+                (Some(FILE_EDITOR_INPUT), Some(path)) => match self.read_document(&path) {
                     Ok(document) => document,
                     Err(_) => continue,
                 },
                 // Its text comes from its backup (backup_tracker.rs `restore_backups`).
-                Some(UNTITLED_EDITOR_INPUT) => crate::editor::TextDocument::untitled(&path, "", value["modeId"].as_str(), &self.languages, &self.settings.lock().unwrap()),
+                (Some(UNTITLED_EDITOR_INPUT), Some(path)) => crate::editor::TextDocument::untitled(&path, "", value["modeId"].as_str(), &self.languages, &self.settings.lock().unwrap()),
+                (Some(WEBVIEW_INPUT), _) => match self.restore_webview_editor(&value) {
+                    Some(document) => document,
+                    None => continue,
+                },
                 _ => continue,
             };
             self.editors.open(document, group["preview"].as_u64() == Some(index as u64));

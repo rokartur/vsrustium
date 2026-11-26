@@ -25,7 +25,11 @@ use crate::webview::{self, Webview, WebviewEvent};
 pub const WEBVIEW_PANEL_SCHEME: &str = "webview-panel";
 /// editorService.ts `ACTIVE_GROUP` and `SIDE_GROUP`, as a `viewColumn` of the show options.
 const ACTIVE_GROUP: i64 = -1;
-const SIDE_GROUP: i64 = -2;
+pub(super) const SIDE_GROUP: i64 = -2;
+/// webviewEditorInput.ts `WebviewInput.typeId`, the id of a webview editor in the editor state.
+pub(super) const WEBVIEW_INPUT: &str = "workbench.editors.webviewInput";
+/// mainThreadWebviewPanels.ts `WebviewViewTypeTransformer`: the editor's view type is the extension's with this prefix.
+const VIEW_TYPE_PREFIX: &str = "mainThreadWebview-";
 
 #[derive(Default)]
 pub struct WebviewPanels {
@@ -73,6 +77,9 @@ pub(super) struct WebviewPanel {
     pub(super) carousel: Option<Vec<PathBuf>>,
     find_visible: bool,
     find_focused: bool,
+    /// Restored from the editor state (`LazilyResolvedWebviewEditorInput`): `$deserializeWebviewPanel` waits for
+    /// the editor to show and a serializer of its view type.
+    revive: bool,
 }
 
 impl Workbench {
@@ -83,6 +90,8 @@ impl Workbench {
             "$createWebviewPanel" => self.create_webview_panel(args, window, cx),
             "$registerSerializer" => {
                 self.webview_panels.serializers.insert(handle);
+                // A restored panel that shows revives on the next render (webviewWorkbenchService.ts `reviveFor`).
+                cx.notify();
             }
             "$unregisterSerializer" => {
                 self.webview_panels.serializers.remove(&handle);
@@ -204,7 +213,7 @@ impl Workbench {
     /// mainThreadWebviewPanels.ts `getTargetGroupFromShowOptions`, resolved to a group: none for the active group
     /// (no column, ACTIVE, or one empty group); SIDE is the group beside the active one, made when missing; a column
     /// past the last group adds one group after the last.
-    fn webview_target_group(&mut self, column: &Value) -> Option<u32> {
+    pub(super) fn webview_target_group(&mut self, column: &Value) -> Option<u32> {
         let column = column.as_i64().filter(|column| *column != ACTIVE_GROUP)?;
         let groups = self.groups_in_grid_order();
         if groups.len() == 1 && self.editors.editors.is_empty() {
@@ -256,8 +265,12 @@ impl Workbench {
         // Native views draw over GPUI's layer: a quick input or menu on top of the webview would be hidden.
         // shortcut: the webview hides under these overlays, where Electron draws them over its iframe.
         let covered = self.quick_inputs.current().is_some() || self.keybindings_editor.open || self.context_menu.is_some();
+        // The modal part covers the grid's webviews.
+        let modal = self.modal_group_open().then(|| self.editors.group_tabs(crate::editor::MODAL_GROUP)).and_then(|(editors, active)| active.map(|index| editors[index].document()));
+        let modal = modal.map(|document| (document.scheme.clone(), document.path.clone()));
         let gpui_focused = window.focused(cx).is_some();
         let mut created = Vec::new();
+        let mut revived = Vec::new();
         for panel in &mut self.webview_panels.panels {
             let shown = match panel.scheme == WEBVIEW_VIEW_SCHEME {
                 true => visible_views.contains(&panel.path),
@@ -267,8 +280,12 @@ impl Workbench {
             if shown && panel.webview.is_none() && !cfg!(test) {
                 created.push(panel.handle.clone());
             }
+            if shown && panel.revive {
+                revived.push(panel.handle.clone());
+            }
+            let under_modal = modal.as_ref().is_some_and(|(scheme, path)| !(panel.scheme == *scheme && panel.path == *path));
             match (&panel.webview, shown) {
-                (Some(webview), true) if covered => webview.hide(),
+                (Some(webview), true) if covered || under_modal => webview.hide(),
                 (Some(webview), true) if gpui_focused => webview.release_keyboard(),
                 (Some(webview), false) if panel.retain_context_when_hidden => webview.hide(),
                 (Some(_), false) => panel.webview = None,
@@ -278,12 +295,84 @@ impl Workbench {
         for handle in created {
             self.create_webview(&handle, window, cx);
         }
+        for handle in revived {
+            self.revive_webview_panel(&handle);
+        }
         self.update_editor_insets(window, cx);
     }
 
-    /// The scheme and path of each group's active editor.
+    /// mainThreadWebviewPanels.ts revivers of a restored panel that shows: without a serializer of its view type the
+    /// extension activates (`onWebviewPanel:<viewType>`); with one, the host fills the panel in `$deserializeWebviewPanel`.
+    fn revive_webview_panel(&mut self, handle: &str) {
+        let Some((group, _)) = self.webview_editor_group(handle) else { return };
+        let position = self.groups_in_grid_order().iter().position(|id| *id == group);
+        let index = self.webview_panels.panels.iter().position(|panel| panel.handle == handle).expect("a shown panel");
+        let active = self.editors.active().is_some_and(|editor| self.webview_panels.panels[index].shows(editor));
+        let panel = &mut self.webview_panels.panels[index];
+        if !self.webview_panels.serializers.contains(&panel.view_type) {
+            let event = format!("onWebviewPanel:{}", panel.view_type);
+            drop(self.host.activate_by_event(&event));
+            return;
+        }
+        panel.revive = false;
+        let state = panel.state.as_str().and_then(|state| serde_json::from_str(state).ok()).unwrap_or(Value::Null);
+        let init = json!({
+            "title": panel.title,
+            "state": state,
+            "panelOptions": { "enableFindWidget": panel.find_enabled, "retainContextWhenHidden": panel.retain_context_when_hidden },
+            "webviewOptions": panel.content_options,
+            "active": active,
+        });
+        let args = vec![json!(handle), json!(panel.view_type), init, json!(position)];
+        self.host.send("ExtHostWebviewPanels", "$deserializeWebviewPanel", args);
+    }
+
+    /// webviewEditorInputSerializer.ts `toJson` of a panel `shouldPersist` keeps: one restored, or one whose view type
+    /// has a serializer.
+    pub(super) fn serialized_webview_editor(&self, editor: &OpenEditor) -> Option<Value> {
+        let panel = self.webview_panels.panels.iter().find(|panel| panel.scheme == WEBVIEW_PANEL_SCHEME && panel.is_extensions() && panel.custom.is_none() && panel.shows(editor))?;
+        if !panel.revive && !self.webview_panels.serializers.contains(&panel.view_type) {
+            return None;
+        }
+        let mut options = panel.content_options.clone();
+        options["enableFindWidget"] = json!(panel.find_enabled);
+        options["retainContextWhenHidden"] = json!(panel.retain_context_when_hidden);
+        let icon = panel.icon.as_ref().map(|(light, dark)| json!({ "light": exthost::scan::file_uri(light), "dark": exthost::scan::file_uri(dark) }));
+        Some(json!({
+            "origin": panel.origin,
+            "viewType": format!("{VIEW_TYPE_PREFIX}{}", panel.view_type),
+            "providedId": panel.view_type,
+            "title": panel.title,
+            "options": options,
+            "extensionId": panel.extension_id,
+            "state": panel.state,
+            "iconPath": icon,
+        }))
+    }
+
+    /// webviewEditorInputSerializer.ts `deserialize` and `openRevivedWebview`: the panel's editor, filled in once it shows.
+    pub(super) fn restore_webview_editor(&mut self, value: &Value) -> Option<TextDocument> {
+        let view_type = value["viewType"].as_str()?.strip_prefix(VIEW_TYPE_PREFIX)?;
+        let handle = crate::debug::generate_uuid();
+        let path = PathBuf::from(format!("webview-panel/webview-undefined-{handle}"));
+        let document = TextDocument::from_text(WEBVIEW_PANEL_SCHEME, &path, "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
+        let options = &value["options"];
+        let title = value["title"].as_str().unwrap_or_default().to_owned();
+        let extension = json!({ "id": value["extensionId"] });
+        let mut panel = WebviewPanel::new(handle, WEBVIEW_PANEL_SCHEME.into(), path, view_type, title, &extension, options.clone(), options["retainContextWhenHidden"] == true, None);
+        panel.find_enabled = options["enableFindWidget"] == true;
+        panel.state = value["state"].clone();
+        let file = |uri: &Value| (uri["scheme"] == "file").then(|| PathBuf::from(uri["path"].as_str().unwrap_or_default()));
+        panel.icon = file(&value["iconPath"]["light"]).zip(file(&value["iconPath"]["dark"]));
+        panel.revive = true;
+        self.webview_panels.panels.push(panel);
+        Some(document)
+    }
+
+    /// The scheme and path of each group's active editor, the modal group's included while it is open.
     fn visible_editor_documents(&self) -> Vec<(String, PathBuf)> {
-        let groups = self.groups_in_grid_order().into_iter();
+        let modal = self.modal_group_open().then_some(crate::editor::MODAL_GROUP);
+        let groups = self.groups_in_grid_order().into_iter().chain(modal);
         let active = groups.filter_map(|group| {
             let (editors, active) = self.editors.group_tabs(group);
             active.map(|index| (editors[index].document().scheme.clone(), editors[index].document().path.clone()))
@@ -655,6 +744,7 @@ impl WebviewPanel {
             carousel: None,
             find_visible: false,
             find_focused: false,
+            revive: false,
         }
     }
 
@@ -796,6 +886,60 @@ mod tests {
         request("$disposeWebview", vec![json!("h1")], cx);
         assert!(workbench.read_with(cx, |workbench, _| workbench.webview_panels.panels.is_empty()));
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[gpui::test]
+    fn panels_with_a_serializer_are_restored_from_the_editor_state(cx: &mut gpui::TestAppContext) {
+        const EDITOR_PART_KEY: &str = "memento/workbench.parts.editor";
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let (sender, host) = std::sync::mpsc::channel();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(sender), cx));
+        let request = |method: &str, args: Vec<Value>, cx: &mut gpui::VisualTestContext| workbench.update_in(cx, |workbench, window, cx| drop(workbench.handle_webview_request(method, &args, window, cx)));
+        let sent = |method: &str| host.try_iter().filter(|message| message.method == method).map(|message| message.args).collect::<Vec<_>>();
+        let init = json!({ "title": "Preview", "panelOptions": { "enableFindWidget": true }, "webviewOptions": { "enableScripts": true } });
+        request("$createWebviewPanel", vec![json!({ "id": "ext" }), json!("h1"), json!("preview"), init.clone(), json!({})], cx);
+        workbench.update(cx, |workbench, _| workbench.webview_panels.panels[0].state = json!("{\"page\":2}"));
+
+        // Without a serializer the panel is not kept.
+        let saved = workbench.update(cx, |workbench, _| {
+            workbench.save_editor_part_state();
+            workbench.workspace_storage.lock().unwrap().get(EDITOR_PART_KEY).unwrap().to_owned()
+        });
+        request("$disposeWebview", vec![json!("h1")], cx);
+        workbench.update(cx, |workbench, _| {
+            workbench.workspace_storage.lock().unwrap().set(EDITOR_PART_KEY, saved);
+            workbench.restore_editor_part_state();
+        });
+        assert!(workbench.read_with(cx, |workbench, _| workbench.editors.editors.is_empty()));
+
+        request("$createWebviewPanel", vec![json!({ "id": "ext" }), json!("h2"), json!("preview"), init, json!({})], cx);
+        workbench.update(cx, |workbench, _| workbench.webview_panels.panels[0].state = json!("{\"page\":2}"));
+        request("$registerSerializer", vec![json!("preview")], cx);
+        // The state a window closing with the panel leaves, read by the next window on that workspace.
+        let saved = workbench.update(cx, |workbench, _| {
+            workbench.save_editor_part_state();
+            workbench.workspace_storage.lock().unwrap().get(EDITOR_PART_KEY).unwrap().to_owned()
+        });
+        request("$disposeWebview", vec![json!("h2")], cx);
+        request("$unregisterSerializer", vec![json!("preview")], cx);
+        workbench.update(cx, |workbench, _| workbench.workspace_storage.lock().unwrap().set(EDITOR_PART_KEY, saved));
+        drop(sent(""));
+
+        // The restored editor shows: its extension activates, and once the serializer registers the host fills it in.
+        workbench.update_in(cx, |workbench, window, cx| {
+            workbench.restore_editor_part_state();
+            workbench.update_webview_panels(window, cx);
+        });
+        assert_eq!(workbench.read_with(cx, |workbench, _| workbench.webview_title(&workbench.editors.active().unwrap().document().path)), Some("Preview".into()));
+        assert!(sent("$activateByEvent").iter().any(|args| args[0] == "onWebviewPanel:preview"));
+        request("$registerSerializer", vec![json!("preview")], cx);
+        workbench.update_in(cx, |workbench, window, cx| workbench.update_webview_panels(window, cx));
+        let deserialize = sent("$deserializeWebviewPanel");
+        assert_eq!(deserialize.len(), 1);
+        let handle = workbench.read_with(cx, |workbench, _| workbench.webview_panels.panels[0].handle.clone());
+        assert_eq!(deserialize[0], vec![json!(handle), json!("preview"), json!({ "title": "Preview", "state": { "page": 2 }, "panelOptions": { "enableFindWidget": true, "retainContextWhenHidden": false }, "webviewOptions": { "enableScripts": true, "enableFindWidget": true, "retainContextWhenHidden": false }, "active": true }), json!(0)]);
     }
 
     #[test]

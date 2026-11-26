@@ -163,10 +163,12 @@ impl Workbench {
 
     /// The command line's file on startup. editorResolverService.ts `resolveEditor` runs before the extensions
     /// registered their editors and waits for them only when the cache or a user association names the file's glob,
-    /// so on a first start a `.ipynb` opens as JSON in the text editor.
+    /// so on a first start a `.ipynb` opens as JSON in the text editor. The media previews are registered by then.
     pub fn open_startup_file(&mut self, path: PathBuf, resolver_cache: &[String], window: &mut Window, cx: &mut Context<Self>) {
         let waits_for_extensions = resource_matcher("file", &path).is_some_and(|matches| {
-            resolver_cache.iter().any(|pattern| matches(pattern)) || self.editor_associations().iter().any(|(pattern, view_type)| view_type != TEXT_EDITOR_ID && matches(pattern))
+            resolver_cache.iter().any(|pattern| matches(pattern))
+                || self.editor_associations().iter().any(|(pattern, view_type)| view_type != TEXT_EDITOR_ID && matches(pattern))
+                || media_preview_contributions().iter().flat_map(|contribution| &contribution.patterns).any(|pattern| matches(pattern))
         });
         match waits_for_extensions {
             true => self.open_file(path, true, window, cx),
@@ -264,24 +266,28 @@ impl Workbench {
         self.open_with_resolver(resource, Some(editor_id), json!({ "preserveFocus": preserve_focus }), window, cx)
     }
 
-    /// The editors that can open the resource (in a diff editor with `diff`): the text editor, then the contributed
-    /// ones matching it (by glob or a user association) by rank, as id, label, provider, rank and whether it is a `*`
-    /// option nobody associated.
+    /// editorResolverService.ts `getEditorMatches` (in a diff editor with `diff`): the editors that open the resource
+    /// (by glob or a user association) by priority, then the longer glob, the text editor registering `*` as builtin;
+    /// as id, label, provider, rank and whether it is an unconfigured `*` option editor
+    /// (`isUnconfiguredUniversalOptionalEditorMatch`).
     pub(super) fn resource_editors(&self, scheme: &str, path: &Path, diff: bool) -> Vec<(String, String, String, u8, bool)> {
-        let mut editors = vec![(TEXT_EDITOR_ID.to_owned(), "Text Editor".to_owned(), "Built-in".to_owned(), RANK_TEXT_EDITOR, false)];
+        let mut editors = vec![(RANK_BUILTIN, 1, (TEXT_EDITOR_ID.to_owned(), "Text Editor".to_owned(), "Built-in".to_owned(), RANK_BUILTIN, false))];
         if let Some(matches) = resource_matcher(scheme, path) {
             let associated: Vec<String> = self.matching_associations(&matches, diff).into_iter().map(|(_, view_type)| view_type).collect();
             for contribution in self.editor_contributions() {
                 let is_associated = associated.contains(&contribution.view_type);
-                if is_associated || contribution.patterns.iter().any(|pattern| matches(pattern)) {
-                    let rank = contribution.rank_for(diff);
-                    let universal_option = !is_associated && rank == RANK_OPTION && contribution.patterns.iter().all(|pattern| pattern == "*");
-                    editors.push((contribution.view_type, contribution.display_name, contribution.provider, rank, universal_option));
+                let pattern = contribution.patterns.iter().filter(|pattern| matches(pattern)).max_by_key(|pattern| pattern.len());
+                if !is_associated && pattern.is_none() {
+                    continue;
                 }
+                let rank = contribution.rank_for(diff);
+                let universal_option = !is_associated && rank == RANK_OPTION && pattern.is_some_and(|pattern| pattern == "*");
+                let glob_length = pattern.map_or(0, String::len);
+                editors.push((rank, glob_length, (contribution.view_type, contribution.display_name, contribution.provider, rank, universal_option)));
             }
         }
-        editors[1..].sort_by_key(|(_, _, _, rank, _)| std::cmp::Reverse(*rank));
-        editors
+        editors.sort_by_key(|(rank, glob_length, _)| std::cmp::Reverse((*rank, *glob_length)));
+        editors.into_iter().map(|(_, _, editor)| editor).collect()
     }
 
     /// `getAssociationsForResourceByType`: a diff takes `workbench.diffEditorAssociations`, else the editor
@@ -307,7 +313,9 @@ impl Workbench {
         let (default_id, pattern) = self.default_editor(scheme, &path, true, false);
         let mut entries = Vec::new();
         let mut ids = Vec::new();
-        for (id, label, detail, _, _) in self.resource_editors(scheme, &path, false) {
+        let mut editors = self.resource_editors(scheme, &path, false);
+        editors.sort_by_key(|(id, ..)| id != TEXT_EDITOR_ID);
+        for (id, label, detail, _, _) in editors {
             let description = match (id == current, id == default_id) {
                 (true, true) => Some("Active and Default".to_owned()),
                 (true, false) => Some("Active".to_owned()),

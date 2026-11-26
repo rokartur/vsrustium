@@ -500,7 +500,7 @@ impl Render for Workbench {
         self.follow_rename_editor_state(window, cx);
         self.folding_model_changed(cx);
         self.sticky_outline_frame(cx);
-        self.accessibility_frame(window, cx);
+        self.accessibility_frame(cx);
         self.update_metered_connection(cx);
         self.check_relaunch_settings(window, cx);
         self.welcome_page_frame(window, cx);
@@ -878,6 +878,7 @@ impl Workbench {
         cx.on_app_quit(|workbench, _| {
             workbench.store_explorer_view_state();
             workbench.store_editor_view_states();
+            workbench.save_editor_part_state();
             workbench.store_editor_resolver_cache();
             async {}
         })

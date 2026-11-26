@@ -264,6 +264,7 @@ fn main() -> anyhow::Result<()> {
     application.on_open_urls(move |opened| opened.into_iter().for_each(|url| drop(url_sender.unbounded_send(url))));
     application.run(move |cx: &mut App| {
         perf::mark("code/mainAppReady");
+        workbench::accessibility::watch_assistive_apps(cx);
         cx.spawn(async move |cx| {
             while let Some(url) = futures::StreamExt::next(&mut urls).await {
                 drop(cx.update(|cx| workbench::url_handler::open_system_url(url, cx)));

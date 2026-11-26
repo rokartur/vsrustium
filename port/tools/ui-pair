@@ -9,6 +9,7 @@
 //   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y], "foreground": true}  {"key": "return"}  {"key": "escape", "foreground": true} (a real HID key down and up, the window brought to front and left there; also on hotkey)
 //   {"scroll": [x, y], "amount": notches} (real wheel notches down, the pointer left there)  {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"type": "Text", "foreground": true} (capitals as shift plus the letter)  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"], "button": "middle"}: a slow drag, captured while held
+//   {"windows": "name"}: the titles, sizes and visibility of the app's windows, as <app>-<name>.json
 //   {"restart": true}: after the app quit (a Cmd+Q step), start it again on the same user data and folder
 //   {"launch": ["docs/guide.md"]}: start the app a second time with these paths (relative to the folder), as a command line would
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
@@ -17,7 +18,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 
-type Step = { click?: number[]; scroll?: number[]; amount?: number; hover?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; button?: string; restart?: boolean; launch?: string[] };
+type Step = { click?: number[]; scroll?: number[]; amount?: number; hover?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; windows?: string; button?: string; restart?: boolean; launch?: string[] };
 
 const [outDir, stepsFile, themeName = 'dark'] = process.argv.slice(2);
 const steps: Step[] = JSON.parse(readFileSync(stepsFile, 'utf8'));
@@ -69,10 +70,9 @@ process.exit(0);
 
 function referenceUserDataDir() {
 	const userData = referenceUserData(referenceTheme, settings);
-	// cua-driver reads the accessibility tree, which the reference takes for a screen reader (a notification
-	// and "Screen Reader Optimized"); the port has no screen reader mode yet.
+	// Accessibility support off unless SETTINGS sets it, as in the port's user data.
 	const settingsFile = join(userData, 'User/settings.json');
-	writeFileSync(settingsFile, JSON.stringify({ ...JSON.parse(readFileSync(settingsFile, 'utf8')), 'editor.accessibilitySupport': 'off' }));
+	writeFileSync(settingsFile, JSON.stringify({ 'editor.accessibilitySupport': 'off', ...JSON.parse(readFileSync(settingsFile, 'utf8')) }));
 	// windowsStateHandler.ts: the first window takes the last active window's size (WindowMode.Normal is 1).
 	writeFileSync(join(userData, 'User/globalStorage/storage.json'), JSON.stringify({ windowsState: { lastActiveWindow: { uiState: { mode: 1, x: 100, y: 100, width: 1024, height: 768 } } } }));
 	return userData;
@@ -162,6 +162,12 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 			await drag;
 		} else if (step.shot) {
 			await shot(app, target.pid, target.window_id, step.shot);
+		} else if (step.windows) {
+			type Listed = { title: string; is_on_screen: boolean; bounds: { width: number; height: number } };
+			const { windows } = await cua('list_windows', { pid: target.pid });
+			const listed = windows.filter((w: Listed) => w.bounds.width > 100).map((w: Listed) => ({ title: w.title, on_screen: w.is_on_screen, width: w.bounds.width, height: w.bounds.height }));
+			writeFileSync(resolve(outDir, `${app}-${step.windows}.json`), JSON.stringify(listed, null, '\t'));
+			console.log(`${app}-${step.windows}.json: ${JSON.stringify(listed)}`);
 		} else if (step.clipboard) {
 			const text = (await Bun.$`pbpaste`.text()).replaceAll(folder, '<folder>');
 			writeFileSync(resolve(outDir, `${app}-${step.clipboard}.txt`), text);

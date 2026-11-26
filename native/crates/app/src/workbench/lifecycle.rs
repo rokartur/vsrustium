@@ -108,7 +108,11 @@ impl Workbench {
         let veto = self.veto_shutdown(reason, window, cx);
         cx.spawn_in(window, async move |workbench, cx| {
             if veto.await == Ok(false) {
-                let _ = workbench.update_in(cx, |workbench, window, cx| then(workbench, window, cx));
+                let _ = workbench.update_in(cx, |workbench, window, cx| {
+                    // storageService's `onWillSaveState` on shutdown: a webview's state changes without an editor change.
+                    workbench.save_editor_part_state();
+                    then(workbench, window, cx)
+                });
             }
         })
         .detach();
