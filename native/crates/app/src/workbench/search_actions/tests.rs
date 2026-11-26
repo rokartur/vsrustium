@@ -151,6 +151,24 @@ fn opening_a_result_selects_the_match_in_the_editor(cx: &mut TestAppContext) {
     std::fs::remove_dir_all(dir).unwrap();
 }
 
+#[gpui::test]
+fn opening_a_result_with_a_replace_string_shows_the_replace_preview(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = search("search-replace-preview", cx);
+    run(&workbench, "workbench.action.findInFiles", vec![json!({ "query": "alpha", "replace": "omega", "triggerSearch": true })], cx);
+    run(&workbench, "search.action.focusSearchList", Vec::new(), cx);
+    cx.simulate_keystrokes("down enter");
+    cx.run_until_parked();
+    workbench.read_with(cx, |workbench, _| {
+        let diff = workbench.editors.active_diff().expect("the replace preview");
+        assert_eq!(diff.label.as_deref(), Some("a.txt \u{2194} a.txt (Replace Preview)"));
+        assert_eq!((diff.original.scheme.as_str(), diff.modified.scheme.as_str()), ("file", "private"));
+        let preview = workbench.editors.model("private", &diff.modified.path).unwrap();
+        assert_eq!(preview.document().lines, ["omega beta", "omega", ""]);
+    });
+    assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "alpha beta\nAlpha\n");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 /// listCommands.ts on the results (`multipleSelectionSupport: true`): Shift+Down and Up grow and shrink the selection,
 /// `focusParent`, `selectAll` of the top level, `toggleSelection`, and a Shift click selecting from the anchor.
 #[gpui::test]

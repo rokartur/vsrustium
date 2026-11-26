@@ -23,7 +23,7 @@ use super::layout::Part;
 use super::search_view::{MessagePart, RowAction, RowKey, RowKind, SEARCH_FIELDS, SearchField, SearchOption, SearchUiState, SearchView, SideBarView};
 use crate::anything_quick_access::TextRange;
 use crate::commands::Outcome;
-use crate::editor::char_column;
+use crate::editor::{TextDocument, char_column};
 use crate::editor::find::search::SearchParams;
 use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
@@ -1157,17 +1157,13 @@ impl Workbench {
     }
 
     /// `searchView.open`: the match's file opens with the match selected (`getEditorSelectionFromMatch`), a file's
-    /// last match for a file row.
-    // shortcut: with a replace string upstream opens the replace preview diff editor, which waits for the diff editor.
+    /// last match for a file row; with a replace string, the file's replace preview.
     pub(super) fn open_search_row(&mut self, key: &RowKey, preserve_focus: bool, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some((path, found)) = self.search_row_match(key) else { return };
-        let mut range = found.range;
-        if self.search.replace_active && !self.search.value(SearchField::Replace).is_empty()
-            && let Some(pattern) = self.search.replace_pattern()
-        {
-            let replace = found.replace_string(&pattern, self.search.preserve_case);
-            range = SearchRange { start_line: range.start_line, start_column: range.start_column, end_line: range.start_line, end_column: range.start_column + utf16_len(&replace) };
+        if self.search.replace_active && !self.search.value(SearchField::Replace).is_empty() {
+            return self.open_replace_preview(&path, preserve_focus, pinned, window, cx);
         }
+        let range = found.range;
         self.open_file(path.clone(), pinned, window, cx);
         let Some(editor) = self.editors.active().filter(|editor| editor.document().path == path) else { return };
         let document = editor.document();
@@ -1180,6 +1176,42 @@ impl Workbench {
             true => window.focus(&self.search.focus.clone(), cx),
             false => window.focus(&self.editor_focus.clone(), cx),
         }
+    }
+
+    /// replaceService.ts `openReplacePreview` and `updateReplacePreview`: the file against a `private:` model of its
+    /// text with every match of the file replaced, in the diff editor.
+    fn open_replace_preview(&mut self, path: &Path, preserve_focus: bool, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(pattern) = self.search.replace_pattern() else { return };
+        let file_uri = crate::editor::uri_value("file", path);
+        if self.editors.model("file", path).is_none()
+            && let Err(error) = self.try_open_document(&file_uri, &Value::Null, &Value::Null, false, cx)
+        {
+            return eprintln!("replace preview of {}: {error}", path.display());
+        }
+        let source = self.editors.model("file", path).expect("opened above").document();
+        let (mut lines, language_id) = (source.lines.clone(), source.language_id.clone());
+        drop(source);
+        let Some(file_match) = self.search.result.files.iter().find(|file| file.path == path) else { return };
+        for found in file_match.matches.iter().rev() {
+            let range = found.range;
+            let byte = |line: &str, utf16: usize| line.char_indices().nth(char_column(line, utf16)).map_or(line.len(), |(index, _)| index);
+            let prefix = &lines[range.start_line][..byte(&lines[range.start_line], range.start_column)];
+            let suffix = &lines[range.end_line][byte(&lines[range.end_line], range.end_column)..];
+            let replaced = format!("{prefix}{}{suffix}", found.replace_string(&pattern, self.search.preserve_case));
+            lines.splice(range.start_line..=range.end_line, replaced.split('\n').map(str::to_string).collect::<Vec<_>>());
+        }
+        let text = lines.join("\n");
+        // toReplaceResource: the file's path with the `private` scheme and its scheme in the query.
+        let query = r#"{"scheme":"file"}"#;
+        let preview_path = PathBuf::from(format!("{}?{query}", path.display()));
+        if !self.revert_model("private", &preview_path, text.as_bytes()) {
+            let document = TextDocument::from_text("private", &preview_path, &text, "utf8".into(), Some(&language_id), &self.languages, &self.settings.lock().unwrap());
+            self.editors.open_model(document);
+        }
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        let preview_uri = json!({ "$mid": 1, "scheme": "private", "path": path.to_string_lossy(), "query": query });
+        let options = json!([null, { "preserveFocus": preserve_focus, "pinned": pinned, "revealIfVisible": true }]);
+        drop(self.execute_command("_workbench.diff", vec![file_uri, preview_uri, json!(format!("{name} \u{2194} {name} (Replace Preview)")), options], window, cx));
     }
 
     fn search_row_match(&self, key: &RowKey) -> Option<(PathBuf, crate::search_model::Match)> {
