@@ -632,6 +632,14 @@ impl Session {
         let message = match handled {
             Some(Ok(value)) => Message::ReplyOk { req, value },
             Some(Err(error)) => Message::ReplyErr { req, error: Some(error) },
+            None if proxy == "MainThreadLocalization" => {
+                let values: Vec<Value> = args.iter().map(|arg| if let Arg::Json(value) = arg { value.clone() } else { Value::Null }).collect();
+                match crate::language_packs::serve_localization(&method, &values) {
+                    Ok(Value::Null) => Message::ReplyOk { req, value: Reply::Empty },
+                    Ok(value) => Message::ReplyOk { req, value: Reply::Json(value) },
+                    Err(error) => Message::ReplyErr { req, error: Some(error) },
+                }
+            }
             None => Message::ReplyOk { req, value: self.handle_host_request(proxy, &method, &args) },
         };
         self.host.send(rpc::encode(&message));
@@ -708,10 +716,6 @@ impl Session {
             ("MainThreadStorage", _) if self.storage.is_some() => return self.storage.as_mut().expect("checked by the match guard").serve(method, args),
             ("MainThreadWindow", "$getInitialState") => return Reply::Json(json!({ "isFocused": true, "isActive": true })),
             ("MainThreadUrls", "$createAppUri") => return Reply::Json(app_uri(&arg(0))),
-            ("MainThreadLocalization", _) => {
-                let values: Vec<Value> = (0..args.len()).map(arg).collect();
-                return crate::language_packs::serve_localization(method, &values).map_or(Reply::Empty, Reply::Json);
-            }
             // product.json has no `enableTelemetry`: upstream's NullTelemetryService drops extension events, and so does the port.
             ("MainThreadTelemetry", "$publicLog" | "$publicLog2") => {}
             // No sign-in and no AI in the port: these APIs stay callable and report nothing.

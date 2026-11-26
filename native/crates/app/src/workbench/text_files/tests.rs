@@ -116,11 +116,50 @@ fn a_file_changed_on_disk_fails_the_save_until_overwrite(cx: &mut TestAppContext
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "changed elsewhere");
     let message = workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.first().map(|item| (item.message.text(), item.primary.iter().map(|action| action.label.clone()).collect::<Vec<_>>())));
     let expected = "Failed to save 'a.txt': The content of the file is newer. Please compare your version with the file contents or overwrite the content of the file with your changes.";
-    assert_eq!(message, Some((expected.to_string(), vec!["Overwrite".to_string()])));
+    assert_eq!(message, Some((expected.to_string(), vec!["Compare".to_string(), "Overwrite".to_string()])));
     let uri = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().uri());
     run(&workbench, "workbench.files.action.saveIgnoreModifiedSince", vec![uri], cx);
     assert_eq!(std::fs::read_to_string(&file).unwrap(), "xone");
     assert!(workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.is_empty()), "the message closes once the model saves");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// Compare opens the file on disk against the model with the help message; Save again from there shows the help,
+/// the title's accept action overwrites the file, reopens the file's editor and closes the conflict editor.
+#[gpui::test]
+fn compare_opens_the_save_conflict_editor(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_in("conflict-compare", "{}", cx);
+    let file = dir.join("a.txt");
+    std::fs::write(&file, "one").unwrap();
+    open(&workbench, &file, cx);
+    type_text(&workbench, "x", cx);
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(&file, "changed elsewhere").unwrap();
+    run(&workbench, "workbench.action.files.save", Vec::new(), cx);
+    let uri = workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().document().uri());
+    run(&workbench, "workbench.files.action.resolveConflict", vec![uri.clone()], cx);
+    let messages = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.iter().map(|item| item.message.text()).collect::<Vec<_>>());
+    let help = super::super::save_conflict::CONFLICT_EDITOR_HELP.to_string();
+    assert_eq!(messages(cx), [help.clone()], "the help replaces the save error of the same model");
+    workbench.update_in(cx, |workbench, window, cx| {
+        let diff = workbench.editors.active_diff().expect("the conflict editor");
+        assert_eq!(diff.label.as_deref(), Some("a.txt (in file) \u{2194} a.txt (in VSRustium) - Resolve save conflict"));
+        assert_eq!((diff.original.scheme.as_str(), diff.modified.scheme.as_str()), ("conflictResolution", "file"));
+        let original = workbench.editors.model("conflictResolution", &file).unwrap();
+        assert_eq!(original.document().lines.join("\n"), "changed elsewhere");
+        assert_eq!(workbench.key_context(window).get("saveConflictResolutionContext"), Some(&json!(true)));
+        let _ = cx;
+    });
+    run(&workbench, "workbench.action.files.save", Vec::new(), cx);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "changed elsewhere");
+    assert!(messages(cx).iter().all(|message| *message == help), "a save from the conflict editor shows the help again");
+    run(&workbench, "workbench.files.action.acceptLocalChanges", vec![uri], cx);
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "xone");
+    assert!(messages(cx).is_empty());
+    workbench.read_with(cx, |workbench, _| {
+        assert!(workbench.editors.active_diff().is_none(), "the conflict editor closed");
+        assert_eq!(workbench.editors.active().unwrap().document().scheme, "file");
+    });
     std::fs::remove_dir_all(dir).unwrap();
 }
 

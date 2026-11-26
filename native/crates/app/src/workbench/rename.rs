@@ -123,10 +123,15 @@ impl Workbench {
         let position = editor.selection().head;
         let (model_id, version_id) = (editor.model_id, editor.text_model().version_id);
         let resolve = self.resolve_rename_location(editor, &handles, position);
+        let operation = self.start_cancellable_operation();
         self.rename.request = Some(cx.spawn_in(window, async move |workbench, cx| {
-            let Ok((location, provider_index)) = resolve.await else { return };
+            let resolved = resolve.await;
             let _ = workbench.update_in(cx, |workbench, window, cx| {
                 workbench.rename.request = None;
+                let Ok((location, provider_index)) = resolved else { return };
+                if super::editor_state::is_cancelled(&operation) {
+                    return;
+                }
                 let Some(editor) = workbench.editors.active() else { return };
                 // EditorStateCancellationTokenSource(Position | Value).
                 if (editor.model_id, editor.text_model().version_id) != (model_id, version_id) || editor.selection().head != position {

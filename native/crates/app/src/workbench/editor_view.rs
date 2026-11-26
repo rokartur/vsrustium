@@ -598,6 +598,7 @@ impl Workbench {
             .child(
                 shifted()
                     .children(middle_scroll_dot)
+                    .children(self.empty_editor_hint(editor, metrics.content_left(), cx))
                     .children(self.sticky_scroll_widget(editor, metrics, window, cx))
                     // Messages, hovers and the overlay widgets are the focused editor's.
                     .when(!inactive, |shifted| {
@@ -622,6 +623,7 @@ impl Workbench {
                     .children(self.suggest_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .children(self.find_options_widget(minimap_width, cx))
                     .children(self.floating_menu(editor, viewport.height, minimap_width, window, cx))
+                    .children(self.whitespace_hint_widget(minimap_width, cx))
                     .children(self.define_keybinding_overlay(editor, self.editors.viewport.width + metrics.content_left() + minimap_width, viewport.height, window, cx))
                     .children(self.breakpoint_widget_element(editor, metrics.content_left(), window, cx))
                     .children(self.exception_widget_element(editor, metrics.content_left(), cx))

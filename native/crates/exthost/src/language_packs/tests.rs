@@ -65,3 +65,16 @@ fn manifest_messages_from_the_pack_or_the_locale_file() {
     assert_eq!(localized_messages(&user, "pub.user", &Nls::english("en")).unwrap()["title"], "Run");
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// `$fetchBundleContents` rejects as `fileService.readFile` does for a file that cannot be read; a built-in
+/// bundle URI without a language pack is undefined.
+#[test]
+fn localization_requests_reject_a_missing_bundle() {
+    let dir = temp_dir("serve");
+    std::fs::write(dir.join("bundle.json"), "{}").unwrap();
+    let uri = |path: &Path| json!({ "scheme": "file", "path": path.to_string_lossy() });
+    assert_eq!(serve_localization("$fetchBundleContents", &[uri(&dir.join("bundle.json"))]), Ok(json!("{}")));
+    let error = serve_localization("$fetchBundleContents", &[uri(&dir.join("missing.json"))]).unwrap_err();
+    assert_eq!(error["$isError"], true);
+    assert_eq!(serve_localization("$fetchBuiltInBundleUri", &[json!("vscode.git"), json!("xx")]), Ok(Value::Null));
+}

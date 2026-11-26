@@ -4,6 +4,7 @@
 use std::ops::Range;
 
 use super::folding::FoldingRegions;
+use crate::outline_model::{OutlineChildren, OutlineElement, OutlineModel};
 use super::{OpenEditor, Viewport};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,6 +53,74 @@ pub fn from_folding_regions(regions: &FoldingRegions) -> StickyElement {
         close_scope(&mut stack);
     }
     stack.pop().expect("the root stays on the stack").1
+}
+
+/// `StickyModelFromCandidateOutlineProvider._stickyModelFromOutlineModel`: with several providers the group of
+/// `preferred` (the provider of the previous sticky model), else the group whose symbols cover the most lines.
+/// Returns the scopes and the provider id; `None` for an outline without symbols (`isModelValid`).
+pub fn from_outline_model(outline: &OutlineModel, preferred: Option<&str>) -> Option<(StickyElement, Option<String>)> {
+    if outline.groups.is_empty() {
+        return None;
+    }
+    let (elements, provider) = match outline.children {
+        OutlineChildren::Elements => (&outline.groups[0].children, preferred.map(String::from)),
+        OutlineChildren::Groups => {
+            let group = match outline.groups.iter().find(|group| Some(group.id.as_str()) == preferred) {
+                Some(group) => group,
+                None => {
+                    let mut best = &outline.groups[0];
+                    let mut best_sum = None;
+                    for group in &outline.groups {
+                        let sum: usize = group.children.iter().map(sum_of_ranges).sum();
+                        if best_sum.is_none_or(|best_sum| sum > best_sum) {
+                            best = group;
+                            best_sum = Some(sum);
+                        }
+                    }
+                    best
+                }
+            };
+            (&group.children, Some(group.id.clone()))
+        }
+    };
+    let mut sorted: Vec<&OutlineElement> = elements.iter().collect();
+    sorted.sort_by(|a, b| compare_scopes(symbol_scope(a), symbol_scope(b)));
+    let children = sorted.into_iter().map(|element| from_outline_element(element, element.symbol.selection_range.start.0)).collect();
+    Some((StickyElement { range: None, children }, provider))
+}
+
+/// `_stickyModelFromOutlineElement`: a symbol from its selection's line to its range's end; a child on one line is
+/// left out, and a child starting on its parent's line gives its own children in its place.
+fn from_outline_element(element: &OutlineElement, previous_start: usize) -> StickyElement {
+    let mut children = Vec::new();
+    for child in &element.children {
+        let child_start = child.symbol.selection_range.start.0;
+        if child_start == child.symbol.range.end.0 {
+            continue;
+        }
+        if child_start != previous_start {
+            children.push(from_outline_element(child, child_start));
+        } else {
+            children.extend(child.children.iter().map(|subchild| from_outline_element(subchild, child_start)));
+        }
+    }
+    children.sort_by(|a, b| compare_scopes(a.range.expect("symbol scopes have ranges"), b.range.expect("symbol scopes have ranges")));
+    StickyElement { range: Some(symbol_scope(element)), children }
+}
+
+fn symbol_scope(element: &OutlineElement) -> StickyRange {
+    StickyRange { start: element.symbol.selection_range.start.0, end: element.symbol.range.end.0 }
+}
+
+/// `_comparator`: by start line, the longer scope first.
+fn compare_scopes(a: StickyRange, b: StickyRange) -> std::cmp::Ordering {
+    a.start.cmp(&b.start).then(b.end.cmp(&a.end))
+}
+
+/// `_findSumOfRangesOfGroup`: the lines each symbol spans from its selection, children included.
+fn sum_of_ranges(element: &OutlineElement) -> usize {
+    let children: usize = element.children.iter().map(sum_of_ranges).sum();
+    children + element.symbol.range.end.0 - element.symbol.selection_range.start.0
 }
 
 fn close_scope(stack: &mut Vec<(Option<usize>, StickyElement)>) {
@@ -129,7 +198,8 @@ impl OpenEditor {
         }
         let view_lines = self.visible_lines(viewport);
         let range = StickyRange { start: self.model_line(view_lines.start) + 1, end: self.model_line(view_lines.end - 1) + 1 };
-        let candidates = candidates_intersecting(&self.sticky_model, range, self.document().lines.len(), viewport.line_height, self.folding.hidden());
+        let model = self.sticky_outline.as_ref().map_or(&self.sticky_model, |(outline, _)| outline);
+        let candidates = candidates_intersecting(model, range, self.document().lines.len(), viewport.line_height, self.folding.hidden());
         // `getBottomForLineNumber`: the bottom of the line's last view line, past its wrapped lines.
         let bottom = |line: usize| self.line_top(self.last_view_line(line - 1), viewport) + viewport.line_height;
         find_widget_state(&candidates, self.scroll.top, max_lines, |line| self.line_top(self.view_line(line - 1), viewport), bottom)
@@ -161,10 +231,45 @@ mod tests {
         StickyElement { range: Some(StickyRange { start, end }), children }
     }
 
-    /// The outline of stickyScroll.test.ts `documentSymbolProviderForTestModel` as
-    /// `_stickyModelFromOutlineModel` builds it: each symbol from its selection line to its range's end.
+    fn symbol(name: &str, range: (usize, usize), selection: usize, children: Vec<serde_json::Value>) -> serde_json::Value {
+        let lines = |start: usize, end: usize| serde_json::json!({ "startLineNumber": start, "startColumn": 1, "endLineNumber": end, "endColumn": 1 });
+        serde_json::json!({ "name": name, "detail": name, "kind": 11, "range": lines(range.0, range.1), "selectionRange": lines(selection, selection), "children": children })
+    }
+
+    fn outline(groups: Vec<(&str, Vec<serde_json::Value>)>) -> OutlineModel {
+        let answers = groups.into_iter().map(|(label, symbols)| (label.to_string(), symbols.iter().map(|symbol| crate::outline_model::DocumentSymbol::from_dto(symbol).unwrap()).collect())).collect();
+        OutlineModel::new(answers)
+    }
+
+    /// stickyScroll.test.ts `documentSymbolProviderForTestModel`.
+    fn test_symbols() -> Vec<serde_json::Value> {
+        vec![
+            symbol("foo", (1, 3), 1, vec![]),
+            symbol("TestClass", (4, 12), 7, vec![symbol("functionOfClass", (8, 12), 9, vec![symbol("function1", (10, 11), 10, vec![])])]),
+            symbol("bar", (13, 14), 13, vec![symbol("insideBar", (13, 13), 13, vec![])]),
+        ]
+    }
+
     fn test_model() -> StickyElement {
-        StickyElement { range: None, children: vec![scope(1, 3, vec![]), scope(7, 12, vec![scope(9, 12, vec![scope(10, 11, vec![])])]), scope(13, 14, vec![])] }
+        from_outline_model(&outline(vec![("Test", test_symbols())]), None).unwrap().0
+    }
+
+    /// `_stickyModelFromOutlineModel`: each symbol from its selection line to its range's end, one-line children
+    /// left out.
+    #[test]
+    fn outline_symbols_become_scopes() {
+        assert_eq!(test_model(), StickyElement { range: None, children: vec![scope(1, 3, vec![]), scope(7, 12, vec![scope(9, 12, vec![scope(10, 11, vec![])])]), scope(13, 14, vec![])] });
+        assert_eq!(from_outline_model(&outline(vec![("Test", vec![])]), None), None, "no symbols falls back to the folding model");
+    }
+
+    /// Several providers: the one kept from the last model, else the one whose symbols span the most lines.
+    #[test]
+    fn the_provider_with_the_widest_symbols_wins() {
+        let model = outline(vec![("Small", vec![symbol("a", (1, 3), 1, vec![])]), ("Wide", vec![symbol("b", (1, 9), 1, vec![])])]);
+        let (element, provider) = from_outline_model(&model, None).unwrap();
+        assert_eq!((element.children, provider.as_deref()), (vec![scope(1, 9, vec![])], Some("root/provider_1")));
+        let (element, provider) = from_outline_model(&model, Some("root/provider_0")).unwrap();
+        assert_eq!((element.children, provider.as_deref()), (vec![scope(1, 3, vec![])], Some("root/provider_0")));
     }
 
     fn state_at(model: &StickyElement, line_count: usize, hidden: &[Range<usize>], scroll_top: f32) -> Vec<usize> {
@@ -214,11 +319,13 @@ mod tests {
         assert_eq!(state_at(&model, 14, &hidden, 10. * LINE_HEIGHT + 1.), Vec::<usize>::new());
     }
 
-    /// issue #159271: a child scope starting on its parent's line. The outline provider skips the child and
-    /// keeps its children (`_stickyModelFromOutlineElement`), so TestClass holds bar directly.
+    /// issue #159271: a child scope starting on its parent's line (`documentSymbolProviderForSecondTestModel`).
+    /// The outline provider skips the child and keeps its children, so TestClass holds bar directly.
     #[test]
     fn child_scope_on_the_parent_line() {
-        let model = StickyElement { range: None, children: vec![scope(1, 5, vec![scope(2, 4, vec![])])] };
+        let symbols = vec![symbol("TestClass", (1, 5), 1, vec![symbol("foo", (1, 4), 1, vec![symbol("bar", (2, 4), 2, vec![])])])];
+        let model = from_outline_model(&outline(vec![("Test", symbols)]), None).unwrap().0;
+        assert_eq!(model, StickyElement { range: None, children: vec![scope(1, 5, vec![scope(2, 4, vec![])])] });
         assert_eq!(state_at(&model, 6, &[], 1.), vec![1, 2]);
         assert_eq!(state_at(&model, 6, &[], LINE_HEIGHT + 1.), vec![1, 2]);
         assert_eq!(state_at(&model, 6, &[], 2. * LINE_HEIGHT + 1.), vec![1]);

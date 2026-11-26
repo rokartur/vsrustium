@@ -458,6 +458,11 @@ pub fn workbench_menus() -> Vec<MenuItem> {
         let entry = Entry::Command { id: "editor.action.toggleWordWrap".into(), precondition: None, toggled: None, alt: None };
         items.push(MenuItem { menu: MenuId::EditorTitle, entry, title: title.into(), group: "navigation".into(), order: 1., when: Expr::deserialize(when) });
     }
+    // fileActions.contribution.ts `appendSaveConflictEditorTitleAction`: the conflict editor's accept and revert.
+    for (id, title, order) in [("workbench.files.action.acceptLocalChanges", "Use your changes and overwrite file contents", -10.), ("workbench.files.action.revertLocalChanges", "Discard your changes and revert to file contents", -9.)] {
+        let entry = Entry::Command { id: id.into(), precondition: None, toggled: None, alt: None };
+        items.push(MenuItem { menu: MenuId::EditorTitle, entry, title: title.into(), group: "navigation".into(), order, when: Expr::deserialize("saveConflictResolutionContext") });
+    }
     // localHistoryCommands.ts: Restore Contents on the editor of a local history entry.
     let entry = Entry::Command { id: "workbench.action.localHistory.restoreViaEditor".into(), precondition: None, toggled: None, alt: None };
     items.push(MenuItem { menu: MenuId::EditorTitle, entry, title: "Restore Contents".into(), group: "navigation".into(), order: -10., when: Expr::deserialize("resourceScheme == 'vscode-local-history'") });
@@ -533,6 +538,8 @@ pub fn command_icons(extensions: &[ScannedExtension]) -> std::collections::HashM
     icons.insert("editor.action.toggleWordWrap".to_string(), CommandIcon::Codicon("word-wrap".into()));
     // localHistory.ts `LOCAL_HISTORY_ICON_RESTORE`.
     icons.insert("workbench.action.localHistory.restoreViaEditor".to_string(), CommandIcon::Codicon("check".into()));
+    icons.insert("workbench.files.action.acceptLocalChanges".to_string(), CommandIcon::Codicon("check".into()));
+    icons.insert("workbench.files.action.revertLocalChanges".to_string(), CommandIcon::Codicon("discard".into()));
     for extension in extensions {
         let commands = match &extension.description["contributes"]["commands"] {
             Value::Array(commands) => commands.iter().collect(),
