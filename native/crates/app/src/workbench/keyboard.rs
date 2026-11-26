@@ -462,7 +462,9 @@ impl Workbench {
         context
     }
 
-    /// `openGlobalKeybindingSettings(textual: true)`: opens keybindings.json, created with upstream's header first.
+    /// `openGlobalKeybindingSettings(textual: true)`: opens keybindings.json, created with upstream's header first;
+    /// with `workbench.settings.openDefaultKeybindings` the default keybindings stay in the active group and
+    /// keybindings.json opens in a group added to its right.
     pub(super) fn open_keybindings_file(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let Some(file) = self.keybindings.user_file.clone() else { return Outcome::error("no keybindings.json") };
         if !file.exists() {
@@ -470,6 +472,15 @@ impl Workbench {
             if let Err(error) = created.and_then(|_| std::fs::write(&file, "// Place your key bindings in this file to override the defaults\n[\n]")) {
                 return Outcome::error(format!("writing {}: {error}", file.display()));
             }
+        }
+        if self.setting("workbench.settings.openDefaultKeybindings") == json!(true) {
+            let source = self.editors.group_ids_mru().into_iter().find(|group| *group != crate::editor::MODAL_GROUP).expect("the part has a group");
+            self.activate_group(source);
+            let side = self.add_group_beside(crate::editor_grid::Direction::Right);
+            self.open_default_keybindings(window, cx);
+            self.activate_group(side);
+            self.open_file_in_active_group(file, true, window, cx);
+            return Outcome::done();
         }
         self.open_preferences_file(file, window, cx);
         Outcome::done()

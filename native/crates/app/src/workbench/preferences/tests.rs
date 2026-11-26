@@ -198,3 +198,36 @@ fn pick_workspace_folder_without_folders_answers_nothing(cx: &mut TestAppContext
     assert!(matches!(outcome, crate::commands::Outcome::Ready(Ok(Value::Null))));
     std::fs::remove_dir_all(dir).unwrap();
 }
+
+/// preferencesService.ts `doOpenSplitJSON` and splitSettingsEditorInput.test.ts: with `workbench.settings.useSplitJSON`
+/// settings.json opens as the primary side of a side by side editor whose secondary side is the read-only default
+/// settings of its target; a workbench action from the secondary side acts on the group, and closing the editor
+/// closes both sides.
+#[gpui::test]
+fn split_json_opens_the_default_settings_beside_settings_json(cx: &mut TestAppContext) {
+    let (workbench, cx, dir) = workbench(cx, "split");
+    workbench.update(cx, |workbench, _| {
+        workbench.settings.lock().unwrap().update_value("workbench.settings.useSplitJSON", Some(&json!(true)), config::service::Target::User, None, &[]).unwrap();
+    });
+
+    run(&workbench, cx, "workbench.action.openSettingsJson", vec![]);
+
+    let side = workbench.update(cx, |workbench, _| {
+        assert_eq!(workbench.editors.active().unwrap().document().path, dir.join("User/settings.json"));
+        let side = workbench.editors.side_group().expect("a side by side editor");
+        let (editors, _) = workbench.editors.group_tabs(side);
+        let secondary = editors[0].document();
+        assert_eq!((secondary.scheme.as_str(), secondary.path.as_path()), ("vscode", Path::new("//defaultsettings/settings.json")));
+        assert_eq!(secondary.lines[0], "[{");
+        drop(secondary);
+        assert!(!workbench.editors.group_ids_mru().contains(&side) && !workbench.editors.has_several_groups());
+        workbench.activate_group(side);
+        side
+    });
+    run(&workbench, cx, "workbench.action.closeActiveEditor", vec![]);
+    workbench.read_with(cx, |workbench, _| {
+        assert!(workbench.editors.side_by_sides.is_empty());
+        assert!(workbench.editors.group(side).is_none() && workbench.editors.id != side);
+    });
+    std::fs::remove_dir_all(dir).unwrap();
+}

@@ -66,7 +66,8 @@ const SCROLL_SHADOW_HEIGHT: f32 = 6.;
 const FOLD_CONTROLS_FADE: Duration = Duration::from_millis(500);
 
 impl Workbench {
-    pub(super) fn text_editor_part(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    /// `secondary`: the drawn secondary side when the active editor is a side by side editor.
+    pub(super) fn text_editor_part(&self, secondary: Option<gpui::AnyElement>, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let editor = self.editors.active().expect("text editor part is drawn only with an editor open");
         if !self.editor_groups.drawing_inactive {
             self.schedule_unusual_line_terminators_check(editor, window, cx);
@@ -100,9 +101,10 @@ impl Workbench {
                 None if matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME) => part,
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
                 None if editor.document().scheme == MULTI_DIFF_EDITOR_SCHEME => part,
-                None => match self.editors.active_merge() {
-                    Some(merge) => part.child(self.merge_editor_body(merge, editor, window, cx)),
-                    None => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
+                None => match (self.editors.active_merge(), secondary) {
+                    (Some(merge), _) => part.child(self.merge_editor_body(merge, editor, window, cx)),
+                    (None, Some(secondary)) => part.child(self.side_by_side_body(secondary, editor, window, cx)),
+                    (None, None) => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
                 },
             })
     }
@@ -166,6 +168,16 @@ impl Workbench {
         actions.extend(self.merge_title_actions(cx));
         let resource = self.editors.active().map(|editor| editor.document().uri()).into_iter().collect::<Vec<_>>();
         let foreground = self.color("icon.foreground");
+        // preferences.contribution.ts `_workbench.openUserSettingsEditor` (order 1) on a user settings.json outside a
+        // diff editor, and editor.contribution.ts Toggle Layout of a side by side editor, left of Split Editor.
+        let settings_file = self.editors.active_diff().is_none() && self.editors.active().is_some_and(|editor| self.is_user_settings_file(&editor.document().path));
+        let side_by_side = self.editors.side_group().is_some();
+        for (order, icon, title, command, shown) in [(1., "go-to-file", "Open Settings (UI)", "workbench.action.openSettings2", settings_file), (f64::MAX, "editor-layout", "Toggle Layout", "workbench.action.toggleSplitEditorInGroupLayout", side_by_side)] {
+            if shown {
+                let button = self.icon(icon, 22., 16., foreground).id(title).cursor_pointer().on_click(cx.listener(move |workbench, _, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx))));
+                actions.push((order, button.into_any_element()));
+            }
+        }
         for item in self.menus.iter().filter(|item| item.menu == crate::menus::MenuId::EditorTitle && item.group == "navigation" && item.when.as_ref().is_none_or(|when| when.evaluate(&context))) {
             let crate::menus::Entry::Command { id, .. } = &item.entry else { continue };
             actions.push((item.order, self.command_button(id, item.title.clone(), resource.clone(), foreground, cx).into_any_element()));
@@ -369,14 +381,16 @@ impl Workbench {
             .relative()
             .h(px(BREADCRUMBS_HEIGHT))
             .flex_none()
-            // shortcut: clips a long path at the right, where breadcrumbsWidget.ts reveals the last item; until breadcrumbs scroll.
             .overflow_hidden()
             // The breadcrumbs sit in the title (editortabscontrol.css) and each item is pointer (breadcrumbsWidget.css).
             .cursor_pointer()
             .flex()
+            // breadcrumbsWidget.ts `revealLast`: a path wider than the title shows its end; the row is at least as
+            // wide as the title, so a short one starts at the left.
+            .justify_end()
             .bg(self.color("breadcrumb.background"))
             .text_color(foreground)
-            .children(items)
+            .child(div().flex_none().min_w_full().flex().children(items))
             .when_some(title_border, |crumbs, color| crumbs.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
     }
 

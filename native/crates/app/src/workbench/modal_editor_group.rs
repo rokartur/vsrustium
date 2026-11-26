@@ -76,10 +76,15 @@ impl Workbench {
         let focus = self.editor_focus.clone();
         Some(self.modal_editor_part(header, &focus, window, cx, |workbench, _, _, window, cx| {
             let body = |workbench: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+                let secondary = workbench.side_by_side_secondary(window, cx);
                 let editor = workbench.editors.active().expect("an open modal group has an active editor");
                 // `NoEditorTabsControl` keeps the breadcrumbs (breadcrumbs.enabled) without the tabs.
                 let breadcrumbs = (workbench.setting("breadcrumbs.enabled") != json!(false)).then(|| workbench.breadcrumbs(editor));
-                div().flex_1().min_h_0().flex().flex_col().children(breadcrumbs).children(workbench.unicode_banner(editor, cx)).child(workbench.text_area(editor, window, cx))
+                let part = div().flex_1().min_h_0().flex().flex_col().children(breadcrumbs);
+                match secondary {
+                    Some(secondary) => part.child(workbench.side_by_side_body(secondary, editor, window, cx)),
+                    None => part.children(workbench.unicode_banner(editor, cx)).child(workbench.text_area(editor, window, cx)),
+                }
             };
             match workbench.editors.id == MODAL_GROUP {
                 true => body(workbench, window, cx).into_any_element(),
@@ -94,20 +99,25 @@ impl Workbench {
         if self.keybindings.user_file.as_deref() == Some(path) {
             return ("Open Keyboard Shortcuts", "workbench.action.openGlobalKeybindings");
         }
-        // `openUserSettingsEditorWhen`: the current or the default profile's settings.json.
-        let settings = self.settings.lock().unwrap();
-        let files = settings.user_files();
-        match files.settings == path || files.default_settings.as_deref() == Some(path) {
+        match self.is_user_settings_file(path) {
             true => ("Open Settings (UI)", "workbench.action.openSettings2"),
             false => ("", ""),
         }
+    }
+
+    /// `openUserSettingsEditorWhen`: the current or the default profile's settings.json.
+    pub(super) fn is_user_settings_file(&self, path: &std::path::Path) -> bool {
+        let settings = self.settings.lock().unwrap();
+        let files = settings.user_files();
+        files.settings == path || files.default_settings.as_deref() == Some(path)
     }
 
     /// The header's `ResourceLabel`: file icon, name and the folder as the medium description.
     fn modal_resource_label(&self, editor: &crate::editor::OpenEditor) -> AnyElement {
         let foreground = self.foreground_or("titleBar.activeForeground");
         let path = &editor.document().path;
-        let folder = path.parent().map(|folder| crate::quick_input::path_label(folder, self.workspace())).filter(|label| !label.is_empty());
+        // sideBySideEditorInput.ts `getDescription`: none for two different sides.
+        let folder = path.parent().map(|folder| crate::quick_input::path_label(folder, self.workspace())).filter(|label| !label.is_empty() && self.editors.side_group().is_none());
         // iconlabel.css `.label-description`: 0.9em at 0.7 opacity (0.95 in light themes), 0.5em after the name.
         let opacity = if self.theme.kind == ThemeKind::Light { 0.95 } else { 0.7 };
         div()

@@ -41,6 +41,7 @@ mod dialogs;
 mod lifecycle;
 mod editor_commands;
 mod editor_menus;
+mod side_by_side_editor;
 mod editor_message;
 pub mod editor_status;
 mod editor_view;
@@ -749,6 +750,7 @@ impl Workbench {
         workbench.register_settings_editor_commands();
         workbench.register_readonly_commands();
         workbench.register_preferences_commands();
+        workbench.register_side_by_side_commands();
         workbench.register_editor_message_commands();
         workbench.register_content_hover_commands();
         workbench.register_suggest();
