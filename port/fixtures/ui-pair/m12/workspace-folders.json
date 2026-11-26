@@ -1,5 +1,5 @@
 [
-	{ "rightClick": [120, 600] },
+	{ "rightClick": [120, 600], "foreground": true },
 	{ "wait": 800 },
 	{ "shot": "explorer-menu" },
 	{ "key": "escape" },
