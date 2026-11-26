@@ -577,6 +577,7 @@ pub struct OpenEditor {
     pub model_id: u32,
     /// The cursors' selections, the primary one first (`CursorCollection`).
     pub selections: Vec<Selection>,
+    pub cursor_changed: bool,
     /// The cursor added last, which wins a merge of its direction (`lastAddedCursorIndex`).
     last_added: usize,
     /// Per cursor, visible columns a vertical move could not place at the anchor and the head, kept while
@@ -646,7 +647,7 @@ impl OpenEditor {
             let model = model.borrow();
             (model.version_id, word_wrap::WordWrap::new(&model.document.lines, model.document.too_large_for_tokenization))
         };
-        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), folding_limit: folding::MAX_FOLDING_REGIONS_FOR_INDENT, folding_limited: None, sticky_outline: None, scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap, text_decorations: Vec::new(), injected_text: Vec::new() };
+        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], cursor_changed: false, last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), folding_limit: folding::MAX_FOLDING_REGIONS_FOR_INDENT, folding_limited: None, sticky_outline: None, scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap, text_decorations: Vec::new(), injected_text: Vec::new() };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor

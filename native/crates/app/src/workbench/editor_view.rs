@@ -1757,6 +1757,13 @@ impl Workbench {
         let quick_diff = self.quick_diff_ruler_lines(editor);
         let decoration_marks = self.text_decoration_ruler_marks(editor);
         let border = self.theme.color("editorOverviewRuler.border");
+        // `editorOverviewRuler.background`, else the tokens' default background while the minimap is on the right, so
+        // the ruler hides the minimap's line highlights under it.
+        let minimap = self.minimap_settings();
+        let background = self.theme.color("editorOverviewRuler.background").or_else(|| {
+            (minimap.enabled && minimap.layout.side == crate::editor::minimap::MinimapSide::Right)
+                .then(|| Rgba::try_from(self.theme.tokens.color_map()[2].as_str()).expect("the token color map holds hex colors"))
+        });
         let Viewport { top_whitespace, line_height, .. } = self.editors.viewport;
         let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.map_or(0, |anchor| anchor.line + usize::from(!zone.before)), zone.height)).collect();
         let line_top = move |line: usize| top_whitespace + line as f32 * line_height + zones.iter().filter(|zone| zone.0 <= line).map(|zone| zone.1).sum::<f32>();
@@ -1777,6 +1784,9 @@ impl Workbench {
                 let ratio = canvas_height / scroll_height;
                 let lanes = RulerLanes::new(canvas_width);
                 let min_height = (6. * scale).floor();
+                if let Some(background) = background {
+                    paint(window, 0., 0., canvas_width, canvas_height, background);
+                }
                 // In z-index order: Go to Line's range in all lanes, find matches at 10, the current match at 13.
                 let center = (lanes.center_x, lanes.center_width);
                 for (lines, color, (x, width)) in [

@@ -239,6 +239,7 @@ impl OpenEditor {
         }
         self.leftovers = leftovers;
         if self.selections != previous {
+            self.cursor_changed = true;
             self.record_cursor_state(previous);
         }
         self.unfold_at_hidden_cursors();
@@ -1121,6 +1122,7 @@ impl OpenEditor {
     /// Word highlights stop while the text changes: wordHighlighter.ts ignores non-explicit cursor changes.
     fn after_text_change(&mut self, selections: Vec<Selection>) {
         self.selections = selections;
+        self.cursor_changed = true;
         self.clear_cursor_states();
         cursor::normalize(&mut self.selections, &mut self.last_added);
         self.leftovers.clear();

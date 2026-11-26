@@ -29,8 +29,10 @@ pub fn description(template: &str, separator: &str, input: &LabelInput) -> Strin
     }
     let mut cwd_folder = String::new();
     if let Some(detected) = input.cwd.filter(|_| !cwd.is_empty() && !input.task) {
-        // Case-insensitive as the macOS disk provider has no PathCaseSensitive.
-        let differs = input.workspace_folder.is_some_and(|folder| !folder.to_string_lossy().eq_ignore_ascii_case(detected));
+        // Case-insensitive as the macOS disk provider has no PathCaseSensitive. Both sides resolve symlinks: the pty's
+        // cwd is the real path (/private/tmp) where the shell's `$PWD` and the folder keep the link (/tmp).
+        let real = |path: &Path| path.canonicalize().unwrap_or_else(|_| path.to_owned()).to_string_lossy().into_owned();
+        let differs = input.workspace_folder.is_some_and(|folder| !real(folder).eq_ignore_ascii_case(&real(Path::new(detected))));
         if input.multi_root || differs {
             cwd_folder = cwd.rsplit('/').next().unwrap_or_default().to_owned();
         }
@@ -117,6 +119,7 @@ mod tests {
         assert_eq!(description(DEFAULT, " - ", &input(Some("/tmp/x"), None)), "", "no workspace folder, single root");
         assert_eq!(description(DEFAULT, " - ", &LabelInput { multi_root: true, ..input(Some("/Users/a/project"), Some(folder)) }), "project");
         assert_eq!(description(DEFAULT, " - ", &LabelInput { task: true, ..input(Some("/tmp/x"), Some(folder)) }), "Task");
+        assert_eq!(description(DEFAULT, " - ", &input(Some("/private/tmp"), Some(Path::new("/tmp")))), "", "macOS /tmp links to the pty's /private/tmp");
     }
 
     #[test]

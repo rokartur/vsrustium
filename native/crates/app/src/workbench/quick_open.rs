@@ -198,13 +198,18 @@ impl Workbench {
         Some((entries, accepts, loading))
     }
 
-    /// `createAnythingPick`: the file icon, and for a history entry the remove button, kept visible as a dirty dot.
+    /// `createAnythingPick`: the file icon, the Open to the Side button, and for a history entry the remove button,
+    /// kept visible as a dirty dot.
     fn file_pick_entry(&self, pick: &FilePick, handle: i64, in_history: bool) -> Entry {
-        let mut buttons = Vec::new();
+        let (codicon, tooltip) = match self.setting("workbench.editor.openSideBySideDirection") == "down" {
+            true => ("split-vertical", "Open to the Bottom"),
+            false => ("split-horizontal", "Open to the Side"),
+        };
+        let mut buttons = vec![Button { handle: 0, codicon: Some(codicon.into()), tooltip: Some(tooltip.into()), ..Button::default() }];
         if in_history {
             let dirty = self.editors.find(&pick.path).is_some_and(|index| self.editors.editors[index].is_dirty());
             let codicon = if dirty { "circle-filled" } else { "close" };
-            buttons.push(Button { handle: 0, codicon: Some(codicon.into()), tooltip: Some("Remove from Recently Opened".into()), always_visible: dirty, ..Button::default() });
+            buttons.push(Button { handle: 1, codicon: Some(codicon.into()), tooltip: Some("Remove from Recently Opened".into()), always_visible: dirty, ..Button::default() });
         }
         Entry::Item(Item {
             handle,
