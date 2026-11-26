@@ -174,6 +174,8 @@ pub struct QuickInput {
     pub match_on_label_contiguous: bool,
     pub sort_by_label: bool,
     pub hide_input: bool,
+    /// `hideCheckAll`: no "check all" checkbox in front of the input box.
+    pub hide_check_all: bool,
     /// `keepScrollPosition`: setting items or active items leaves the list where it is scrolled.
     pub keep_scroll_position: bool,
     /// Counts the `items` and `activeItems` assignments; each resets the list's scroll unless it is kept.
@@ -227,6 +229,7 @@ impl QuickInput {
             match_on_label_contiguous: false,
             sort_by_label: true,
             hide_input: false,
+            hide_check_all: false,
             keep_scroll_position: false,
             list_updates: 0,
             item_activation: ItemActivation::First,

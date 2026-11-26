@@ -210,7 +210,7 @@ mod type_navigation;
 mod unicode_highlight;
 mod unusual_line_terminators;
 pub(crate) mod scm_actions;
-mod scm_graph_view;
+pub mod scm_graph_view;
 mod scm_tree;
 mod scm_view;
 mod tree_view;

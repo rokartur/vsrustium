@@ -408,7 +408,9 @@ impl Workbench {
             _ => (self.key_context(window), Vec::new()),
         };
         self.scm_view_context(&mut context);
-        let actions = div().flex().items_center().child(self.inline_actions(MenuId::ScmTitle, &context, args.clone(), foreground, cx)).child(self.scm_more_actions(context, args, foreground, cx));
+        // paneview.css: a header action is its 20px label and a 4px margin, 24px apart as these 22px buttons 2px apart.
+        let inline = self.inline_actions(MenuId::ScmTitle, &context, args.clone(), foreground, cx).gap(px(2.));
+        let actions = div().flex().items_center().gap(px(2.)).child(inline).child(self.scm_more_actions(context, args, foreground, cx));
         let show_actions = self.scm.input_focus.is_focused(window) || self.scm.list_focus.is_focused(window);
         // scmViewPane.ts: no repository shows the view's welcome content.
         let body = match providers.is_empty() {

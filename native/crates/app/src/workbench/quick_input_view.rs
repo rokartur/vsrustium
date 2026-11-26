@@ -583,7 +583,7 @@ impl Workbench {
             // Only the header itself is a drag area, so its children occlude it.
             .cursor_grab()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::quick_input_drag_start))
-            .when(input.can_select_many && !input.hide_input, |header| {
+            .when(input.can_select_many && !input.hide_input && !input.hide_check_all, |header| {
                 header.child(
                     self.checkbox(all_checked, checked > 0 && !all_checked)
                         .id("quick-input-check-all")
@@ -641,12 +641,13 @@ impl Workbench {
                 .mr(px(4.))
                 .px(px(4.))
                 .py(px(2.))
-                .rounded(px(2.))
-                .text_size(px(11.))
+                // modernUI roundedCorners.css and fontRamp.css: a round badge in the 10px label ramp.
+                .rounded_full()
+                .text_size(px(10.))
                 .bg(self.color("badge.background"))
                 .text_color(self.color("badge.foreground"))
                 .when_some(self.theme.color("contrastBorder"), |badge, border| badge.border_1().border_color(border))
-                .child(input.checked_count().to_string())
+                .child(format!("{} Selected", input.checked_count()))
         });
         div()
             .flex_1()

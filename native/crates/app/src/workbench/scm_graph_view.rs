@@ -15,6 +15,7 @@ use crate::scm_history::{
     SCM_OUTGOING_HISTORY_ITEM_ID, history_item_index, node_color, to_history_item_view_models,
 };
 
+const REFERENCES_FILTER_KEY: &str = "scm.graphView.referencesFilter";
 const SWIMLANE_HEIGHT: f32 = 22.;
 const SWIMLANE_WIDTH: f32 = 11.;
 const SWIMLANE_CURVE_RADIUS: f32 = 5.;
@@ -24,9 +25,13 @@ const CIRCLE_STROKE_WIDTH: f32 = 2.;
 /// The current, remote and base refs of `ISCMHistoryProvider`, colored as mainThreadSCM.ts `toISCMHistoryItemRef`.
 type CurrentRefs = [Option<HistoryItemRef>; 3];
 
-/// `SCMHistoryViewModel` of the active repository with the 'auto' history item filter (the current refs).
+/// `SCMHistoryViewModel` of the active repository with its history items filter.
 #[derive(Default)]
 pub struct ScmGraph {
+    /// The repository's `HistoryItemRefsFilter` the items are loaded for.
+    pub(super) filter: RefsFilter,
+    /// The refs the filter resolved to (`RepositoryState.historyItemsFilter`), empty while they resolve.
+    pub(super) filter_refs: Vec<HistoryItemRef>,
     /// The provider handle and the `$onDidChangeHistoryProviderCurrentHistoryItemRefs` values the items belong to.
     pub(super) loaded_for: Option<(u64, [Option<Value>; 3])>,
     /// Bumped on every reload, so answers to an older one are dropped.
@@ -41,6 +46,15 @@ pub struct ScmGraph {
     /// The selected history item's id.
     pub(super) selected: Option<String>,
     pub(super) scroll: gpui::ScrollHandle,
+}
+
+/// scmHistoryViewPane.ts `HistoryItemRefsFilter`: all refs, the current refs, or the refs by id.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) enum RefsFilter {
+    All,
+    #[default]
+    Auto,
+    Refs(Vec<String>),
 }
 
 impl ScmGraph {
@@ -82,9 +96,75 @@ impl Workbench {
             return;
         }
         let refs = current_refs(provider);
-        let handle = provider.handle;
+        let (handle, key) = (provider.handle, provider_key(provider));
         self.scm_graph.reset(Some(loaded_for), refs);
-        self.load_scm_graph_page(handle, cx);
+        self.scm_graph.filter = self.refs_filter(&key);
+        // `_resolveHistoryItemFilter`: 'all' and a list of refs ask the provider for the refs' latest revisions.
+        let ids = match &self.scm_graph.filter {
+            RefsFilter::Auto => {
+                self.scm_graph.filter_refs = self.scm_graph.refs.iter().flatten().cloned().collect();
+                return self.load_scm_graph_page(handle, cx);
+            }
+            RefsFilter::All => Value::Null,
+            RefsFilter::Refs(ids) => json!(ids),
+        };
+        self.scm_graph.loading = true;
+        let call = self.host.call_cancellable("ExtHostSCM", "$provideHistoryItemRefs", vec![json!(handle), ids]);
+        let generation = self.scm_graph.generation;
+        cx.spawn(async move |workbench, cx| {
+            let answer = call.await.ok().and_then(Result::ok).unwrap_or_default();
+            let _ = workbench.update(cx, |workbench, cx| {
+                let graph = &mut workbench.scm_graph;
+                if graph.generation != generation {
+                    return;
+                }
+                let refs = answer.as_array().into_iter().flatten().filter_map(HistoryItemRef::from_dto).collect();
+                let (filter, filter_refs) = resolve_refs_filter(&graph.filter, refs, &graph.refs);
+                if filter != graph.filter {
+                    workbench.store_refs_filter(&key, &filter);
+                }
+                workbench.scm_graph.filter = filter;
+                workbench.scm_graph.filter_refs = filter_refs;
+                workbench.load_scm_graph_page(handle, cx);
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// `SCMHistoryViewModel.setHistoryItemsFilter`: stores the active repository's filter and reloads the graph.
+    pub(super) fn set_scm_graph_filter(&mut self, filter: RefsFilter, cx: &mut Context<Self>) {
+        let Some(provider) = self.active_scm_provider() else { return };
+        let key = provider_key(provider);
+        self.store_refs_filter(&key, &filter);
+        self.scm_graph.loaded_for = None;
+        self.update_scm_graph(cx);
+        cx.notify();
+    }
+
+    /// `_repositoryFilterState` of a repository, from `scm.graphView.referencesFilter` (workspace storage, a JSON
+    /// array of provider key and filter pairs).
+    fn refs_filter(&self, key: &str) -> RefsFilter {
+        let stored = self.workspace_storage.lock().unwrap().get(REFERENCES_FILTER_KEY).and_then(|raw| serde_json::from_str::<Vec<(String, Value)>>(raw).ok());
+        let filter = stored.unwrap_or_default().into_iter().find(|(stored, _)| stored == key).map(|(_, filter)| filter);
+        match filter {
+            Some(Value::String(all)) if all == "all" => RefsFilter::All,
+            Some(Value::Array(ids)) => RefsFilter::Refs(ids.iter().filter_map(|id| id.as_str().map(str::to_string)).collect()),
+            _ => RefsFilter::Auto,
+        }
+    }
+
+    /// `_saveHistoryItemsFilterState` after a change of one repository's filter; 'auto' is no entry.
+    fn store_refs_filter(&mut self, key: &str, filter: &RefsFilter) {
+        let mut storage = self.workspace_storage.lock().unwrap();
+        let mut stored: Vec<(String, Value)> = storage.get(REFERENCES_FILTER_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
+        stored.retain(|(stored, _)| stored != key);
+        match filter {
+            RefsFilter::All => stored.push((key.to_owned(), json!("all"))),
+            RefsFilter::Refs(ids) => stored.push((key.to_owned(), json!(ids))),
+            RefsFilter::Auto => {}
+        }
+        storage.set(REFERENCES_FILTER_KEY, json!(stored).to_string());
     }
 
     /// `SCMHistoryViewModel.getHistoryItems`: the next page, and the merge base of the current and remote refs
@@ -93,7 +173,7 @@ impl Workbench {
         let limit = self.setting("scm.graph.pageSize").as_u64().unwrap_or(50).clamp(1, 1000);
         let graph = &mut self.scm_graph;
         graph.loading = true;
-        let options = history_options(&graph.refs, limit, graph.history_items.len());
+        let options = history_options(&graph.filter_refs, limit, graph.history_items.len());
         let items = self.host.call_cancellable("ExtHostSCM", "$provideHistoryItems", vec![json!(handle), options]);
         let merge_base = match &graph.refs {
             [Some(current), Some(remote), _] if graph.history_items.is_empty() => {
@@ -128,14 +208,16 @@ impl Workbench {
             graph.merge_base = merge_base;
         }
         let [current, remote, base] = &graph.refs;
+        // Incoming and outgoing changes show only while the remote or current ref is part of the graph.
+        let in_filter = |reference: &Option<HistoryItemRef>| reference.as_ref().is_some_and(|reference| graph.filter_refs.iter().any(|filter| filter.id == reference.id));
         graph.view_models = to_history_item_view_models(
             &graph.history_items,
-            &graph_color_map(&graph.refs),
+            &graph_color_map(&graph.refs, &graph.filter_refs),
             current.as_ref(),
             remote.as_ref(),
             base.as_ref(),
-            show_incoming && remote.is_some(),
-            show_outgoing && current.is_some(),
+            show_incoming && in_filter(remote),
+            show_outgoing && in_filter(current),
             graph.merge_base.as_deref(),
         );
     }
@@ -390,18 +472,66 @@ fn current_refs(provider: &Provider) -> CurrentRefs {
     ]
 }
 
+/// `SCMHistoryItemRefsActionViewItem` `updateLabel` and `getTooltip`: All, Auto (the current refs' names), the one
+/// ref's name or the count of refs (their names).
+pub(super) fn refs_filter_label(filter: &RefsFilter, filter_refs: &[HistoryItemRef], current: &CurrentRefs) -> (String, String) {
+    let names = |refs: Vec<&HistoryItemRef>| refs.iter().map(|reference| reference.name.as_str()).collect::<Vec<_>>().join(", ");
+    match filter {
+        RefsFilter::All => ("All".into(), "All history item references".into()),
+        RefsFilter::Auto => ("Auto".into(), names(current.iter().flatten().collect())),
+        RefsFilter::Refs(ids) if ids.len() == 1 => {
+            let name = filter_refs.first().map_or(ids[0].clone(), |reference| reference.name.clone());
+            (name.clone(), name)
+        }
+        RefsFilter::Refs(ids) => (format!("{} Items", ids.len()), names(filter_refs.iter().collect())),
+    }
+}
+
+/// util.ts `getProviderKey`: the provider id, its label and its root uri.
+pub(super) fn provider_key(provider: &Provider) -> String {
+    match provider.root_uri.is_object() {
+        true => format!("{}:{}:{}", provider.id, provider.label, crate::notebook::uri_string(&provider.root_uri)),
+        false => format!("{}:{}", provider.id, provider.label),
+    }
+}
+
+/// `_resolveHistoryItemFilter` of 'all' or a list of refs over the provider's answer: the filter as stored after it
+/// and the refs to load. A list whose refs are all gone falls back to 'auto'.
+pub(super) fn resolve_refs_filter(filter: &RefsFilter, refs: Vec<HistoryItemRef>, current: &CurrentRefs) -> (RefsFilter, Vec<HistoryItemRef>) {
+    let auto = || (RefsFilter::Auto, current.iter().flatten().cloned().collect());
+    match filter {
+        RefsFilter::All => (RefsFilter::All, refs),
+        RefsFilter::Auto => auto(),
+        RefsFilter::Refs(ids) => {
+            let picked: Vec<HistoryItemRef> = refs.into_iter().filter(|reference| ids.contains(&reference.id)).collect();
+            if picked.is_empty() {
+                return auto();
+            }
+            (RefsFilter::Refs(picked.iter().map(|reference| reference.id.clone()).collect()), picked)
+        }
+    }
+}
+
 /// The `ISCMHistoryOptions` of `SCMHistoryViewModel.getHistoryItems`: the filter refs' revisions, a page and the
 /// items already loaded to skip.
-pub(super) fn history_options(refs: &CurrentRefs, limit: u64, skip: usize) -> Value {
-    let ids: Vec<&str> = refs.iter().flatten().map(|reference| reference.revision.as_deref().unwrap_or(&reference.id)).collect();
+pub(super) fn history_options(refs: &[HistoryItemRef], limit: u64, skip: usize) -> Value {
+    let ids: Vec<&str> = refs.iter().map(|reference| reference.revision.as_deref().unwrap_or(&reference.id)).collect();
     json!({ "historyItemRefs": ids, "limit": limit, "skip": skip })
 }
 
-/// `SCMHistoryViewModel._getGraphColorMap` of the 'auto' filter: the refs keep their color while there is a
-/// current ref, else they take their item's.
-fn graph_color_map(refs: &CurrentRefs) -> HashMap<String, Option<ColorId>> {
-    let has_current = refs[0].is_some();
-    refs.iter().flatten().map(|reference| (reference.id.clone(), reference.color.filter(|_| has_current))).collect()
+/// `SCMHistoryViewModel._getGraphColorMap`: the current refs keep their color while there is a current ref; the
+/// filter's other refs take the color of the item they point to.
+pub(super) fn graph_color_map(refs: &CurrentRefs, filter_refs: &[HistoryItemRef]) -> HashMap<String, Option<ColorId>> {
+    let mut colors = HashMap::new();
+    if refs[0].is_some() {
+        for reference in refs.iter().flatten() {
+            colors.insert(reference.id.clone(), reference.color);
+        }
+    }
+    for reference in filter_refs {
+        colors.entry(reference.id.clone()).or_insert(None);
+    }
+    colors
 }
 
 /// `SCMHistoryTreeDataSource.getChildren`: a "Load More" row follows a last item that still has parents to show.
@@ -559,6 +689,10 @@ fn graph_discs(view_model: &HistoryItemViewModel) -> Vec<(f32, Option<ColorId>)>
         HistoryItemKind::Node => circle(CIRCLE_RADIUS + 1., CIRCLE_STROKE_WIDTH, color).to_vec(),
     }
 }
+
+mod ref_picker;
+
+pub use ref_picker::RefPicker;
 
 #[cfg(test)]
 mod tests;

@@ -19,6 +19,9 @@ use crate::split_view::{SashState, SplitView, View};
 pub const HEADER_SIZE: f32 = 28.;
 /// paneview.ts: a vertical pane's default `minimumBodySize`.
 const MINIMUM_BODY_SIZE: f32 = 120.;
+/// viewPaneContainer.ts `layout`: the modern layout's gap below the last pane, `FLOATING_PANEL_MARGIN` and the
+/// part's 1px border.
+const BOTTOM_GAP: f32 = 5.;
 pub const FILE_VIEW: &str = "workbench.explorer.fileView";
 pub const EMPTY_VIEW: &str = "workbench.explorer.emptyView";
 pub(super) const OUTLINE_VIEW: &str = "outline";
@@ -63,7 +66,8 @@ fn size_limits(expanded: bool) -> (f32, f32) {
 
 impl PaneView {
     /// `addPanes` at their minimum sizes, the first layout, then `restoreViewSizes`: each pane at its stored size,
-    /// else an equal share (`computeInitialSizes` with the default weight of 20).
+    /// else an equal share (`computeInitialSizes` with the default weight of 20) of the container's height, which
+    /// is the pane view's and its bottom gap.
     pub fn new(height: f32, panes: &[(&'static str, bool, Option<f32>)]) -> Self {
         let views = panes.iter().map(|&(_, expanded, _)| {
             let (minimum, maximum) = size_limits(expanded);
@@ -71,7 +75,7 @@ impl PaneView {
         });
         let mut split = SplitView::new(height, views.collect());
         split.layout(height);
-        let share = height / panes.len() as f32;
+        let share = (height + BOTTOM_GAP) / panes.len() as f32;
         for (index, &(_, _, size)) in panes.iter().enumerate() {
             split.resize_view(index, size.unwrap_or(share));
         }
@@ -247,7 +251,7 @@ impl Workbench {
     /// activity bar, and the pane view's 5px less.
     pub(super) fn layout_view_panes(&mut self, side_bar_height: f32, cx: &mut Context<Self>) {
         let compact = if self.compact_activity_bar_location().is_some() { 32. } else { 0. };
-        let height = side_bar_height - 2. - 32. - compact - 5.;
+        let height = side_bar_height - 2. - 32. - compact - BOTTOM_GAP;
         let first = if self.workspace().is_some_and(|workspace| !workspace.folders.is_empty()) { FILE_VIEW } else { EMPTY_VIEW };
         let built_in = [first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().filter(|&id| id == FILE_VIEW || !self.view_hidden("explorer", id));
         // viewsExtensionPoint.ts `showCollapsed`: an extension's view in the Explorer or Source Control starts collapsed.
@@ -500,12 +504,13 @@ impl Workbench {
                 .text_color(foreground)
                 .when_some(border, |header, border| header.child(div().absolute().top_0().left(px(4.)).right(px(4.)).h(px(1.)).bg(border)))
                 .child(self.icon(chevron, 16., 16., foreground).mx(px(2.)))
-                .child(div().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
+                // paneviewlet.css: the title ellipsizes to make room for the actions ("Gr..." beside Graph's).
+                .child(div().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).child(title.to_string()))
                 // paneviewlet.css `.pane-header .description`: 10px after the title, normal weight, only while expanded.
                 .children(description.filter(|_| expanded).map(|description| {
                     div().ml(px(10.)).text_size(px(12.)).text_color(self.color("panelTitle.inactiveForeground")).overflow_hidden().whitespace_nowrap().child(description)
                 }))
-                .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().when(self.pane_hover_reachable(), |actions| actions.group_hover(id, |actions| actions.visible())).when(show_actions, |actions| actions.visible()).child(actions)))
+                .children(actions.filter(|_| expanded).map(|actions| div().flex_none().ml_auto().mr(px(4.)).invisible().when(self.pane_hover_reachable(), |actions| actions.group_hover(id, |actions| actions.visible())).when(show_actions, |actions| actions.visible()).child(actions)))
                 .when(id == FILE_VIEW, |header| header.child(self.explorer_title_actions(window, cx)))
                 .when(focused && self.panes(container).pointer_focused != Some(id), |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
                 .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, window, cx| {
@@ -673,6 +678,13 @@ mod tests {
         assert_eq!(view.ids(), [TIMELINE_VIEW, FILE_VIEW, OUTLINE_VIEW]);
         assert_eq!(view.sizes(), vec![28., 300., 334.]);
         assert!(!view.is_expanded(0));
+    }
+
+    // The reference's Graph header sits 3px above the middle: the share counts the container's 5px bottom gap.
+    #[test]
+    fn equal_shares_are_of_the_container_with_its_bottom_gap() {
+        let view = PaneView::new(662., &[(SCM_CHANGES_VIEW, true, None), (SCM_HISTORY_VIEW, true, None)]);
+        assert_eq!(view.sizes(), vec![328., 334.]);
     }
 
     #[test]

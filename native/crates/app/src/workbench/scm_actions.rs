@@ -13,6 +13,7 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
+use super::scm_graph_view::{RefsFilter, refs_filter_label};
 use super::search_view::SideBarView;
 use crate::commands::Outcome;
 use crate::contextkey::Expr;
@@ -173,6 +174,7 @@ impl Workbench {
     }
 
     fn register_scm_graph_actions(&mut self) {
+        self.commands.register(PICK_HISTORY_ITEM_REFS, |workbench, _, window, cx| workbench.show_graph_ref_picker(window, cx));
         self.commands.register("workbench.scm.action.graph.refresh", |workbench, _, _, cx| {
             workbench.scm_graph.loaded_for = None;
             workbench.scm_graph.scroll.set_offset(gpui::point(px(0.), px(0.)));
@@ -469,8 +471,12 @@ impl Workbench {
         context.insert("scmHistoryViewMode".into(), json!(self.scm_graph_view_mode()));
         context.insert("scmCurrentHistoryItemRefHasRemote".into(), json!(remote.is_some()));
         context.insert("scmCurrentHistoryItemRefHasBase".into(), json!(base.is_some()));
-        // The 'auto' history items filter holds the current ref whenever there is one.
-        context.insert("scmCurrentHistoryItemRefInFilter".into(), json!(current.is_some()));
+        // `_isCurrentHistoryItemInFilter`: 'all' and 'auto' hold the current ref, a list of refs when it names it.
+        let in_filter = current.as_ref().is_some_and(|current| match &self.scm_graph.filter {
+            RefsFilter::All | RefsFilter::Auto => true,
+            RefsFilter::Refs(_) => self.scm_graph.filter_refs.iter().any(|reference| reference.id == current.id),
+        });
+        context.insert("scmCurrentHistoryItemRefInFilter".into(), json!(in_filter));
         context
     }
 
@@ -480,10 +486,11 @@ impl Workbench {
         let context = self.scm_graph_context(provider, window);
         let args = vec![Self::provider_arg(provider)];
         let navigation: Vec<MenuItem> = self.menus.iter().filter(|item| item.menu == MenuId::ScmHistoryTitle && item.group == "navigation").cloned().collect();
-        let mut bar = div().ml_auto().mr(px(4.)).flex().items_center();
+        // paneview.css: the actions 24px apart (a 20px label and `margin-right: 4px`), as the Changes header's.
+        let mut bar = div().ml_auto().flex().items_center().gap(px(2.));
         for action in menu_actions(&navigation, MenuId::ScmHistoryTitle, &context) {
             match action {
-                MenuAction::Command { id, .. } if id == PICK_HISTORY_ITEM_REFS => bar = bar.child(self.scm_history_item_picker()),
+                MenuAction::Command { id, .. } if id == PICK_HISTORY_ITEM_REFS => bar = bar.child(self.scm_history_item_picker(cx)),
                 MenuAction::Command { id, title, enabled: true, .. } => bar = bar.child(self.command_button(&id, title, args.clone(), foreground, cx)),
                 // actionbar.css: a disabled action's label at 0.4 opacity, without a click or hover background.
                 MenuAction::Command { id, title, .. } => bar = bar.child(self.disabled_command_button(&id, title, foreground)),
@@ -501,12 +508,11 @@ impl Workbench {
         icon.opacity(0.4)
     }
 
-    /// `SCMHistoryItemRefsActionViewItem` of the 'auto' filter: the `git-branch` codicon and "Auto" in
-    /// `icon.foreground` (scm.css `.scm-graph-history-item-picker`), the current, remote and base refs' names as its
-    /// tooltip.
-    fn scm_history_item_picker(&self) -> gpui::Stateful<Div> {
+    /// `SCMHistoryItemRefsActionViewItem`: the `git-branch` codicon and the filter's label in `icon.foreground`
+    /// (scm.css `.scm-graph-history-item-picker`) with its refs' names as the tooltip; a click picks the refs.
+    fn scm_history_item_picker(&self, cx: &mut Context<Self>) -> gpui::Stateful<Div> {
         let foreground = self.color("icon.foreground");
-        let tooltip = self.scm_graph.refs.iter().flatten().map(|reference| reference.name.as_str()).collect::<Vec<_>>().join(", ");
+        let (label, tooltip) = refs_filter_label(&self.scm_graph.filter, &self.scm_graph.filter_refs, &self.scm_graph.refs);
         div()
             .id("scm-graph-history-item-picker")
             .h(px(22.))
@@ -521,8 +527,14 @@ impl Workbench {
             .cursor_pointer()
             .hover(|picker| picker.bg(self.color("toolbar.hoverBackground")))
             .child(self.icon("git-branch", 16., 16., foreground))
-            .child(div().max_w(px(100.)).pr(px(2.)).overflow_hidden().text_ellipsis().whitespace_nowrap().child("Auto"))
+            .child(div().max_w(px(100.)).pr(px(2.)).overflow_hidden().text_ellipsis().whitespace_nowrap().child(label))
             .child(self.hover_target("scm-graph-history-item-picker-hover", HoverContent::Text(tooltip), HoverOptions::mouse()))
+            // actionViewItems.ts stops the mouse down: the header keeps its focus state.
+            .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_click(cx.listener(|workbench, _: &gpui::ClickEvent, window, cx| {
+                cx.stop_propagation();
+                drop(workbench.execute_command(PICK_HISTORY_ITEM_REFS, Vec::new(), window, cx));
+            }))
     }
 
     /// `SCMHistoryViewPane._onContextMenu` of a history item: `MenuId.SCMHistoryItemContext` but its inline group,
