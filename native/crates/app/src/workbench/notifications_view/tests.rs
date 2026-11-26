@@ -168,3 +168,20 @@ fn window_progress_is_a_silent_notification_shown_in_the_status_bar(cx: &mut Tes
     cx.run_until_parked();
     assert!(entry(cx).is_none());
 }
+
+#[gpui::test]
+fn window_progress_moves_into_the_open_center_and_back(cx: &mut TestAppContext) {
+    let (workbench, cx) = workbench(cx);
+    progress(&workbench, "start", vec![json!(2), json!({ "location": 10, "title": "Window progress" })], cx);
+    cx.executor().advance_clock(std::time::Duration::from_millis(300));
+    cx.run_until_parked();
+    let entry = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, cx| workbench.window_progress_entry(cx.background_executor().now()));
+    assert!(entry(cx).is_some());
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("notifications.showList", Vec::new(), window, cx)));
+    cx.run_until_parked();
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.notifications.model.items.len()), 1);
+    assert!(entry(cx).is_none());
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("notifications.hideList", Vec::new(), window, cx)));
+    cx.run_until_parked();
+    assert!(entry(cx).is_some());
+}

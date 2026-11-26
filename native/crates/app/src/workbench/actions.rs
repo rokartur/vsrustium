@@ -129,6 +129,14 @@ impl Workbench {
         (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].is_dirty()).collect()
     }
 
+    /// dirtyFilesIndicator.ts: the explorer's badge counts the dirty working copies, each model once.
+    pub(super) fn dirty_working_copy_count(&self) -> u64 {
+        let mut models: Vec<u32> = self.editors.all_editors().filter(|editor| editor.is_dirty()).map(|editor| editor.model_id).collect();
+        models.sort_unstable();
+        models.dedup();
+        models.len() as u64
+    }
+
     /// editorActions.ts `CloseAllEditorsAction`: every group closes its editors, the active one last.
     pub(super) fn close_all_editors(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         self.leave_panel_group();

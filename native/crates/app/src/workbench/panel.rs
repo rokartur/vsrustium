@@ -3,7 +3,7 @@
 //! Panel views register here with `register_panel_view`; the secondary side bar has no views yet and shows its
 //! empty message.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use gpui::{AnyElement, Bounds, Context, Div, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, StatefulInteractiveElement, Styled, TextRun, Window, div, prelude::FluentBuilder, px};
@@ -22,6 +22,9 @@ const TITLE_HEIGHT: f32 = 32.;
 const OVERFLOW_ACTION_SIZE: f32 = 44.;
 /// views.css `.viewpane-filter-container` `max-width` in a panel title.
 const FILTER_MAX_WIDTH: f32 = 200.;
+const FILTER_MIN_WIDTH: f32 = 150.;
+/// The "..." item as drawn: 6px padding each side of its 16px codicon.
+const OVERFLOW_ITEM_WIDTH: f32 = 28.;
 /// paneCompositePart.ts `MIN_COMPOSITE_BAR_WIDTH`.
 const MIN_COMPOSITE_BAR_WIDTH: f32 = 50.;
 
@@ -53,7 +56,12 @@ pub(super) struct Panel {
     filter_bounds: Rc<Cell<Bounds<Pixels>>>,
     /// The width the tabs leave free beside a 200px filter box.
     filter_room: Cell<f32>,
+    /// The shown tabs and what they were laid out for.
+    tab_layout: RefCell<Option<(TabLayoutKey, Vec<&'static str>)>>,
 }
+
+/// The title width, the tabs, the active view and whether it has a filter box.
+type TabLayoutKey = (Pixels, Vec<&'static str>, Option<&'static str>, bool);
 
 impl Workbench {
     pub(super) fn register_panel_view(&mut self, view: PanelView) {
@@ -211,7 +219,8 @@ impl Workbench {
             .child(size_tracker(self.panel.title_bounds.clone()))
             .children(tabs)
             .child(div().relative().ml_auto().h_full().flex().items_center().gap(px(4.)).child(size_tracker(self.panel.actions_bounds.clone())).when_some(view_actions, |bar, view_actions| {
-                bar.child(view_actions).child(div().w(px(1.)).h(px(16.)).mx(px(4.)).bg(self.color("disabledForeground")))
+                // The bar's 4px gap is the separator's right margin.
+                bar.child(view_actions).child(div().w(px(1.)).h(px(16.)).ml(px(4.)).bg(self.color("disabledForeground")))
             }).children(actions.into_iter().map(|(icon, title, command)| {
                 self.icon(icon, 22., 16., foreground).id(command).rounded(px(4.)).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())).on_click(cx.listener(
                     move |workbench, _, window, cx| {
@@ -237,16 +246,17 @@ impl Workbench {
             .when(active, |tab| tab.bg(self.color("panel.background")).rounded_t(px(7.)).border_t_1().border_r_1().border_color(self.color("surface.border")))
             .child(div().line_height(px(24.)).child(view.title))
             .children((view.badge)(self).filter(|count| *count > 0).map(|count| {
+                // paneCompositePart.css `.badge` 2px from the label, `.badge-content` 10px text with 3px 5px padding.
                 div()
-                    .ml(px(3.))
+                    .ml(px(2.))
                     .min_w(px(16.))
                     .h(px(16.))
-                    .px(px(4.))
+                    .px(px(5.))
                     .flex()
                     .items_center()
                     .justify_center()
                     .rounded(px(8.))
-                    .text_size(px(11.))
+                    .text_size(px(10.))
                     .bg(self.color("activityBarBadge.background"))
                     .text_color(self.foreground_or("activityBarBadge.foreground"))
                     .child(count.to_string())
@@ -259,21 +269,36 @@ impl Workbench {
     }
 
     /// compositeBar.ts `updateCompositeSwitcher`: the tabs that fit before the title actions (the active one kept,
-    /// room made for the overflow action), on the sizes painted last frame; every tab before the first paint.
+    /// room made for the overflow action), on the sizes painted last frame; every tab before the first paint. As the
+    /// reference, the tabs are laid out again only when the title's width, the tabs or the active view change, not
+    /// when the title actions do (View as Table drops Collapse All without bringing Terminal back).
     fn panel_tabs_that_fit(&self, active: Option<&'static str>, window: &Window) -> Vec<&'static str> {
         let tabs: Vec<(&'static str, f32)> = self.panel_tabs().into_iter().map(|view| (view.id, panel_tab_width(view, self, window))).collect();
         let title = self.panel.title_bounds.get().size.width;
         if title <= px(0.) {
             return tabs.into_iter().map(|(id, _)| id).collect();
         }
-        // paneCompositePart.ts `layoutCompositeBar`: 16px title padding, the toolbars and their 8px padding. A filter
-        // box squeezed by the tabs counts at its 200px maximum (views.css), as the tabs give way to it upstream.
+        // paneCompositePart.ts `layoutCompositeBar`: 16px title padding, the toolbars and their 8px padding. The filter
+        // box counts at its 200px resting width: the reference lays the tabs out on resize, not when the box grows on focus.
         let filter = f32::from(self.panel.filter_bounds.replace(Bounds::default()).size.width);
         let filter_basis = if filter > 0. { FILTER_MAX_WIDTH } else { 0. };
-        let limit = f32::from(title) - 16. - (f32::from(self.panel.actions_bounds.get().size.width) - filter + filter_basis) - 8.;
-        let shown = fitting_tabs(&tabs, active, limit.max(MIN_COMPOSITE_BAR_WIDTH));
-        let used: f32 = tabs.iter().filter(|(id, _)| shown.contains(id)).map(|(_, width)| width).sum::<f32>() + if shown.len() < tabs.len() { OVERFLOW_ACTION_SIZE } else { 0. };
-        self.panel.filter_room.set((limit - used).max(0.));
+        let other_actions = f32::from(self.panel.actions_bounds.get().size.width) - filter;
+        let key = (title, tabs.iter().map(|(id, _)| *id).collect(), active, filter > 0.);
+        let cached = self.panel.tab_layout.borrow().as_ref().filter(|(cached, _)| *cached == key).map(|(_, shown)| shown.clone());
+        let shown = match cached {
+            Some(shown) => shown,
+            None => {
+                let limit = f32::from(title) - 16. - (other_actions + filter_basis) - 8.;
+                let shown = fitting_tabs(&tabs, active, limit.max(MIN_COMPOSITE_BAR_WIDTH));
+                // The first frames paint the actions before they are measured.
+                if other_actions > 0. {
+                    *self.panel.tab_layout.borrow_mut() = Some((key, shown.clone()));
+                }
+                shown
+            }
+        };
+        let tabs_width: f32 = tabs.iter().filter(|(id, _)| shown.contains(id)).map(|(_, width)| width).sum();
+        self.panel.filter_room.set(filter_room(f32::from(title), tabs_width, shown.len() < tabs.len(), other_actions));
         shown
     }
 
@@ -281,7 +306,7 @@ impl Workbench {
     /// tabs leave.
     pub(super) fn panel_filter_width(&self, focused: bool) -> f32 {
         match focused {
-            true => (FILTER_MAX_WIDTH + self.panel.filter_room.get()).min(400.),
+            true => self.panel.filter_room.get().clamp(FILTER_MIN_WIDTH, 400.),
             false => FILTER_MAX_WIDTH,
         }
     }
@@ -329,7 +354,7 @@ fn panel_tab_label(view: &PanelView, workbench: &Workbench) -> String {
 
 /// The width `panel_tab` paints: 16px padding each side, the title, and the badge 3px after it.
 fn panel_tab_width(view: &PanelView, workbench: &Workbench, window: &Window) -> f32 {
-    let badge = (view.badge)(workbench).filter(|count| *count > 0).map_or(0., |count| 3. + (text_width(&count.to_string(), 11., window) + 8.).max(16.));
+    let badge = (view.badge)(workbench).filter(|count| *count > 0).map_or(0., |count| 2. + (text_width(&count.to_string(), 10., window) + 10.).max(16.));
     32. + text_width(view.title, 13., window) + badge
 }
 
@@ -383,9 +408,23 @@ fn size_tracker(bounds: Rc<Cell<Bounds<Pixels>>>) -> impl IntoElement {
     .size_full()
 }
 
+/// The room of a focused filter box (`.grow`) once the DOM laid out the shown tabs, the 28px "..." item,
+/// `.title-actions`' 4px left padding, the other title actions and the title's 4px right padding.
+fn filter_room(title: f32, tabs: f32, overflow: bool, other_actions: f32) -> f32 {
+    let overflow = if overflow { OVERFLOW_ITEM_WIDTH } else { 0. };
+    title - tabs - overflow - 4. - other_actions - 4.
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_focused_filter_takes_the_room_the_tabs_leave() {
+        // The reference at 1024x768: a 710px title, Problems, Output and Debug Console, the "..." item, the filter's
+        // 4px margin, two actions, the separator and the global actions (port/results/problems.md).
+        assert_eq!(filter_room(710., 306., true, 113.), 255.);
+    }
 
     const TABS: [(&str, f32); 4] = [("problems", 100.), ("output", 80.), ("debug", 120.), ("terminal", 90.)];
 

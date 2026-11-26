@@ -44,6 +44,8 @@ pub enum Owner {
     ImageZoom,
     /// `workbench.action.openRecent`: the recently opened entry of each item by handle.
     RecentlyOpened(Vec<Value>),
+    /// `workbench.action.switchWindow`: the window of each item by handle.
+    SwitchWindow(Vec<gpui::WindowHandle<crate::workbench::Workbench>>),
     /// `workbench.action.localHistory.restoreViaPicker`: the files to pick, by handle.
     LocalHistoryFiles(Vec<std::path::PathBuf>),
     /// The picked file's local history entries, by handle.
@@ -256,6 +258,7 @@ impl Workbench {
             Owner::OpenWith(_) => self.open_with_picker_event(id, event, window, cx),
             Owner::ImageZoom => self.image_zoom_picker_event(id, event, window, cx),
             Owner::RecentlyOpened(_) => self.recently_opened_event(id, event, window, cx),
+            Owner::SwitchWindow(_) => self.switch_window_event(id, event, window, cx),
             Owner::LocalHistoryFiles(_) => self.local_history_files_event(id, event, window, cx),
             Owner::LocalHistoryEntries(..) => self.local_history_entries_event(id, event, window, cx),
             Owner::LocalHistoryCreate(_) => self.create_local_history_entry_event(id, event, window, cx),

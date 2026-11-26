@@ -178,7 +178,7 @@ impl Workbench {
 
     /// The grid's middle row for a window of `viewport`: the activity bar, the side bar, the editor and the sashes.
     pub(super) fn middle_section(&mut self, viewport: Size<Pixels>, editor: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - TITLE_BAR_HEIGHT - STATUS_BAR_HEIGHT);
+        let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - TITLE_BAR_HEIGHT - self.banner_height() - STATUS_BAR_HEIGHT);
         let activity_bar_visible = self.is_part_visible(Part::ActivityBar);
         if self.part_grid.grid.is_none() {
             let sizes = self.stored_part_sizes(width, f32::from(viewport.height));

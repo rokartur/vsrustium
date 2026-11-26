@@ -556,9 +556,10 @@ impl Workbench {
                 workbench.hide_notifications_center(window, cx)
             }));
         let focused = self.notifications.focus.is_focused(window).then_some(self.notifications.focused).flatten();
+        // notificationsList.css: every row but the last has a bottom border inside its height.
         let rows = items.iter().enumerate().map(|(index, item)| {
             let row = self.notification_row(item, true, focused == Some(item.key), window, cx);
-            div().when(index > 0, |row| row.border_t_1().border_color(self.color("notifications.border"))).child(row)
+            row.when(index + 1 < items.len(), |row| row.border_b_1().border_color(self.color("notifications.border")))
         }).collect::<Vec<_>>();
         div()
             .id("notifications-center")
@@ -645,8 +646,6 @@ impl Workbench {
             .flex()
             .flex_col()
             .rounded(px(4.))
-            .border_1()
-            .border_color(if focused { focus_border } else { rgba(0).into() })
             .on_mouse_down(MouseButton::Left, cx.listener(move |workbench, _: &MouseDownEvent, window, cx| {
                 workbench.notifications.focused = Some(key);
                 window.focus(&workbench.notifications.focus, cx);
@@ -673,6 +672,8 @@ impl Workbench {
             .child(main_row)
             .children(details)
             .children(self.notification_progress(item))
+            // list.css draws the focus as an outline, which takes no room from the row.
+            .when(focused, |row| row.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(focus_border)))
     }
 
     /// notificationsViewer.ts `renderProgress`: a 2px bar at the row's bottom, infinite or worked of total.
@@ -730,7 +731,9 @@ impl Workbench {
     fn notification_item_toolbar(&self, item: &Item, expanded: bool, overflows: bool, cx: &mut Context<Self>) -> Div {
         let key = item.key;
         let mut toolbar = div().flex().h(px(LINE_HEIGHT));
-        if !item.secondary.is_empty() || item.source_id.is_some() {
+        // notificationsViewer.ts `renderSecondaryActions`: the gear only with secondary actions; its menu adds the
+        // source's filter.
+        if !item.secondary.is_empty() {
             toolbar = toolbar.child(self.notification_toolbar_button(("notification-configure", key), "gear", "More Actions...", None, cx, move |workbench, event, window, cx| {
                 workbench.show_notification_actions_menu(key, event, window, cx)
             }));
@@ -987,7 +990,7 @@ fn shadow() -> BoxShadow {
 
 /// The toolbar's width: 22px actions, each with a 4px right margin.
 fn toolbar_width(item: &Item, collapsed: bool) -> f32 {
-    let actions = usize::from(!item.secondary.is_empty() || item.source_id.is_some()) + usize::from(item.can_collapse() && collapsed) + usize::from(!item.has_active_progress());
+    let actions = usize::from(!item.secondary.is_empty()) + usize::from(item.can_collapse() && collapsed) + usize::from(!item.has_active_progress());
     actions as f32 * 26.
 }
 

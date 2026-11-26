@@ -258,6 +258,8 @@ pub struct Workbench {
     pub host_colors: themes::HostColorScheme,
     /// `IEnvironmentService.isExtensionDevelopment`.
     pub extension_development: bool,
+    /// The command line profile this window was opened with, kept by a reload as the window's configuration is.
+    pub cli_profile: crate::CliProfile,
     /// workbench.ts `setUnexpectedErrorHandler(createUnexpectedErrorHandler(logService))`.
     pub unexpected_errors: crate::output::logger::UnexpectedErrorHandler,
     pub keybindings: keyboard::Keybindings,
@@ -536,6 +538,7 @@ impl Workbench {
             skip_dialogs: false,
             host_colors: themes::host_color_scheme(),
             extension_development: false,
+            cli_profile: Default::default(),
             unexpected_errors: Default::default(),
             keybindings: keyboard::Keybindings::default(),
             keybindings_editor: keybindings_editor_view::KeybindingsEditor::new(cx),
@@ -966,7 +969,8 @@ impl Workbench {
             .text_color(if active { self.color("commandCenter.foreground") } else { foreground })
             .hover(|center| center.bg(self.color("commandCenter.activeBackground")).border_color(self.color("commandCenter.activeBorder")).text_color(self.color("commandCenter.activeForeground")))
             .text_size(px(12.))
-            .child(self.workspace().map_or("Search".into(), Workspace::label))
+            // windowTitle.ts `getCommandCenterLabel`: the workspace name after the title decorations.
+            .child(self.title_decorated(self.workspace().map_or("Search".into(), Workspace::label)))
             .child(self.hover_target("command-center", HoverContent::Text(self.command_center_tooltip()), HoverOptions::instant()))
             .on_mouse_down(MouseButton::Right, cx.listener(show_command_center_context_menu))
             // A Cmd+click belongs to the title's menu, which upstream takes in the capture phase.
@@ -1051,14 +1055,24 @@ impl Workbench {
 
     /// windowTitle.ts `getFullWindowTitle` with the macOS `window.title` default
     /// `${activeEditorShort}${separator}${rootName}${separator}${folderLocation}${separator}${profileName}`, the last two
-    /// empty here, or `nameLong` when it is empty.
+    /// empty here, or `nameLong` when it is empty, with the title decorations.
     fn window_title(&self) -> String {
         let root_name = self.workspace().map(Workspace::label).unwrap_or_default();
         let active_editor = self.editors.active().map(|editor| self.editor_name(editor)).unwrap_or_default();
         let parts: Vec<_> = [active_editor, root_name].into_iter().filter(|part| !part.is_empty()).collect();
-        match parts.is_empty() {
+        let title = match parts.is_empty() {
             true => menubar::NAME_LONG.to_string(),
             false => parts.join(" \u{2014} "),
+        };
+        self.title_decorated(title)
+    }
+
+    /// windowTitle.ts `getTitleDecorations`: "[Extension Development Host]" before the title in an extension
+    /// development window.
+    fn title_decorated(&self, title: String) -> String {
+        match self.extension_development {
+            true => format!("[Extension Development Host] {title}"),
+            false => title,
         }
     }
 
@@ -1082,6 +1096,7 @@ impl Workbench {
             icon.id(command)
                 .cursor_pointer()
                 .child(self.action_hover(title, command, hover))
+                .when(view == Some(SideBarView::Explorer), |icon| icon.children(self.activity_badge(self.dirty_working_copy_count())))
                 .when(view == Some(SideBarView::Scm), |icon| icon.children(self.activity_badge(self.scm_badge())))
                 .when(view == Some(SideBarView::Extensions), |icon| icon.relative().children(self.extensions_activity_badge()))
                 .when(view.is_some(), |icon| icon.on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, command, event, window, cx))))
@@ -1436,7 +1451,8 @@ impl Workbench {
             .px(px(4.))
             .when_some(self.theme.color("sideBarTitle.border"), |title, border| title.border_b_1().border_color(border))
             // The h2 keeps its 32px line under the HC border-bottom, so it is laid out from the top, not centered.
-            .child(div().self_start().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(crate::nls::localize(&name).into_owned()))
+            // part.css `.title-label h2`: ellipsis where `.title-actions` (8px padding-left) takes the room.
+            .child(div().self_start().min_w_0().truncate().pl(px(8.)).line_height(px(32.)).text_size(px(12.)).font_weight(FontWeight::SEMIBOLD).text_color(self.foreground_or("sideBarTitle.foreground")).child(crate::nls::localize(&name).into_owned()))
     }
 
     /// The letterpress of an empty group, `size` wide (256px, 200px in a part of several groups).

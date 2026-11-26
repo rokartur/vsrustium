@@ -9,9 +9,12 @@ use gpui::{
 };
 
 use super::Workbench;
+use super::hover::{HoverContent, HoverOptions};
 use crate::notifications::{Node, parse_linked_text};
 
-const MIN_WIDTH: f32 = 480.;
+/// notificationsDialogs.css (modern UI, on in 1.147.0): `min-width: 440px` on the content box, plus 4px padding and
+/// the 1px border each side.
+const MIN_WIDTH: f32 = 450.;
 /// `.dialog-buttons`' margin-left: long button rows align with the message text.
 const BUTTONS_MARGIN_LEFT: f32 = 67.;
 
@@ -91,21 +94,20 @@ impl Workbench {
         let shown = self.dialogs.first()?;
         let dialog = &shown.dialog;
         let foreground = self.color("editorWidget.foreground");
-        // dialog.ts: on macOS the primary button is the last of the row.
         let mut buttons = div().flex().justify_end().ml(px(BUTTONS_MARGIN_LEFT));
         let mut buttons_width = BUTTONS_MARGIN_LEFT;
-        for index in (0..dialog.buttons.len()).rev() {
+        for index in button_order(dialog.buttons.len(), dialog.cancel) {
             let button = &dialog.buttons[index];
-            let label_width = text_width(&button.label, 12., FontStyle::Normal, window) + 16.;
+            let label_width = text_width(&button.label, 12., FontStyle::Normal, window) + 18.;
             let detail_width = button.detail.as_ref().map_or(0., |detail| text_width(detail, 11., FontStyle::Italic, window) + 40.);
-            buttons_width += label_width.max(detail_width) + 10.;
+            buttons_width += label_width.max(detail_width) + 8.;
             buttons = buttons.child(self.dialog_button(index, button, index == shown.focused, cx));
         }
         let width = (buttons_width + 10.).max(MIN_WIDTH).min(f32::from(window.viewport_size().width) * 0.9);
         // The details are markdown paragraphs, whose 13px margins also sit below the last one.
         let mut body = div().flex().flex_col().when(!dialog.details.is_empty(), |body| body.mb(px(13.)));
         if let Some(detail) = &dialog.detail {
-            body = body.child(div().line_height(px(20.)).child(detail.clone()));
+            body = body.child(div().line_height(px(20.)).text_color(self.color("descriptionForeground")).child(detail.clone()));
         }
         for (index, detail) in dialog.details.iter().filter(|detail| !detail.is_empty()).enumerate() {
             body = body.child(div().mt(px(13.)).child(self.dialog_markdown(index, detail, cx)));
@@ -142,8 +144,22 @@ impl Workbench {
                     .child(body)
                     .children(checkbox),
             );
+        // dialog.ts: the close action resolves with the cancel button; notificationsDialogs.css puts it 8px from the corner.
+        let close = dialog.cancel.map(|cancel| {
+            self.icon("close", 22., 16., foreground)
+                .id("dialog.close")
+                .absolute()
+                .top(px(8.))
+                .right(px(8.))
+                .rounded(px(4.))
+                .cursor_pointer()
+                .hover(|button| button.bg(self.color("toolbar.hoverBackground")))
+                .child(self.hover_target("dialog.close", HoverContent::Text("Close Dialog".into()), HoverOptions::mouse()))
+                .on_click(cx.listener(move |workbench, _: &ClickEvent, _, cx| workbench.close_custom_dialog(cancel, cx)))
+        });
         let dialog_box = div()
             .id("custom-dialog")
+            .relative()
             .w(px(width))
             .p(px(4.))
             .flex()
@@ -158,7 +174,8 @@ impl Workbench {
             .shadow(vec![BoxShadow { color: rgba(0x00000026).into(), offset: point(px(0.), px(0.)), blur_radius: px(20.), spread_radius: px(0.), inset: false }])
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(message_row)
-            .child(div().pt(px(16.)).flex().child(buttons.w_full()));
+            .child(div().pt(px(16.)).flex().child(buttons.w_full()))
+            .children(close);
         Some(
             div()
                 .id("dialog-modal-block")
@@ -196,12 +213,12 @@ impl Workbench {
             .hover(move |button| button.bg(hover_color))
             .whitespace_nowrap()
             .child(button.label.clone());
-        // button.css: the focus outline is 1px, offset 1px, around the text button only.
-        let text_button = div().p(px(1.)).rounded(px(5.)).border_1().border_color(gpui::transparent_black()).when(focused, |outline| outline.border_color(self.color("focusBorder"))).child(text_button);
+        // button.css: the focus outline is 1px, offset 1px, around the text button only. It sits in 2px of the
+        // button's 4px margin, so the ring and its gap are a 1px border and padding inside a 2px margin.
+        let text_button = div().p(px(1.)).rounded(px(5.)).border_1().border_color(gpui::transparent_black()).when(focused, |ring| ring.border_color(self.color("focusBorder"))).child(text_button);
         div()
             .id(("dialog-button", index))
-            .mx(px(5.))
-            .my(px(4.))
+            .m(px(2.))
             .flex()
             .flex_col()
             .cursor_pointer()
@@ -239,6 +256,32 @@ impl Workbench {
                 let _ = weak.update(cx, |workbench, cx| workbench.open_notification_link(&href, window, cx));
             })
             .into_any_element()
+    }
+}
+
+/// dialog.ts `rearrangeButtons` on macOS: the cancel button moves second, then the row reverses, so the primary
+/// button is last and cancel next to it.
+fn button_order(count: usize, cancel: Option<usize>) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..count).collect();
+    if count < 2 {
+        return order;
+    }
+    if let Some(cancel) = cancel.filter(|cancel| *cancel < count) {
+        order.remove(cancel);
+        order.insert(1, cancel);
+    }
+    order.reverse();
+    order
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn cancel_sits_next_to_the_primary_button_on_the_right() {
+        assert_eq!(super::button_order(3, Some(2)), [1, 2, 0]);
+        assert_eq!(super::button_order(2, Some(1)), [1, 0]);
+        assert_eq!(super::button_order(3, None), [2, 1, 0]);
+        assert_eq!(super::button_order(1, Some(0)), [0]);
     }
 }
 

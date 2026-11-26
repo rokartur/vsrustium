@@ -67,7 +67,8 @@ impl Workbench {
             .w(px(self.panel_filter_width(filter.focused)))
             .flex_shrink(1.)
             .min_w(px(150.))
-            .mr(px(10.))
+            // paneCompositePart.css `.action-item { margin-right: 4px }` outranks views.css's 10px.
+            .mr(px(4.))
             .h(px(height))
             .flex()
             .items_center()
