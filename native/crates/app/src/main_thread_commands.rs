@@ -23,6 +23,9 @@ impl Workbench {
             ("MainThreadDecorations", method) => self.handle_decorations_request(method, &request.args, cx),
             ("MainThreadTreeViews", method) => self.handle_tree_view_request(method, &request.args, window, cx),
             ("MainThreadSCM", method) => self.handle_scm_request(method, &request.args, window, cx),
+            (proxy @ ("MainThreadNotebook" | "MainThreadNotebookDocuments" | "MainThreadNotebookEditors" | "MainThreadNotebookKernels" | "MainThreadNotebookRenderers"), method) => {
+                self.handle_notebook_request(proxy, method, &request.args, window, cx)
+            }
             ("MainThreadQuickDiff", method) => self.handle_quick_diff_request(method, &request.args, cx),
             ("MainThreadTimeline", method) => self.handle_timeline_request(method, &request.args, cx),
             ("MainThreadComments", method) => self.handle_comments_request(method, &request.args, window, cx),
@@ -116,6 +119,7 @@ impl Workbench {
             ("MainThreadWorkspace", "$lookupAuthorization") => self.lookup_authorization(&arg(0)),
             ("workbench", "previewWorkspaceEdit") => self.preview_workspace_edit(&arg(0), window, cx),
             ("workbench", "applyTextEdits") => Outcome::Ready(self.apply_workspace_text_edits(&arg(0), &arg(1), cx)),
+            ("workbench", "applyCellEdits") => Outcome::Ready(self.apply_workspace_cell_edits(arg(0).as_array().map_or(&[], Vec::as_slice), cx)),
             ("workbench", "didRunFileOperation") => {
                 self.models_after_file_operation(arg(0).as_u64().unwrap_or_default(), &arg(1), cx);
                 Outcome::done()

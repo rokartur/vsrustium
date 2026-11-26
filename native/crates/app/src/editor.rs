@@ -173,6 +173,7 @@ impl TextDocument {
 
 /// The `UriComponents` of a model's scheme and path, as the extension host revives them.
 pub fn uri_value(scheme: &str, path: &Path) -> serde_json::Value {
+    let (path, fragment) = split_fragment(scheme, path);
     let (path, query) = split_query(scheme, path);
     let path = path.to_string_lossy();
     // host_requests.rs `uri_parts` keys a non-file URI's authority as the `//authority` start of its path.
@@ -180,7 +181,7 @@ pub fn uri_value(scheme: &str, path: &Path) -> serde_json::Value {
         Some(rest) => rest.split_at(rest.find('/').unwrap_or(rest.len())),
         None => ("", &*path),
     };
-    serde_json::json!({ "$mid": 1, "scheme": scheme, "authority": authority, "path": path, "query": query, "fragment": "" })
+    serde_json::json!({ "$mid": 1, "scheme": scheme, "authority": authority, "path": path, "query": query, "fragment": fragment })
 }
 
 /// A non-file URI's query is kept after a `?` in its model's path (host_requests.rs `uri_parts`), so models of
@@ -189,6 +190,15 @@ pub fn split_query<'a>(scheme: &str, path: &'a Path) -> (&'a Path, &'a str) {
     let text = path.to_str().unwrap_or_default();
     match text.split_once('?').filter(|_| scheme != "file") {
         Some((path, query)) => (Path::new(path), query),
+        None => (path, ""),
+    }
+}
+
+/// A notebook cell's URI differs from its notebook's only in the fragment, kept after a `#` in its model's path.
+pub fn split_fragment<'a>(scheme: &str, path: &'a Path) -> (&'a Path, &'a str) {
+    let text = path.to_str().unwrap_or_default();
+    match text.rsplit_once('#').filter(|_| scheme == crate::notebook::CELL_SCHEME) {
+        Some((path, fragment)) => (Path::new(path), fragment),
         None => (path, ""),
     }
 }
@@ -251,6 +261,7 @@ pub fn uri_string(scheme: &str, path: &Path) -> String {
         "file" => String::from("file://"),
         scheme => format!("{scheme}:"),
     };
+    let (path, fragment) = split_fragment(scheme, path);
     let (path, query) = split_query(scheme, path);
     let encode = |uri: &mut String, text: &str, keep_slash: bool| {
         for byte in text.bytes() {
@@ -265,6 +276,10 @@ pub fn uri_string(scheme: &str, path: &Path) -> String {
     if !query.is_empty() {
         uri.push('?');
         encode(&mut uri, query, false);
+    }
+    if !fragment.is_empty() {
+        uri.push('#');
+        encode(&mut uri, fragment, false);
     }
     uri
 }

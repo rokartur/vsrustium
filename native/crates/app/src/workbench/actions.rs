@@ -26,7 +26,8 @@ impl Workbench {
         // `saveAll` in fileCommands.ts (Alt+Cmd+S), the next in openEditorsView.ts, `saveFiles` in fileCommands.ts.
         for id in ["saveAll", "workbench.action.files.saveAll", "workbench.action.files.saveFiles"] {
             self.commands.register(id, |workbench, _, _, cx| {
-                let saves = workbench.dirty_editors().into_iter().map(|index| workbench.save_editor(index, cx)).collect();
+                let mut saves: Vec<_> = workbench.dirty_editors().into_iter().map(|index| workbench.save_editor(index, cx)).collect();
+                saves.extend(workbench.save_dirty_notebooks(cx));
                 when_saved(saves, |_| Value::Null, cx)
             });
         }
@@ -74,6 +75,7 @@ impl Workbench {
         self.commands.register("_workbench.revertAllDirty", |workbench, _, _, cx| {
             let dirty = workbench.dirty_editors();
             workbench.revert_and_close_untitled(dirty, cx);
+            workbench.revert_dirty_notebooks(cx);
             Outcome::done()
         });
         self.commands.register("workbench.action.closeAllEditors", |workbench, _, window, cx| workbench.close_all_editors(window, cx));
@@ -121,7 +123,8 @@ impl Workbench {
     /// every one is saved.
     pub(crate) fn save_all(&mut self, include_untitled: bool, cx: &mut Context<Self>) -> Outcome {
         let dirty: Vec<usize> = self.dirty_editors().into_iter().filter(|index| include_untitled || self.editors.editors[*index].document().scheme != "untitled").collect();
-        let saves = dirty.into_iter().map(|index| self.save_editor(index, cx)).collect();
+        let mut saves: Vec<_> = dirty.into_iter().map(|index| self.save_editor(index, cx)).collect();
+        saves.extend(self.save_dirty_notebooks(cx));
         when_saved(saves, Value::Bool, cx)
     }
 

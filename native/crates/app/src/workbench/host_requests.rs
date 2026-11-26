@@ -136,7 +136,8 @@ impl Workbench {
     pub(super) fn release_host_models(&mut self, cx: &mut Context<Self>) {
         let count = self.editors.models.len();
         let scm_inputs = self.scm_input_models();
-        self.editors.release_models_except(Instant::now(), |model| scm_inputs.iter().any(|(scheme, path)| model.document().is(scheme, path)));
+        // A notebook cell's text model lives as long as its notebook.
+        self.editors.release_models_except(Instant::now(), |model| model.document().scheme == crate::notebook::CELL_SCHEME || scm_inputs.iter().any(|(scheme, path)| model.document().is(scheme, path)));
         if self.editors.models.len() != count {
             self.editors_changed(cx);
         }
@@ -398,6 +399,12 @@ impl Workbench {
 
     /// `$tryShowTextDocument`: opens the model in the group, preview unless pinned, and returns the editor's id.
     pub(super) fn try_show_text_document(&mut self, uri: &Value, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> HostResult {
+        // A notebook cell's document shows in its notebook's editor.
+        if uri["scheme"] == crate::notebook::CELL_SCHEME
+            && let Some(shown) = self.show_notebook_of_cell(uri, options, window, cx)
+        {
+            return shown;
+        }
         let (scheme, ref path) = uri_parts(uri)?;
         self.activate_column(&options["position"]);
         let pinned = options["pinned"] == json!(true);
@@ -672,7 +679,12 @@ pub(super) fn uri_parts(uri: &Value) -> Result<(&str, PathBuf), Value> {
     let part = |key: &str| uri[key].as_str().unwrap_or_default();
     let (scheme, authority, path, query) = (part("scheme"), part("authority"), part("path"), part("query"));
     // editor.rs `split_query`: a non-file query stays in the model's path.
-    let query = if query.is_empty() || scheme == "file" { String::new() } else { format!("?{query}") };
+    let mut query = if query.is_empty() || scheme == "file" { String::new() } else { format!("?{query}") };
+    // editor.rs `split_fragment`: a notebook cell's fragment too.
+    if scheme == crate::notebook::CELL_SCHEME {
+        query.push('#');
+        query.push_str(part("fragment"));
+    }
     match (scheme, authority) {
         ("", _) => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),
         ("file", _) | (_, "") if path.is_empty() => Err(serialized_error("Invalid uri. Scheme and authority or path must be set.")),

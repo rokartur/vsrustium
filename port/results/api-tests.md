@@ -233,3 +233,9 @@ On the Studio at b9d74655619, `SHELL=/bin/bash MOCHA_GREP='vscode API - ([tT]erm
 ## M12 verification
 
 `MOCHA_GREP="vscode API - (workspace|file system|env|types|tasks)" SUITE_TIMEOUT=900 port/tools/api-tests` on the Studio at 44a309311e1 (port-m12b-verify): api-folder 132 passing, 3 pending, 4 failing, 263 not reached (exit 1 after 212s); api-workspace 4/0/0 as the reference. Every test of `vscode API - workspace`, `workspace-fs`, `workspace events`, `workspace-watcher`, `file system` and `types` passes. Failing: `env.remoteName` (expects the removed github-authentication, as before) and 3 `vscode API - tasks` tests that time out after 60 s in this combined run ("main-thread startup survives provider disposal before the extension host observes the start", "provider disposal before execution preserves an extension-held task", "task should start and shutdown successfully"; milestone 15's, roadmap section 12 leaves workspace.tasks out). The 3 pending are upstream `test.skip`.
+
+## Milestone 17: notebooks, model and extension host side
+
+On the Studio, branch `port-m17b-notebooks` (the tree committed as the notebook model commit), `MOCHA_GREP="Notebook|Ensure tabs getter" SUITE_TIMEOUT=600 port/tools/api-tests`: api-folder 40 passing, 8 pending, 0 failing (exit 0 after 12s). notebook.api.test.ts (with `Notebook & LiveShare`), notebook.document.test.ts and notebook.kernel.test.ts pass as in the reference, and `vscode API - window` `Tabs - Ensure tabs getter is correct` (`openNotebookDocument`, the last window failure) passes; the 8 pending are upstream `test.skip` (the whole `Notebook Editor` suite and four single tests).
+
+Same tree, the suites the RPC and document changes touch: `MOCHA_GREP="vscode API - window|vscode API - workspace|vscode API - commands|vscode API - editors|Notebook" SUITE_TIMEOUT=900`: api-folder 205 passing, 10 pending, 0 failing (exit 0 after 43s); api-workspace 4/0/0.

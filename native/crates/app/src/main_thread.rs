@@ -126,6 +126,9 @@ impl MainThread for WorkbenchMainThread {
                 drop(message.reply.expect("resolveTextContent waits for its answer").send(content));
                 continue;
             }
+            if std::env::var_os("EXTHOST_TRACE").is_some() {
+                eprintln!("main> {}.{} {}", message.proxy, message.method, Value::Array(message.args.clone()));
+            }
             let req = if message.cancellable {
                 session.notify_cancellable(message.proxy, message.method, message.args)
             } else {
@@ -227,7 +230,7 @@ const PROVIDER_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// Workbench calls whose host method ends with a `CancellationToken` (extHost.protocol.ts): rpcProtocol.ts sends
 /// them as requests with cancellation, so the host passes a token instead of `undefined`.
-const TOKEN_METHODS: [(&str, &str); 10] = [
+const TOKEN_METHODS: [(&str, &str); 12] = [
     ("ExtHostDebugService", "$provideDebugConfigurations"),
     ("ExtHostDebugService", "$resolveDebugConfiguration"),
     ("ExtHostDebugService", "$resolveDebugConfigurationWithSubstitutedVariables"),
@@ -238,6 +241,8 @@ const TOKEN_METHODS: [(&str, &str); 10] = [
     ("ExtHostTesting", "$getTestsRelatedToCode"),
     ("ExtHostTesting", "$getCodeRelatedToTest"),
     ("ExtHostTesting", "$provideTestFollowups"),
+    ("ExtHostNotebook", "$dataToNotebook"),
+    ("ExtHostNotebook", "$notebookToData"),
 ];
 
 /// mainThreadSaveParticipant.ts: the host's `onWillSaveTextDocument` listeners apply their edits through
