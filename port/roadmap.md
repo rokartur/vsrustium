@@ -156,6 +156,16 @@ Scope: nothing new; close the gaps the earlier milestones left.
 
 Done when: `port/tools/api-tests` gives 337/31/0 (folder) and 4/0/0 (workspace): the reference baseline 356/46/0 less the suites of removed features (port/results/api-tests-reference.md); pixel-check of every window has no difference beyond anti-aliasing and the causes listed in `port/results/pixels.md`; every ledger row is `verified`, `removed` or `n/a`.
 
+## 21. Uplift to VS Code 1.148.0
+
+Starts after milestones 11 to 20 close on 1.147.0; until then every reference, baseline and ui-pair stays on 1.147.0.
+
+Scope: the 1.147.0 to 1.148.0 diff outside removed features (`git diff 1.147.0 1.148.0`): `src/vs/editor` 27 files (+631/-46), `src/vs/workbench/api` 21 files (+1019/-114), `workbench/services` and `workbench/browser` 87 files (about +3000/-560), `workbench/contrib` without AI, chat, sessions and tests 139 files (+6139/-1700: empty editor hint, comments, extensions, SCM, media preview, workspaces, new `screenshotTool` and onboarding spotlight), proposed API `workspaceFolderLocations` and `scmProviderOptions`; stable `vscode.d.ts` is unchanged. The rest of the 2578 changed files is chat, agent host, copilot and remote agent host, already removed.
+
+Steps: build the 1.148.0 reference on the Studio and refresh the pixel-check and api-tests baselines; map every changed file outside removed features to its ledger row, with new rows for new contributions; port each delta 1:1 and verify the rows it touches again.
+
+Done when: the ledger names 1.148.0, every row the diff touches is `verified`, `removed` or `n/a` again, and the full check passes against the 1.148.0 reference.
+
 ## Decisions (Artur)
 
 Made: AI, Microsoft-service and telemetry parts and remote/tunnels are `removed` (41 rows); upstream test infrastructure (`base/test`, `editor/test`, `platform/test`, `workbench/services/driver`) is `n/a`; the api-tests suites of removed features leave the milestone 20 target; Electron process, IPC and DOM layers (`base/browser` `base/parts` `platform/domWidget` `platform/ipc` `platform/protocol` `platform/sandbox` `platform/sharedProcess` `platform/utilityProcess`) are `n/a`; `workbench/services/sharedProcess` and `workbench/services/utilityProcess` stay `todo`; internal infrastructure and developer tools with no 1:1 counterpart (base/common, base/node, platform/instantiation, platform/observable, platform/webWorker, platform/gpu, platform/cssDev, editor/standalone, editor/contrib/gpu, workbench/contrib/screenshotTool) are `removed`, replaced by the native architecture.
