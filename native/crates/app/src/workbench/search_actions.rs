@@ -1343,7 +1343,7 @@ impl Workbench {
                 }));
             }
         }
-        if let Err(error) = self.apply_workspace_text_edits(&Value::Array(edits), &Value::Null, cx) {
+        if let Err(error) = self.apply_workspace_text_edits(&Value::Array(edits), &Value::Null, files::operations::new_undo_group(), cx) {
             eprintln!("search replace: {error}");
             return;
         }

@@ -2,6 +2,8 @@
 //! (workbench/contrib/bulkEdit/browser/bulkFileEdits.ts): file operations that run the file operation participants
 //! first and report themselves after, and the workspace edits built from them with their undo.
 
+use serde::{Deserialize, Serialize};
+
 use crate::{DIRECTORY, FILE, FileSystem, Mode, Resource, Result, TRASH};
 
 /// `FileOperation` of platform/files/common/files.ts.
@@ -136,7 +138,7 @@ fn run_participants(fs: &mut impl WorkingCopyFiles, operation: FileOperation, fi
 }
 
 /// `WorkspaceFileEditOptions`; unset and false differ where options are spread over defaults.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct FileEditOptions {
     pub overwrite: Option<bool>,
     pub ignore_if_not_exists: Option<bool>,
@@ -161,7 +163,7 @@ impl FileEditOptions {
 }
 
 /// `RenameEdit`, `CopyEdit`, `DeleteEdit` and `CreateEdit`.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum FileEdit {
     Rename { old: Resource, new: Resource, options: FileEditOptions },
     Copy { old: Resource, new: Resource, options: FileEditOptions },
@@ -175,10 +177,18 @@ impl FileEdit {
     }
 }
 
-/// `FileUndoRedoElement`: the edits that reverse each group of the applied edit, in order.
-#[derive(Debug, Default, PartialEq)]
+/// `FileUndoRedoElement`: the edits that reverse each group of the applied edit, in order, and the edit's
+/// `UndoRedoGroup` id. It crosses from the extension host thread to the workbench as JSON.
+#[derive(Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct FileUndo {
     pub operations: Vec<Vec<FileEdit>>,
+    pub group: u64,
+}
+
+/// `new UndoRedoGroup()`: a group id no other edit has (`UndoRedoGroup._ID`).
+pub fn new_undo_group() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 impl FileUndo {
@@ -213,9 +223,11 @@ pub fn apply(fs: &mut impl WorkingCopyFiles, edits: Vec<FileEdit>, undo_redo_gro
             _ => groups.push(vec![edit]),
         }
     }
-    let mut undo = FileUndo::default();
+    // bulkEditService.ts: an edit without a running group's id starts a group of its own.
+    let undo_group = undo_redo_group_id.unwrap_or_else(new_undo_group);
+    let mut undo = FileUndo { operations: Vec::new(), group: undo_group };
     for group in groups {
-        undo.operations.push(perform(fs, &group, UndoInfo { undo_redo_group_id, is_undoing: false })?);
+        undo.operations.push(perform(fs, &group, UndoInfo { undo_redo_group_id: Some(undo_group), is_undoing: false })?);
     }
     Ok(undo)
 }

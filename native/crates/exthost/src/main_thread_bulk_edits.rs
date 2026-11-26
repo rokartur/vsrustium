@@ -56,14 +56,19 @@ pub(crate) fn preview(session: &mut Session, dto: &Value) -> Value {
     }
 }
 
-/// `BulkEdit.perform`: consecutive edits of one kind run together, in the order the workspace edit lists them.
+/// `BulkEdit.perform`: consecutive edits of one kind run together, in the order the workspace edit lists them, all in
+/// the running group of `undo_redo_group_id` or a new one. The file edits' undo goes on the workbench undo stack.
 pub(crate) fn apply(fs: &mut Providers, dto: &Value, undo_redo_group_id: Option<u64>) -> files::Result<()> {
+    let undo_group = undo_redo_group_id.unwrap_or_else(operations::new_undo_group);
     let edits = dto["edits"].as_array().map(Vec::as_slice).unwrap_or_default();
     for group in edits.chunk_by(|a, b| kind(a) == kind(b)) {
         match kind(&group[0]) {
-            // The bulk edit undo element waits for the workbench undo stack of the Explorer operations (port/notes.md).
-            EditKind::File => _ = operations::apply(fs, group.iter().map(file_edit).collect::<files::Result<_>>()?, undo_redo_group_id)?,
-            EditKind::Text => text_edits(fs, group)?,
+            EditKind::File => {
+                let undo = operations::apply(fs, group.iter().map(file_edit).collect::<files::Result<_>>()?, Some(undo_group))?;
+                let undo = serde_json::to_value(&undo).expect("a file undo serializes");
+                _ = fs.session.ask_workbench("workbench", "pushFileUndo", vec![undo]);
+            }
+            EditKind::Text => text_edits(fs, group, undo_group)?,
             EditKind::Cell => cell_edits(fs, group)?,
         }
     }
@@ -89,7 +94,7 @@ fn kind(edit: &Value) -> EditKind {
 
 /// `BulkTextEdits.apply` runs in the workbench, which has the text models; the session reads what an extension's file
 /// system provider has, since the GPUI thread cannot call the extension host.
-fn text_edits(fs: &mut Providers, group: &[Value]) -> files::Result<()> {
+fn text_edits(fs: &mut Providers, group: &[Value], undo_group: u64) -> files::Result<()> {
     let mut provider_files: Vec<Value> = Vec::new();
     for edit in group {
         let uri = &edit["resource"];
@@ -100,7 +105,7 @@ fn text_edits(fs: &mut Providers, group: &[Value]) -> files::Result<()> {
             provider_files.push(json!({ "uri": uri, "bytes": bytes }));
         }
     }
-    match fs.session.ask_workbench("workbench", "applyTextEdits", vec![json!(group), json!(provider_files)]) {
+    match fs.session.ask_workbench("workbench", "applyTextEdits", vec![json!(group), json!(provider_files), json!(undo_group)]) {
         Some(Ok(_)) => Ok(()),
         Some(Err(error)) => Err(files::plain_error(error["message"].as_str().unwrap_or_default())),
         None => Err(files::plain_error("Canceled")),

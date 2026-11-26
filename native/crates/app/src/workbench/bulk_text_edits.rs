@@ -15,8 +15,8 @@ use crate::local_history;
 
 impl Workbench {
     /// `BulkTextEdits.apply`: each resource's edits are one model change, made through the active editor when it shows
-    /// the model; nothing applies when a model moved past the version the host edited.
-    pub fn apply_workspace_text_edits(&mut self, edits: &Value, provider_files: &Value, cx: &mut Context<Self>) -> Result<Value, Value> {
+    /// the model; nothing applies when a model moved past the version the host edited. The undo joins `undo_group`.
+    pub fn apply_workspace_text_edits(&mut self, edits: &Value, provider_files: &Value, undo_group: u64, cx: &mut Context<Self>) -> Result<Value, Value> {
         let mut resources: Vec<(&str, PathBuf, Vec<&Value>)> = Vec::new();
         for edit in edits.as_array().into_iter().flatten() {
             let (scheme, path) = uri_parts(&edit["resource"])?;
@@ -107,7 +107,7 @@ impl Workbench {
             }
         }
         // bulkEditService.ts: a workspace edit without a label is "Workspace Edit".
-        self.push_workspace_text_edit("Workspace Edit".into(), versions);
+        self.push_workspace_text_edit("Workspace Edit".into(), versions, undo_group);
         self.host.send_visible_ranges(&self.editors);
         cx.notify();
         Ok(Value::Null)

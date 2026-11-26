@@ -120,8 +120,12 @@ impl Workbench {
             ("MainThreadWorkspace", "$loadCertificates") => self.load_certificates(cx),
             ("MainThreadWorkspace", "$lookupAuthorization") => self.lookup_authorization(&arg(0)),
             ("workbench", "previewWorkspaceEdit") => self.preview_workspace_edit(&arg(0), window, cx),
-            ("workbench", "applyTextEdits") => Outcome::Ready(self.apply_workspace_text_edits(&arg(0), &arg(1), cx)),
+            ("workbench", "applyTextEdits") => Outcome::Ready(self.apply_workspace_text_edits(&arg(0), &arg(1), arg(2).as_u64().unwrap_or_else(files::operations::new_undo_group), cx)),
             ("workbench", "applyCellEdits") => Outcome::Ready(self.apply_workspace_cell_edits(arg(0).as_array().map_or(&[], Vec::as_slice), cx)),
+            ("workbench", "pushFileUndo") => {
+                self.push_file_undo(serde_json::from_value(arg(0)).expect("main_thread_bulk_edits.rs sends a FileUndo"));
+                Outcome::done()
+            }
             ("workbench", "didRunFileOperation") => {
                 self.models_after_file_operation(arg(0).as_u64().unwrap_or_default(), &arg(1), cx);
                 Outcome::done()
