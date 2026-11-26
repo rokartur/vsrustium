@@ -252,6 +252,64 @@ fn zen_mode_hides_the_parts_and_puts_back_the_ones_it_hid(cx: &mut TestAppContex
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+#[gpui::test]
+fn maximizing_the_secondary_side_bar_hides_the_other_parts_and_restore_brings_them_back(cx: &mut TestAppContext) {
+    let stores = stores();
+    let dir = std::env::temp_dir().join(format!("code-gpui-auxiliary-maximized-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let (workbench, window_cx) = open(Some(dir.clone()), &stores, cx);
+    window_cx.simulate_keystrokes("alt-cmd-b");
+    let shown = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| [Part::SideBar, Part::Editor, Part::Panel, Part::AuxiliaryBar].map(|part| workbench.is_part_visible(part)));
+    let width = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.part_grid.grid.as_ref().unwrap().part_bounds(Part::AuxiliaryBar).unwrap()[2]);
+    assert_eq!(shown(window_cx), [true, true, false, true]);
+    let before = width(window_cx);
+    let run = |command: &str, cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx)));
+
+    run("workbench.action.toggleMaximizedAuxiliaryBar", window_cx);
+    assert_eq!(shown(window_cx), [false, false, false, true]);
+    let rest = workbench.read_with(window_cx, |workbench, _| {
+        let grid = workbench.part_grid.grid.as_ref().unwrap();
+        grid.dimensions()[0] - grid.part_bounds(Part::ActivityBar).unwrap()[2]
+    });
+    assert_eq!(width(window_cx), rest);
+    let context = workbench.update_in(window_cx, |workbench, window, _| workbench.key_context(window));
+    assert_eq!(context["auxiliaryBarMaximized"], true);
+
+    // Showing another part leaves the maximized state first (layout.ts `setSideBarHidden`).
+    window_cx.simulate_keystrokes("cmd-b");
+    assert_eq!(shown(window_cx), [true, true, false, true]);
+    assert!((width(window_cx) - before).abs() < 1., "{} {before}", width(window_cx));
+
+    run("workbench.action.maximizeAuxiliaryBar", window_cx);
+    run("workbench.action.closeAuxiliaryBar", window_cx);
+    assert_eq!(shown(window_cx), [true, true, false, false]);
+    assert!(!workbench.read_with(window_cx, |workbench, _| workbench.is_auxiliary_bar_maximized()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[gpui::test]
+fn a_panel_view_dropped_on_the_secondary_side_bar_opens_there_and_stays_there(cx: &mut TestAppContext) {
+    use super::super::output_view::OUTPUT_VIEW_ID;
+    let stores = stores();
+    stores.workspace.lock().unwrap().set("workbench.panelpart.activepanelid", OUTPUT_VIEW_ID.to_string());
+    let (workbench, window_cx) = open(None, &stores, cx);
+    workbench.update_in(window_cx, |workbench, window, cx| workbench.move_view_container(OUTPUT_VIEW_ID, Part::AuxiliaryBar, window, cx));
+    window_cx.run_until_parked();
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_part_visible(Part::AuxiliaryBar) && workbench.panel_view_visible(OUTPUT_VIEW_ID)));
+    let tabs = |part: Part, cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.part_tabs(part).iter().map(|view| view.id).collect::<Vec<_>>());
+    assert_eq!(tabs(Part::AuxiliaryBar, window_cx), [OUTPUT_VIEW_ID]);
+    assert!(!tabs(Part::Panel, window_cx).contains(&OUTPUT_VIEW_ID));
+    let stored = |stores: &Stores| serde_json::from_str::<serde_json::Value>(stores.profile.lock().unwrap().get("views.customizations").unwrap()).unwrap();
+    assert_eq!(stored(&stores), serde_json::json!({ "viewContainerLocations": { OUTPUT_VIEW_ID: 2 }, "viewLocations": {}, "viewContainerBadgeEnablementStates": {} }));
+    // viewPane.ts `shouldShowFilterInHeader`: the secondary side bar is narrower than 600px.
+    assert!(!workbench.read_with(window_cx, |workbench, _| workbench.view_filter_in_header(OUTPUT_VIEW_ID)));
+
+    workbench.update_in(window_cx, |workbench, window, cx| workbench.move_view_container(OUTPUT_VIEW_ID, Part::Panel, window, cx));
+    window_cx.run_until_parked();
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_part_visible(Part::Panel) && workbench.panel_view_visible(OUTPUT_VIEW_ID)));
+    assert_eq!(stored(&stores), serde_json::json!({ "viewContainerLocations": {}, "viewLocations": {}, "viewContainerBadgeEnablementStates": {} }));
+}
+
 /// progressService.ts `showOnActivityBar`: the badge after the 300 ms delay, kept 300 ms once shown.
 #[gpui::test]
 fn progress_at_a_view_container_badges_its_activity_bar_item(cx: &mut TestAppContext) {

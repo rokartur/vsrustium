@@ -174,7 +174,7 @@ fn the_debug_console_and_test_results_are_panel_views(cx: &mut TestAppContext) {
     let (console_shown, editors) = workbench.read_with(cx, |workbench, _| (workbench.debug_console_visible(), workbench.editors.editors.len()));
     assert_eq!((console_shown, editors), (true, 0), "the console opens in the panel, not as an editor");
     let tabs = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| {
-        workbench.read_with(cx, |workbench, _| workbench.panel_tabs().iter().map(|view| view.title).collect::<Vec<_>>())
+        workbench.read_with(cx, |workbench, _| workbench.part_tabs(super::super::layout::Part::Panel).iter().map(|view| view.title).collect::<Vec<_>>())
     };
     assert_eq!(tabs(&workbench, cx), ["Problems", "Output", "Debug Console", "Terminal"]);
     workbench.update(cx, |workbench, _| workbench.testing.results.push(crate::testing::TestResult::new("r1".into(), json!({}))));

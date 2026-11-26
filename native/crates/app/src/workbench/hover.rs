@@ -88,6 +88,11 @@ impl HoverOptions {
         HoverOptions { instant: false, ..Self::instant() }
     }
 
+    /// updatableHoverWidget.ts: an action item's managed hover asks for `HoverPosition.BELOW`.
+    pub fn managed() -> Self {
+        HoverOptions { position: HoverPosition::Below, ..Self::instant() }
+    }
+
     /// `showInstantHover` with `HoverPosition.BELOW` and `showPointer`: the profile icon picker.
     pub fn sticky_below() -> Self {
         HoverOptions { position: HoverPosition::Below, ..Self::instant() }

@@ -1,12 +1,16 @@
 //! The panel and the secondary side bar (panelPart.ts, auxiliaryBarPart.ts, paneCompositePart.ts): floating cards
 //! with a composite title (the views' tabs, the active view's actions, maximize and close) over the active view.
-//! Panel views register here with `register_panel_view`; the secondary side bar has no views yet and shows its
-//! empty message.
+//! Panel views register here with `register_panel_view`; a view container dragged onto the other part moves there
+//! (viewDescriptorService.ts `moveViewContainerToLocation`, stored in `views.customizations`).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use gpui::{AnyElement, Bounds, Context, Div, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, StatefulInteractiveElement, Styled, TextRun, Window, div, prelude::FluentBuilder, px};
+use gpui::{
+    AnyElement, AppContext, Bounds, Context, Div, DragMoveEvent, InteractiveElement, IntoElement, MouseButton, MouseDownEvent, ParentElement, Pixels, Render, Rgba, SharedString, StatefulInteractiveElement, Styled, TextRun, Window, div,
+    prelude::FluentBuilder, px,
+};
+use serde_json::{Value, json};
 
 use super::Workbench;
 use super::hover::HoverOptions;
@@ -14,12 +18,15 @@ use super::layout::{Alignment, Part, Position};
 use crate::commands::Outcome;
 use crate::menus::MenuAction;
 
-/// paneCompositePart.ts `ACTIVE_PANEL_SETTINGS_KEY` of the panel, in workspace storage.
+/// paneCompositePart.ts `ACTIVE_PANEL_SETTINGS_KEY` of the panel and of the secondary side bar, in workspace storage.
 const ACTIVE_PANEL_KEY: &str = "workbench.panelpart.activepanelid";
+const ACTIVE_AUXILIARY_BAR_KEY: &str = "workbench.auxiliarybar.activepanelid";
+/// viewDescriptorService.ts `VIEWS_CUSTOMIZATIONS`, in profile storage.
+const VIEWS_CUSTOMIZATIONS_KEY: &str = "views.customizations";
+/// `ViewContainerLocation.AuxiliaryBar`.
+const AUXILIARY_BAR_LOCATION: u64 = 2;
 /// The composite title's height (`--vscode-workbench-titleHeight` of a pane composite part).
 const TITLE_HEIGHT: f32 = 32.;
-/// panelPart.ts `overflowActionSize`.
-const OVERFLOW_ACTION_SIZE: f32 = 44.;
 /// views.css `.viewpane-filter-container` `max-width` in a panel title.
 const FILTER_MAX_WIDTH: f32 = 200.;
 const FILTER_MIN_WIDTH: f32 = 150.;
@@ -44,24 +51,55 @@ pub struct PanelView {
     pub badge: fn(&Workbench) -> Option<usize>,
 }
 
+/// A pane composite part's tab strip, title actions and content as last painted.
+#[derive(Default)]
+struct CompositeBar {
+    title_bounds: Rc<Cell<Bounds<Pixels>>>,
+    actions_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The active view whose title actions `actions_bounds` measured: a layout is kept only once they are its own.
+    actions_view: Cell<Option<&'static str>>,
+    overflow_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The active view's filter box in the title, empty without one.
+    filter_bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// The width the tabs leave free beside a 200px filter box.
+    filter_room: Cell<f32>,
+    /// The shown tabs, what they were laid out for and the title actions' width then.
+    tab_layout: RefCell<Option<(TabLayoutKey, f32, Vec<&'static str>)>>,
+    /// The view's area under the title, the pane body size `FilterViewPane` places its filter by.
+    content_bounds: Rc<Cell<Bounds<Pixels>>>,
+}
+
 #[derive(Default)]
 pub(super) struct Panel {
     views: Vec<PanelView>,
     active: Option<&'static str>,
-    /// The tab strip and its right-hand actions as last painted, for the overflow layout.
-    title_bounds: Rc<Cell<Bounds<Pixels>>>,
-    actions_bounds: Rc<Cell<Bounds<Pixels>>>,
-    overflow_bounds: Rc<Cell<Bounds<Pixels>>>,
-    /// The active view's filter box as last painted, empty without one.
-    filter_bounds: Rc<Cell<Bounds<Pixels>>>,
-    /// The width the tabs leave free beside a 200px filter box.
-    filter_room: Cell<f32>,
-    /// The shown tabs and what they were laid out for.
-    tab_layout: RefCell<Option<(TabLayoutKey, Vec<&'static str>)>>,
+    auxiliary_active: Option<&'static str>,
+    panel_bar: CompositeBar,
+    auxiliary_bar: CompositeBar,
+    /// The part a dragged view container is over (`CompositeDragAndDropObserver` `onDragEnter`).
+    drop_target: Option<Part>,
 }
+
+/// A global title action: its codicon, tooltip, command and whether it is toggled.
+type GlobalAction = (&'static str, &'static str, &'static str, bool);
 
 /// The title width, the tabs, the active view and whether it has a filter box.
 type TabLayoutKey = (Pixels, Vec<&'static str>, Option<&'static str>, bool);
+
+/// A composite bar tab being dragged (`CompositeDragAndDropData` of type `composite`), drawn as its label.
+#[derive(Clone)]
+pub(super) struct DraggedComposite {
+    id: &'static str,
+    label: SharedString,
+    foreground: Rgba,
+    background: Rgba,
+}
+
+impl Render for DraggedComposite {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div().h(px(TITLE_HEIGHT)).px(px(16.)).flex().items_center().text_size(px(13.)).text_color(self.foreground).bg(self.background).opacity(0.8).child(self.label.clone())
+    }
+}
 
 impl Workbench {
     pub(super) fn register_panel_view(&mut self, view: PanelView) {
@@ -112,35 +150,96 @@ impl Workbench {
             workbench.set_part_hidden(Part::AuxiliaryBar, true, cx);
             Outcome::done()
         });
+        // The preconditions of MaximizeAuxiliaryBar and RestoreAuxiliaryBar are the setter's early return.
+        self.commands.register("workbench.action.maximizeAuxiliaryBar", |workbench, _, _, cx| {
+            workbench.set_auxiliary_bar_maximized(true, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.restoreAuxiliaryBar", |workbench, _, _, cx| {
+            workbench.set_auxiliary_bar_maximized(false, cx);
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.toggleMaximizedAuxiliaryBar", |workbench, _, _, cx| {
+            let maximized = workbench.is_auxiliary_bar_maximized();
+            workbench.set_auxiliary_bar_maximized(!maximized, cx);
+            Outcome::done()
+        });
     }
 
-    /// `openPaneComposite` in the panel: shows the panel with the view and stores it as the last active one.
+    /// `getViewContainerLocation`: the panel, unless `views.customizations` moved the container to the secondary side bar.
+    pub(super) fn view_container_part(&self, id: &str) -> Part {
+        let storage = self.profile_storage.lock().unwrap();
+        let customizations: Option<Value> = storage.get(VIEWS_CUSTOMIZATIONS_KEY).and_then(|stored| serde_json::from_str(stored).ok());
+        match customizations.and_then(|customizations| customizations["viewContainerLocations"][id].as_u64()) {
+            Some(AUXILIARY_BAR_LOCATION) => Part::AuxiliaryBar,
+            _ => Part::Panel,
+        }
+    }
+
+    /// `moveViewContainerToLocation` and `openPaneComposite(id, true)` of a container dropped on `part`. Only moved
+    /// containers keep an entry (`saveViewCustomizations` skips the default location).
+    pub(super) fn move_view_container(&mut self, id: &'static str, part: Part, window: &mut Window, cx: &mut Context<Self>) {
+        let mut storage = self.profile_storage.lock().unwrap();
+        let stored: Option<Value> = storage.get(VIEWS_CUSTOMIZATIONS_KEY).and_then(|stored| serde_json::from_str(stored).ok());
+        let mut customizations = stored.filter(Value::is_object).unwrap_or_else(|| json!({ "viewContainerLocations": {}, "viewLocations": {}, "viewContainerBadgeEnablementStates": {} }));
+        let locations = &mut customizations["viewContainerLocations"];
+        // Storage written by another version may lack the map.
+        if !locations.is_object() {
+            *locations = json!({});
+        }
+        let locations = locations.as_object_mut().expect("just made an object");
+        match part {
+            Part::AuxiliaryBar => drop(locations.insert(id.to_owned(), json!(AUXILIARY_BAR_LOCATION))),
+            _ => drop(locations.remove(id)),
+        }
+        storage.set(VIEWS_CUSTOMIZATIONS_KEY, customizations.to_string());
+        drop(storage);
+        let open = self.panel.views.iter().find(|view| view.id == id).expect("a registered panel view").open;
+        open(self, window, cx);
+    }
+
+    /// `openPaneComposite` where the container is: shows its part with the view and stores it as the last active one.
     pub(super) fn open_panel_view(&mut self, id: &'static str, cx: &mut Context<Self>) {
-        self.panel.active = Some(id);
-        self.workspace_storage.lock().unwrap().set(ACTIVE_PANEL_KEY, id.to_string());
-        if !self.is_part_visible(Part::Panel) {
-            self.set_part_hidden(Part::Panel, false, cx);
+        let part = self.view_container_part(id);
+        let key = match part {
+            Part::AuxiliaryBar => {
+                self.panel.auxiliary_active = Some(id);
+                ACTIVE_AUXILIARY_BAR_KEY
+            }
+            _ => {
+                self.panel.active = Some(id);
+                ACTIVE_PANEL_KEY
+            }
+        };
+        self.workspace_storage.lock().unwrap().set(key, id.to_string());
+        if !self.is_part_visible(part) {
+            self.set_part_hidden(part, false, cx);
         }
         self.editors_changed(cx);
     }
 
-    /// `setPanelHidden(false)`: opens the last active view, or the first registered one.
+    /// `setPanelHidden(false)`: opens the last active view, or the default one.
     fn show_panel(&mut self, cx: &mut Context<Self>) {
         self.set_part_hidden(Part::Panel, false, cx);
-        if let Some(id) = self.active_panel_view().map(|view| view.id) {
+        if let Some(id) = self.active_view_in(Part::Panel).map(|view| view.id) {
             self.open_panel_view(id, cx);
         }
     }
 
-    /// `isViewVisible`: the panel shows and `id` is its active view.
+    /// `isViewVisible`: the view's part shows and `id` is its active view.
     pub(super) fn panel_view_visible(&self, id: &str) -> bool {
-        self.is_part_visible(Part::Panel) && self.active_panel_view().is_some_and(|view| view.id == id)
+        let part = self.view_container_part(id);
+        self.is_part_visible(part) && self.active_view_in(part).is_some_and(|view| view.id == id)
     }
 
-    /// `viewsService.closeView`: the panel hides when the view is its active one.
+    /// `viewsService.closeView`: the view's part hides when the view is its active one.
     pub(super) fn close_panel_view(&mut self, id: &str, cx: &mut Context<Self>) {
-        if self.panel_view_visible(id) {
-            self.hide_panel(cx);
+        if !self.panel_view_visible(id) {
+            return;
+        }
+        match self.view_container_part(id) {
+            Part::AuxiliaryBar => self.set_part_hidden(Part::AuxiliaryBar, true, cx),
+            _ => self.hide_panel(cx),
         }
     }
 
@@ -152,20 +251,29 @@ impl Workbench {
 
     /// `getActivePaneComposite(ViewContainerLocation.Panel)`, while the panel shows.
     pub(super) fn active_panel_id(&self) -> Option<&'static str> {
-        self.is_part_visible(Part::Panel).then(|| self.active_panel_view().map(|view| view.id)).flatten()
+        self.is_part_visible(Part::Panel).then(|| self.active_view_in(Part::Panel).map(|view| view.id)).flatten()
     }
 
-    /// The views with a tab in the panel's composite bar, by registration order.
-    pub(super) fn panel_tabs(&self) -> Vec<&PanelView> {
-        self.panel.views.iter().filter(|view| (view.visible)(self)).collect()
+    /// The views with a tab in the part's composite bar, by registration order.
+    pub(super) fn part_tabs(&self, part: Part) -> Vec<&PanelView> {
+        self.panel.views.iter().filter(|view| (view.visible)(self) && self.view_container_part(view.id) == part).collect()
     }
 
-    pub(super) fn active_panel_view(&self) -> Option<&PanelView> {
+    /// The part's last active view, else its default: Terminal in the panel (terminal.contribution.ts registers it
+    /// with `isDefault`), the first container in the secondary side bar.
+    fn active_view_in(&self, part: Part) -> Option<&PanelView> {
+        let (active, key) = match part {
+            Part::AuxiliaryBar => (self.panel.auxiliary_active, ACTIVE_AUXILIARY_BAR_KEY),
+            _ => (self.panel.active, ACTIVE_PANEL_KEY),
+        };
         let storage = self.workspace_storage.lock().unwrap();
-        let id = self.panel.active.or(storage.get(ACTIVE_PANEL_KEY));
-        // terminal.contribution.ts registers the Terminal container with `isDefault`.
-        let default = super::terminal_view::TERMINAL_VIEW_ID;
-        self.panel.views.iter().find(|view| Some(view.id) == id).or(self.panel.views.iter().find(|view| view.id == default))
+        let id = active.or(storage.get(key));
+        let mut views = self.panel.views.iter().filter(|view| self.view_container_part(view.id) == part);
+        let default = match part {
+            Part::AuxiliaryBar => views.clone().next(),
+            _ => views.clone().find(|view| view.id == super::terminal_view::TERMINAL_VIEW_ID),
+        };
+        views.find(|view| Some(view.id) == id).or(default)
     }
 
     /// panelpart.css: a left, right or top panel turns its split and maximize icons to face the editor.
@@ -180,19 +288,6 @@ impl Workbench {
 
     /// The panel card: the views' tabs, maximize and close, and the active view.
     pub(super) fn panel_part(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let active = self.active_panel_view().map(|view| view.id);
-        let shown = self.panel_tabs_that_fit(active, window);
-        let mut tabs: Vec<AnyElement> = Vec::new();
-        let mut overflowing = Vec::new();
-        for view in self.panel_tabs() {
-            match shown.contains(&view.id) {
-                true => tabs.push(self.panel_tab(view, Some(view.id) == active, cx)),
-                false => overflowing.push(MenuAction::Command { id: format!("{}.focus", view.view_id), title: panel_tab_label(view, self), enabled: true, checked: Some(view.id) == active, alt: None }),
-            }
-        }
-        if !overflowing.is_empty() {
-            tabs.push(self.panel_overflow_action(overflowing, cx));
-        }
         let (maximize_icon, maximize_title) = match self.is_panel_maximized() {
             true => ("screen-normal", "Restore Panel Size"),
             false => ("screen-full", "Maximize Panel Size"),
@@ -200,25 +295,71 @@ impl Workbench {
         let arrangement = self.arrangement();
         // panelActions.ts `panelMaximizationSupportedWhen`.
         let maximizes = arrangement.alignment == Alignment::Center || !arrangement.panel.is_horizontal();
-        let mut actions = vec![(maximize_icon, maximize_title, "workbench.action.toggleMaximizedPanel"), ("close", "Hide Panel", "workbench.action.closePanel")];
+        let mut actions = vec![(maximize_icon, maximize_title, "workbench.action.toggleMaximizedPanel", false), ("close", "Hide Panel", "workbench.action.closePanel", false)];
         if !maximizes {
             actions.remove(0);
         }
-        let view = self.active_panel_view().map(|view| (view.render, view.actions));
-        let view_actions = view.map(|(_, actions)| actions(self, window, cx));
-        let content = match view {
-            Some((render, _)) => render(self, window, cx),
-            None => self.empty_pane_message().into_any_element(),
-        };
-        self.pane_composite_card("panel.background")
-            .child(self.pane_composite_title(tabs, view_actions, actions, cx))
-            .child(div().flex_1().min_h_0().flex().flex_col().child(content))
+        self.pane_composite_part(Part::Panel, actions, window, cx)
     }
 
-    /// The secondary side bar card with no views. shortcut: its Maximize action waits for `toggleMaximizedAuxiliaryBar`, item 2.
-    pub(super) fn auxiliary_bar_part(&self, cx: &mut Context<Self>) -> Div {
-        let actions = vec![("close", "Hide Secondary Side Bar", "workbench.action.closeAuxiliaryBar")];
-        self.pane_composite_card("sideBar.background").child(self.pane_composite_title(Vec::new(), None, actions, cx)).child(self.empty_pane_message())
+    /// The secondary side bar card: `MenuId.AuxiliaryBarTitle`'s Toggle Maximized Secondary Side Bar (toggled: the
+    /// other tooltip and the toolbar's `highlightToggledItems` background), then Hide Secondary Side Bar.
+    pub(super) fn auxiliary_bar_part(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let maximized = self.is_auxiliary_bar_maximized();
+        let maximize_title = if maximized { "Restore Secondary Side Bar" } else { "Maximize Secondary Side Bar" };
+        let actions = vec![("screen-full", maximize_title, "workbench.action.toggleMaximizedAuxiliaryBar", maximized), ("close", "Hide Secondary Side Bar", "workbench.action.closeAuxiliaryBar", false)];
+        self.pane_composite_part(Part::AuxiliaryBar, actions, window, cx)
+    }
+
+    /// paneCompositePart.ts: the tabs that fit and the "..." item, the active view's actions and the part's global
+    /// actions over the active view, or the empty message. Dropping a dragged tab anywhere on the part moves its
+    /// container here; over a part without an active view the title and the message take `editorGroup.dropBackground`.
+    fn pane_composite_part(&mut self, part: Part, actions: Vec<GlobalAction>, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        let active = self.active_view_in(part).map(|view| view.id);
+        let shown = self.tabs_that_fit(part, active, window);
+        self.composite_bar(part).actions_view.set(active);
+        let background = if part == Part::AuxiliaryBar { "sideBar.background" } else { "panel.background" };
+        let mut tabs: Vec<AnyElement> = Vec::new();
+        let mut overflowing = Vec::new();
+        for view in self.part_tabs(part) {
+            match shown.contains(&view.id) {
+                true => tabs.push(self.panel_tab(view, Some(view.id) == active, background, window, cx)),
+                false => overflowing.push(MenuAction::Command { id: format!("{}.focus", view.view_id), title: panel_tab_label(view, self), enabled: true, checked: Some(view.id) == active, alt: None }),
+            }
+        }
+        if !overflowing.is_empty() {
+            tabs.push(self.panel_overflow_action(part, overflowing, cx));
+        }
+        let view = self.active_view_in(part).map(|view| (view.render, view.actions));
+        let view_actions = view.map(|(_, actions)| actions(self, window, cx));
+        let drop_feedback = view.is_none() && self.panel.drop_target == Some(part);
+        let content = match view {
+            Some((render, _)) => render(self, window, cx),
+            None => self.empty_pane_message(drop_feedback).into_any_element(),
+        };
+        let content_bounds = self.composite_bar(part).content_bounds.clone();
+        self.pane_composite_card(background)
+            .on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<DraggedComposite>, _, cx| {
+                let over = event.bounds.contains(&event.event.position);
+                let target = if over { Some(part) } else { workbench.panel.drop_target.filter(|target| *target != part) };
+                if workbench.panel.drop_target != target {
+                    workbench.panel.drop_target = target;
+                    cx.notify();
+                }
+            }))
+            .on_drop(cx.listener(move |workbench, dragged: &DraggedComposite, window, cx| {
+                workbench.panel.drop_target = None;
+                workbench.move_view_container(dragged.id, part, window, cx);
+            }))
+            .child(self.pane_composite_title(part, tabs, view_actions, actions, drop_feedback, cx))
+            .child(div().relative().flex_1().min_h_0().flex().flex_col().child(size_tracker(content_bounds)).child(content))
+    }
+
+    fn composite_bar(&self, part: Part) -> &CompositeBar {
+        match part {
+            Part::AuxiliaryBar => &self.panel.auxiliary_bar,
+            _ => &self.panel.panel_bar,
+        }
     }
 
     fn pane_composite_card(&self, background: &str) -> Div {
@@ -227,24 +368,28 @@ impl Workbench {
 
     /// `.composite.title`: the tab strip's background with its bottom line, tabs on the left, then the active view's
     /// title actions, a separator (actionbar.css `.separator`) and the global actions on the right.
-    fn pane_composite_title(&self, tabs: Vec<AnyElement>, view_actions: Option<AnyElement>, actions: Vec<(&'static str, &'static str, &'static str)>, cx: &mut Context<Self>) -> Div {
+    fn pane_composite_title(&self, part: Part, tabs: Vec<AnyElement>, view_actions: Option<AnyElement>, actions: Vec<GlobalAction>, drop_feedback: bool, cx: &mut Context<Self>) -> Div {
         let foreground = self.color("icon.foreground");
         let bottom_line = div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(self.color("surface.border"));
+        let bar = self.composite_bar(part);
+        let background = if drop_feedback { self.color("editorGroup.dropBackground") } else { self.tab_strip_background() };
         div()
             .relative()
             .h(px(TITLE_HEIGHT))
             .flex_none()
             .flex()
             .pr(px(4.))
-            .bg(self.tab_strip_background())
+            .bg(background)
             .child(bottom_line)
-            .child(size_tracker(self.panel.title_bounds.clone()))
+            .child(size_tracker(bar.title_bounds.clone()))
             .children(tabs)
-            .child(div().relative().ml_auto().h_full().flex().items_center().gap(px(4.)).child(size_tracker(self.panel.actions_bounds.clone())).when_some(view_actions, |bar, view_actions| {
+            // The actions keep their width: the tab layout measures them, so they must not shrink for tabs that overflow.
+            .child(div().relative().flex_none().ml_auto().h_full().flex().items_center().gap(px(4.)).child(size_tracker(bar.actions_bounds.clone())).when_some(view_actions, |bar, view_actions| {
                 // The bar's 4px gap is the separator's right margin.
                 bar.child(view_actions).child(div().w(px(1.)).h(px(16.)).ml(px(4.)).bg(self.color("disabledForeground")))
-            }).children(actions.into_iter().map(|(icon, title, command)| {
-                self.icon(icon, 22., 16., foreground).id(command).rounded(px(4.)).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())).on_click(cx.listener(
+            }).children(actions.into_iter().map(|(icon, title, command, toggled)| {
+                let toggled_background = self.theme.color("actionBar.toggledBackground").unwrap_or(self.color("inputOption.activeBackground"));
+                self.icon(icon, 22., 16., foreground).id(command).rounded(px(4.)).cursor_pointer().when(toggled, |action| action.bg(toggled_background)).child(self.action_hover(title, command, HoverOptions::managed())).on_click(cx.listener(
                     move |workbench, _, window, cx| {
                         workbench.execute_command(command, Vec::new(), window, cx);
                     },
@@ -252,37 +397,48 @@ impl Workbench {
             })))
     }
 
-    /// A composite bar tab (`.action-item` with 16px padding); the checked one is the panel's own fill, connected to the content.
-    fn panel_tab(&self, view: &PanelView, active: bool, cx: &mut Context<Self>) -> AnyElement {
+    /// A composite bar tab (`.action-item` with 16px padding); the checked one is the part's own fill, connected to
+    /// the content. Its width is the fractional one Chromium lays out: GPUI rounds a text element's width up, which
+    /// made the Problems tab with its badge 2px wider than the reference's.
+    fn panel_tab(&self, view: &PanelView, active: bool, background: &str, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let foreground = if active { self.foreground_or("panelTitle.activeForeground") } else { self.foreground_or("panelTitle.inactiveForeground") };
         let id = view.id;
+        let dragged = DraggedComposite { id, label: view.title.into(), foreground, background: self.color(background) };
+        let badge = (view.badge)(self).filter(|count| *count > 0).map(|count| {
+            let text = count.to_string();
+            let text_width = text_width(&text, 10., window);
+            let width = badge_width(text_width);
+            // paneCompositePart.css `.badge` 2px from the label, `.badge-content` 10px text centered with 3px 5px padding.
+            div()
+                .ml(px(2.))
+                .flex_none()
+                .w(px(width))
+                .h(px(16.))
+                .pl(px((width - text_width) / 2.))
+                .flex()
+                .items_center()
+                .rounded(px(8.))
+                .text_size(px(10.))
+                .whitespace_nowrap()
+                .bg(self.color("activityBarBadge.background"))
+                .text_color(self.foreground_or("activityBarBadge.foreground"))
+                .child(text)
+        });
         div()
             .id(id)
             .relative()
             .h_full()
-            .px(px(16.))
+            .flex_none()
+            .w(px(panel_tab_width(view, self, window)))
+            .pl(px(16.))
             .flex()
             .items_center()
             .cursor_pointer()
             .text_color(foreground)
-            .when(active, |tab| tab.bg(self.color("panel.background")).rounded_t(px(7.)).border_t_1().border_r_1().border_color(self.color("surface.border")))
-            .child(div().line_height(px(24.)).child(view.title))
-            .children((view.badge)(self).filter(|count| *count > 0).map(|count| {
-                // paneCompositePart.css `.badge` 2px from the label, `.badge-content` 10px text with 3px 5px padding.
-                div()
-                    .ml(px(2.))
-                    .min_w(px(16.))
-                    .h(px(16.))
-                    .px(px(5.))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .rounded(px(8.))
-                    .text_size(px(10.))
-                    .bg(self.color("activityBarBadge.background"))
-                    .text_color(self.foreground_or("activityBarBadge.foreground"))
-                    .child(count.to_string())
-            }))
+            .when(active, |tab| tab.bg(self.color(background)).rounded_t(px(7.)).border_t_1().border_r_1().border_color(self.color("surface.border")))
+            .child(div().flex_none().w(px(text_width(view.title, 13., window))).whitespace_nowrap().line_height(px(24.)).child(view.title))
+            .children(badge)
+            .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .on_click(cx.listener(move |workbench, _, window, cx| {
                 let view = workbench.panel.views.iter().find(|view| view.id == id).expect("a registered panel view");
                 (view.open)(workbench, window, cx);
@@ -291,56 +447,71 @@ impl Workbench {
     }
 
     /// compositeBar.ts `updateCompositeSwitcher`: the tabs that fit before the title actions (the active one kept,
-    /// room made for the overflow action), on the sizes painted last frame; every tab before the first paint. As the
-    /// reference, the tabs are laid out again only when the title's width, the tabs or the active view change, not
-    /// when the title actions do (View as Table drops Collapse All without bringing Terminal back).
-    fn panel_tabs_that_fit(&self, active: Option<&'static str>, window: &Window) -> Vec<&'static str> {
-        let tabs: Vec<(&'static str, f32)> = self.panel_tabs().into_iter().map(|view| (view.id, panel_tab_width(view, self, window))).collect();
-        let title = self.panel.title_bounds.get().size.width;
+    /// room made for the overflow action), on the sizes painted last frame; every tab before the first paint. The tabs
+    /// are laid out again when the title's width, the tabs or the active view change, and when the title actions grow
+    /// (a started terminal's actions); not when they shrink, as the reference (View as Table drops Collapse All without
+    /// bringing Terminal back).
+    fn tabs_that_fit(&self, part: Part, active: Option<&'static str>, window: &Window) -> Vec<&'static str> {
+        let tabs: Vec<(&'static str, f32)> = self.part_tabs(part).into_iter().map(|view| (view.id, panel_tab_width(view, self, window))).collect();
+        let bar = self.composite_bar(part);
+        let title = bar.title_bounds.get().size.width;
         if title <= px(0.) {
             return tabs.into_iter().map(|(id, _)| id).collect();
         }
         // paneCompositePart.ts `layoutCompositeBar`: 16px title padding, the toolbars and their 8px padding. The filter
         // box counts at its 200px resting width: the reference lays the tabs out on resize, not when the box grows on focus.
-        let filter = f32::from(self.panel.filter_bounds.replace(Bounds::default()).size.width);
+        let filter = f32::from(bar.filter_bounds.replace(Bounds::default()).size.width);
         let filter_basis = if filter > 0. { FILTER_MAX_WIDTH } else { 0. };
-        let other_actions = f32::from(self.panel.actions_bounds.get().size.width) - filter;
+        let other_actions = f32::from(bar.actions_bounds.get().size.width) - filter;
         let key = (title, tabs.iter().map(|(id, _)| *id).collect(), active, filter > 0.);
-        let cached = self.panel.tab_layout.borrow().as_ref().filter(|(cached, _)| *cached == key).map(|(_, shown)| shown.clone());
+        let cached = bar.tab_layout.borrow().as_ref().filter(|(cached, actions, _)| *cached == key && other_actions <= *actions + 0.5).map(|(_, _, shown)| shown.clone());
         let shown = match cached {
             Some(shown) => shown,
             None => {
                 let limit = f32::from(title) - 16. - (other_actions + filter_basis) - 8.;
-                let shown = fitting_tabs(&tabs, active, limit.max(MIN_COMPOSITE_BAR_WIDTH));
-                // The first frames paint the actions before they are measured.
-                if other_actions > 0. {
-                    *self.panel.tab_layout.borrow_mut() = Some((key, shown.clone()));
+                let shown = fitting_tabs(&tabs, active, limit.max(MIN_COMPOSITE_BAR_WIDTH), overflow_action_size(part));
+                // The first frames paint the actions before they are measured, and a newly active view's actions a frame later.
+                if other_actions > 0. && bar.actions_view.get() == active {
+                    *bar.tab_layout.borrow_mut() = Some((key, other_actions, shown.clone()));
                 }
                 shown
             }
         };
         let tabs_width: f32 = tabs.iter().filter(|(id, _)| shown.contains(id)).map(|(_, width)| width).sum();
-        self.panel.filter_room.set(filter_room(f32::from(title), tabs_width, shown.len() < tabs.len(), other_actions));
+        bar.filter_room.set(filter_room(f32::from(title), tabs_width, shown.len() < tabs.len(), other_actions));
         shown
+    }
+
+    /// viewPane.ts `FilterViewPane.shouldShowFilterInHeader`: the filter leaves the title for the top of the view
+    /// when the view is narrower than 600px and taller than 100px; before the first paint it is in the title.
+    pub(super) fn view_filter_in_header(&self, container: &str) -> bool {
+        let size = self.composite_bar(self.view_container_part(container)).content_bounds.get().size;
+        !(size.width < px(600.) && size.height > px(100.))
+    }
+
+    /// viewFilter.ts `layout`: below 400px of view width the filter is `.small` and hides its badge.
+    pub(super) fn view_filter_small(&self, container: &str) -> bool {
+        let width = self.composite_bar(self.view_container_part(container)).content_bounds.get().size.width;
+        width > px(0.) && width < px(400.)
     }
 
     /// views.css `.viewpane-filter-container` in a panel title: 200px, and while focused up to 400px of the room the
     /// tabs leave.
-    pub(super) fn panel_filter_width(&self, focused: bool) -> f32 {
+    pub(super) fn panel_filter_width(&self, container: &str, focused: bool) -> f32 {
         match focused {
-            true => self.panel.filter_room.get().clamp(FILTER_MIN_WIDTH, 400.),
+            true => self.composite_bar(self.view_container_part(container)).filter_room.get().clamp(FILTER_MIN_WIDTH, 400.),
             false => FILTER_MAX_WIDTH,
         }
     }
 
     /// Measures a view's filter box in the title for the tab layout.
-    pub(super) fn panel_filter_tracker(&self) -> impl IntoElement {
-        super::output_view::bounds_tracker(self.panel.filter_bounds.clone())
+    pub(super) fn panel_filter_tracker(&self, container: &str) -> impl IntoElement {
+        super::output_view::bounds_tracker(self.composite_bar(self.view_container_part(container)).filter_bounds.clone())
     }
 
     /// compositeBarActions.ts `CompositeOverflowActivityActionViewItem`: the "..." item listing the tabs that do not fit.
-    fn panel_overflow_action(&self, actions: Vec<MenuAction>, cx: &mut Context<Self>) -> AnyElement {
-        let bounds = self.panel.overflow_bounds.clone();
+    fn panel_overflow_action(&self, part: Part, actions: Vec<MenuAction>, cx: &mut Context<Self>) -> AnyElement {
+        let bounds = self.composite_bar(part).overflow_bounds.clone();
         let foreground = self.foreground_or("panelTitle.inactiveForeground");
         div()
             .id("additionalComposites.action")
@@ -360,9 +531,16 @@ impl Workbench {
             .into_any_element()
     }
 
-    /// paneCompositePart.ts `.empty-pane-message-area`.
-    fn empty_pane_message(&self) -> Div {
-        div().flex_1().flex().items_center().justify_center().text_color(self.foreground_or("foreground")).child("Drag a view here to display.")
+    /// paneCompositePart.ts `.empty-pane-message-area`, in `editorGroup.dropBackground` while a tab is dragged over the part.
+    fn empty_pane_message(&self, drop_feedback: bool) -> Div {
+        div()
+            .flex_1()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_color(self.foreground_or("foreground"))
+            .when(drop_feedback, |message| message.bg(self.color("editorGroup.dropBackground")))
+            .child("Drag a view here to display.")
     }
 }
 
@@ -374,10 +552,23 @@ fn panel_tab_label(view: &PanelView, workbench: &Workbench) -> String {
     }
 }
 
-/// The width `panel_tab` paints: 16px padding each side, the title, and the badge 3px after it.
+/// The width `panel_tab` paints: 16px padding each side, the title, and the badge 2px after it.
 fn panel_tab_width(view: &PanelView, workbench: &Workbench, window: &Window) -> f32 {
-    let badge = (view.badge)(workbench).filter(|count| *count > 0).map_or(0., |count| 2. + (text_width(&count.to_string(), 10., window) + 10.).max(16.));
+    let badge = (view.badge)(workbench).filter(|count| *count > 0).map_or(0., |count| 2. + badge_width(text_width(&count.to_string(), 10., window)));
     32. + text_width(view.title, 13., window) + badge
+}
+
+/// `.badge-content`: `min-width: 16px` around the text and its 5px side padding.
+fn badge_width(text_width: f32) -> f32 {
+    (text_width + 10.).max(16.)
+}
+
+/// panelPart.ts and auxiliaryBarPart.ts `overflowActionSize` with the composite bar in the title.
+fn overflow_action_size(part: Part) -> f32 {
+    match part {
+        Part::AuxiliaryBar => 40.,
+        _ => 44.,
+    }
 }
 
 fn text_width(text: &str, size: f32, window: &Window) -> f32 {
@@ -386,7 +577,7 @@ fn text_width(text: &str, size: f32, window: &Window) -> f32 {
 }
 
 /// compositeBar.ts `updateCompositeSwitcher` on `(id, width)` tabs in order.
-fn fitting_tabs(tabs: &[(&'static str, f32)], active: Option<&'static str>, limit: f32) -> Vec<&'static str> {
+fn fitting_tabs(tabs: &[(&'static str, f32)], active: Option<&'static str>, limit: f32, overflow_action_size: f32) -> Vec<&'static str> {
     let width = |id: &str| tabs.iter().find(|(tab, _)| *tab == id).map_or(0., |(_, width)| *width);
     let mut size = 0.;
     let mut shown = Vec::new();
@@ -406,7 +597,7 @@ fn fitting_tabs(tabs: &[(&'static str, f32)], active: Option<&'static str>, limi
         size -= width(removed);
     }
     if tabs.len() > shown.len() {
-        size += OVERFLOW_ACTION_SIZE;
+        size += overflow_action_size;
     }
     while size > limit && !shown.is_empty() {
         let removed = if shown.len() > 1 && shown.last().copied() == active { shown.remove(shown.len() - 2) } else { shown.pop().unwrap() };
@@ -452,17 +643,17 @@ mod tests {
 
     #[test]
     fn every_tab_shows_when_they_fit() {
-        assert_eq!(fitting_tabs(&TABS, Some("problems"), 390.), ["problems", "output", "debug", "terminal"]);
+        assert_eq!(fitting_tabs(&TABS, Some("problems"), 390., 44.), ["problems", "output", "debug", "terminal"]);
     }
 
     #[test]
     fn the_tail_overflows_with_room_for_the_overflow_action() {
         // 300 fits three tabs, the overflow action's 44px pushes the third out.
-        assert_eq!(fitting_tabs(&TABS, Some("problems"), 300.), ["problems", "output"]);
+        assert_eq!(fitting_tabs(&TABS, Some("problems"), 300., 44.), ["problems", "output"]);
     }
 
     #[test]
     fn the_active_tab_stays_and_the_one_before_it_goes() {
-        assert_eq!(fitting_tabs(&TABS, Some("terminal"), 300.), ["problems", "terminal"]);
+        assert_eq!(fitting_tabs(&TABS, Some("terminal"), 300., 44.), ["problems", "terminal"]);
     }
 }
