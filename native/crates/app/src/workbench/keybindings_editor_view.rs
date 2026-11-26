@@ -1167,9 +1167,13 @@ impl Workbench {
             .when(self.keybindings_editor.columns.dragged_sash().is_some(), |table| table.child(self.column_sash_drag(cx)))
     }
 
-    /// `tree.tableColumnsBorder` while the pointer is over the table, fading in and out over 200ms.
+    /// `tree.tableColumnsBorder` while the pointer is over the table, fading in and out over 200ms; always with
+    /// reduced motion (listWidget.ts `.monaco-enable-motion`).
     fn table_columns_border(&self, window: &mut Window) -> Rgba {
         let border = self.theme.color("tree.tableColumnsBorder").unwrap_or(transparent());
+        if self.is_motion_reduced() {
+            return border;
+        }
         let (hovered, since) = self.keybindings_editor.table_hovered;
         let progress = (since.elapsed().as_secs_f32() / TABLE_BORDER_FADE.as_secs_f32()).min(1.);
         if progress < 1. {

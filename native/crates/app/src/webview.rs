@@ -347,7 +347,7 @@ pub fn byte_range(header: &str, len: u64) -> Option<(u64, u64)> {
 }
 
 /// themeing.ts `getWebviewThemeData`: the `styles` message of the host page.
-pub fn theme_data(theme: &Theme, theme_label: &str, editor: &Value, underline_links: bool) -> Value {
+pub fn theme_data(theme: &Theme, theme_label: &str, editor: &Value, underline_links: bool, reduce_motion: bool) -> Value {
     let mut styles = serde_json::Map::new();
     let font = |key: &str| editor[key].as_str().filter(|value| !value.is_empty()).map(str::to_string);
     styles.insert("vscode-font-family".into(), json!("-apple-system, BlinkMacSystemFont, sans-serif"));
@@ -374,7 +374,7 @@ pub fn theme_data(theme: &Theme, theme_label: &str, editor: &Value, underline_li
         ThemeKind::HighContrastDark => "vscode-high-contrast",
         ThemeKind::HighContrastLight => "vscode-high-contrast-light",
     };
-    json!({ "styles": styles, "activeTheme": active_theme, "themeId": theme.settings_id, "themeLabel": theme_label, "reduceMotion": false, "screenReader": false })
+    json!({ "styles": styles, "activeTheme": active_theme, "themeId": theme.settings_id, "themeLabel": theme_label, "reduceMotion": reduce_motion, "screenReader": false })
 }
 
 /// editorOptions.ts `EditorFontLigatures.validate`.

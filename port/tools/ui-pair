@@ -91,8 +91,9 @@ function portUserDataDir() {
 	const userData = mkdtempSync(join(scratch, 'port-user-'));
 	mkdirSync(join(userData, 'User'));
 	// Trust is off in referenceUserData; SETTINGS turns it on for both. cua-driver reads the accessibility tree, which
-	// the port takes for a screen reader as the reference does, so both run with accessibility support off.
-	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({ 'security.workspace.trust.enabled': false, 'workbench.startupEditor': 'none', 'editor.accessibilitySupport': 'off', ...settings }));
+	// the port takes for a screen reader as the reference does, so both run with accessibility support off. Reduced
+	// motion as in referenceUserData.
+	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({ 'security.workspace.trust.enabled': false, 'workbench.startupEditor': 'none', 'editor.accessibilitySupport': 'off', 'workbench.reduceMotion': 'on', ...settings }));
 	return userData;
 }
 

@@ -390,8 +390,9 @@ impl Workbench {
             .children(input.message().map(|message| self.quick_input_message(&input, message)))
             .child(self.quick_input_progress(&input))
             .when(input.kind == Kind::QuickPick, |widget| widget.child(self.quick_input_list(&input, interactive, window, cx)));
-        if frosted {
-            return Some(widget.into_any_element());
+        // quickInput.css: the open and close animations are `.modern-ui.monaco-enable-motion` ones.
+        if frosted || self.is_motion_reduced() {
+            return interactive.then(|| widget.into_any_element());
         }
         // shortcut: GPUI has no element transforms, so the open (250ms) and close (150ms) animations fade without their 0.97/0.99 scale.
         let ease = |t: f32| 1. - (1. - t).powi(4);

@@ -594,7 +594,8 @@ impl Workbench {
                     .children(self.hierarchy_peek_widget(editor, metrics.content_left(), metrics.char_width, window, cx))
                     .child(
                         div().id("margin").absolute().top_0().bottom_0().left_0().w(px(metrics.content_left())).on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
-                            workbench.fold_controls.set_shown(*hovered, Instant::now());
+                            let animate = !workbench.is_motion_reduced();
+                            workbench.fold_controls.set_shown(*hovered, Instant::now(), animate);
                             cx.notify();
                         })),
                     )
@@ -2132,11 +2133,12 @@ pub(super) struct FoldControls {
 }
 
 impl FoldControls {
-    fn set_shown(&mut self, shown: bool, now: Instant) {
+    /// folding.css: with reduced motion the icons show and hide without their fade.
+    fn set_shown(&mut self, shown: bool, now: Instant, animate: bool) {
         if self.shown != shown {
             let from = self.opacity(now);
             self.shown = shown;
-            self.changed = Some((now, from));
+            self.changed = animate.then_some((now, from));
         }
     }
 

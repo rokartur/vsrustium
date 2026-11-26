@@ -522,7 +522,7 @@ impl Workbench {
     /// The `--vscode-*` theme data the webview host page applies, the panels' own.
     fn webview_theme_styles(&self) -> Value {
         let label = self.color_themes.iter().find(|entry| entry.settings_id == self.theme.settings_id).map_or(self.theme.settings_id.clone(), |entry| entry.label.clone());
-        webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true)
+        webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true, self.is_motion_reduced())
     }
 
     /// markdownDocumentRenderer.ts `DEFAULT_MARKDOWN_STYLES`, read from the shipped source.

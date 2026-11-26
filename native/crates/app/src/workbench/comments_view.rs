@@ -137,7 +137,10 @@ impl Workbench {
                 workbench.open_panel_view(COMMENTS_VIEW_ID, cx);
                 window.focus(&workbench.comments.view.tree_focus, cx);
             },
-            render: |workbench, window, cx| workbench.comments_body(window, cx).into_any_element(),
+            render: |workbench, window, cx| {
+                let filter = (!workbench.view_filter_in_header(COMMENTS_VIEW_ID)).then(|| workbench.comments_filter_box(window, cx));
+                div().flex_1().min_h_0().flex().flex_col().children(filter).child(workbench.comments_body(window, cx)).into_any_element()
+            },
             actions: |workbench, window, cx| workbench.comments_actions(window, cx).into_any_element(),
             visible: Workbench::comments_view_registered,
             // comments.contribution.ts `UnresolvedCommentsBadge`: the unresolved threads with comments.
@@ -220,11 +223,23 @@ impl Workbench {
     /// All while a resource is expanded, else Expand All.
     fn comments_actions(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let resources = self.comment_resources();
+        let some_expanded = resources.iter().any(|resource| !self.comments.collapsed.contains(&resource.uri));
+        let (icon, command) = if some_expanded { ("collapse-all", "comments.collapse") } else { ("expand-all", "comments.expand") };
+        div()
+            .flex()
+            .items_center()
+            .when(self.view_filter_in_header(COMMENTS_VIEW_ID), |actions| actions.child(self.comments_filter_box(window, cx)))
+            .when(!resources.is_empty(), |actions| actions.child(self.search_action(icon, command, true, cx)))
+    }
+
+    fn comments_filter_box(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let resources = self.comment_resources();
         let total: usize = self.comments.controllers.iter().flat_map(|controller| &controller.threads).filter(|thread| !thread.comments.is_empty()).count();
         let shown: usize = resources.iter().map(|resource| resource.threads.len()).sum();
         let view = &self.comments.view;
-        let filter = self.view_filter_box(
+        self.view_filter_box(
             ViewFilter {
+                container: COMMENTS_VIEW_ID,
                 input: InputId::CommentsFilter,
                 focused: view.filter_focus.is_focused(window),
                 placeholder: "Filter (e.g. text, author)",
@@ -234,10 +249,7 @@ impl Workbench {
                 show_menu: Workbench::show_comments_filter_menu,
             },
             cx,
-        );
-        let some_expanded = resources.iter().any(|resource| !self.comments.collapsed.contains(&resource.uri));
-        let (icon, command) = if some_expanded { ("collapse-all", "comments.collapse") } else { ("expand-all", "comments.expand") };
-        div().flex().items_center().child(filter).when(!resources.is_empty(), |actions| actions.child(self.search_action(icon, command, true, cx)))
+        )
     }
 
     /// `viewFilterSubmenu` of the Comments view: the two state filters, then the Sort By submenu.

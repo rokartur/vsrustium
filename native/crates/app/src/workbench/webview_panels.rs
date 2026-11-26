@@ -588,7 +588,7 @@ impl Workbench {
 
     pub(super) fn webview_styles(&self) -> Value {
         let label = self.color_themes.iter().find(|entry| entry.settings_id == self.theme.settings_id).map_or(self.theme.settings_id.clone(), |entry| entry.label.clone());
-        webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true)
+        webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true, self.is_motion_reduced())
     }
 
     /// webviewIconManager.ts: the dark icon for dark and high contrast themes, the light one otherwise.
