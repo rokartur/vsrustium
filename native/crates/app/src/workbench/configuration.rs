@@ -117,6 +117,7 @@ impl Workbench {
         }
         if affects(change, "problems.visibility") || affects(change, "problems.decorations.enabled") {
             self.update_markers_file_decorations();
+            self.refresh_language_status(cx);
         }
         if ["editor.colorDecorators", "editor.defaultColorDecorators", "editor.colorDecoratorsLimit"].iter().any(|key| affects(change, key)) {
             self.color_providers_changed(cx);

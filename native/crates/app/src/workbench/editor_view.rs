@@ -66,7 +66,8 @@ const SCROLL_SHADOW_HEIGHT: f32 = 6.;
 const FOLD_CONTROLS_FADE: Duration = Duration::from_millis(500);
 
 impl Workbench {
-    pub(super) fn text_editor_part(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+    /// `secondary`: the drawn secondary side when the active editor is a side by side editor.
+    pub(super) fn text_editor_part(&self, secondary: Option<gpui::AnyElement>, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let editor = self.editors.active().expect("text editor part is drawn only with an editor open");
         if !self.editor_groups.drawing_inactive {
             self.schedule_unusual_line_terminators_check(editor, window, cx);
@@ -94,8 +95,7 @@ impl Workbench {
                 // mergeEditor.ts: the merge editor has no breadcrumbs.
                 _ if self.editors.active_merge().is_some() => part,
                 _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
-                // editorHeaderControl.ts: the breadcrumbs below the tabs have the editor type picker.
-                _ => part.child(self.breadcrumbs(editor).children(self.editor_type_picker(cx)).opacity(self.unfocused_editor_opacity(window))),
+                _ => part.child(self.breadcrumbs(editor, cx).opacity(self.unfocused_editor_opacity(window))),
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
@@ -103,9 +103,10 @@ impl Workbench {
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
                 None if self.editors.active_tab().is_some_and(|tab| tab.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME) => part.child(self.notebook_editor_body(window, cx)),
                 None if editor.document().scheme == MULTI_DIFF_EDITOR_SCHEME => part,
-                None => match self.editors.active_merge() {
-                    Some(merge) => part.child(self.merge_editor_body(merge, editor, window, cx)),
-                    None => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
+                None => match (self.editors.active_merge(), secondary) {
+                    (Some(merge), _) => part.child(self.merge_editor_body(merge, editor, window, cx)),
+                    (None, Some(secondary)) => part.child(self.side_by_side_body(secondary, editor, window, cx)),
+                    (None, None) => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
                 },
             })
     }
@@ -169,6 +170,16 @@ impl Workbench {
         actions.extend(self.merge_title_actions(cx));
         let resource = self.editors.active().map(|editor| editor.document().uri()).into_iter().collect::<Vec<_>>();
         let foreground = self.color("icon.foreground");
+        // preferences.contribution.ts `_workbench.openUserSettingsEditor` (order 1) on a user settings.json outside a
+        // diff editor, and editor.contribution.ts Toggle Layout of a side by side editor, left of Split Editor.
+        let settings_file = self.editors.active_diff().is_none() && self.editors.active().is_some_and(|editor| self.is_user_settings_file(&editor.document().path));
+        let side_by_side = self.editors.side_group().is_some();
+        for (order, icon, title, command, shown) in [(1., "go-to-file", "Open Settings (UI)", "workbench.action.openSettings2", settings_file), (f64::MAX, "editor-layout", "Toggle Layout", "workbench.action.toggleSplitEditorInGroupLayout", side_by_side)] {
+            if shown {
+                let button = self.icon(icon, 22., 16., foreground).id(title).cursor_pointer().on_click(cx.listener(move |workbench, _, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx))));
+                actions.push((order, button.into_any_element()));
+            }
+        }
         for item in self.menus.iter().filter(|item| item.menu == crate::menus::MenuId::EditorTitle && item.group == "navigation" && item.when.as_ref().is_none_or(|when| when.evaluate(&context))) {
             let crate::menus::Entry::Command { id, .. } = &item.entry else { continue };
             actions.push((item.order, self.command_button(id, item.title.clone(), resource.clone(), foreground, cx).into_any_element()));
@@ -351,7 +362,7 @@ impl Workbench {
 
     /// The file's path below its workspace folder, one item per segment (breadcrumbs.filePath relative), after the
     /// folder's name in a workspace (`BreadcrumbsModel._initFilePathInfo`).
-    pub(super) fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
+    pub(super) fn breadcrumbs(&self, editor: &OpenEditor, cx: &mut Context<Self>) -> Div {
         let foreground = self.color("breadcrumb.foreground");
         // A notebook editor's breadcrumbs are its notebook's resource and the notebook outline (notebookOutline.ts).
         let is_notebook = matches!(editor.document().scheme.as_str(), crate::notebook::CELL_SCHEME | crate::notebook::NOTEBOOK_EDITOR_SCHEME);
@@ -362,11 +373,15 @@ impl Workbench {
         let path = notebook_path.as_ref().or(custom_resource.as_ref()).unwrap_or(&document.path);
         let workspace = self.workspace();
         let folder = workspace.and_then(|workspace| workspace.folder_of(path));
-        let relative: PathBuf = match folder {
-            Some(folder) => path.iter().skip(folder.path.iter().count()).collect(),
-            None => path.clone(),
+        let home = std::env::home_dir().filter(|home| folder.is_none() && path.starts_with(home));
+        // breadcrumbsModel.ts `_initFilePathInfo`: the path below the workspace folder, else below the user home as
+        // `~` (`getUriHome`), else below the root, which has no item.
+        let (relative, root): (PathBuf, Option<String>) = match (folder, home) {
+            (Some(folder), _) => (path.iter().skip(folder.path.iter().count()).collect(), None),
+            (None, Some(home)) => (path.iter().skip(home.iter().count()).collect(), Some("~".into())),
+            (None, None) => (path.iter().skip(1).collect(), None),
         };
-        let mut segments: Vec<String> = relative.iter().map(|segment| segment.to_string_lossy().into_owned()).collect();
+        let mut segments: Vec<String> = root.into_iter().chain(relative.iter().map(|segment| segment.to_string_lossy().into_owned())).collect();
         if let Some(folder) = folder.filter(|_| workspace.is_some_and(|workspace| workspace.file.is_some())) {
             segments.insert(0, folder.name.clone());
         }
@@ -394,31 +409,42 @@ impl Workbench {
             };
             (file_icon, segment)
         });
+        // breadcrumbsWidget.css: an item is its icon, its label and the 16px separator codicon, without gaps; the
+        // first one starts 16px in, measured against the reference with ui-pair.
         let items = file_items.chain(symbol_items).enumerate().map(|(index, (icon, segment))| {
             div()
                 .flex()
                 .items_center()
-                .pl(px(16.))
-                .pr(px(8.))
+                .when(index == 0, |item| item.pl(px(16.)))
                 .whitespace_nowrap()
                 .when_some(icon, |item, icon| item.child(icon.mr(px(6.))))
                 .child(segment)
-                .when(index < last, |item| item.child(self.icon("chevron-right", 16., 16., foreground).ml(px(8.))))
+                .when(index < last, |item| item.child(self.icon("chevron-right", 16., 16., foreground)))
         });
         // editorGroupView.ts: the title's bottom border, drawn over the breadcrumbs' last row.
         let title_border = ["editorGroupHeader.border", "contrastBorder"].into_iter().find_map(|key| self.theme.color(key));
-        div()
-            .relative()
-            .h(px(BREADCRUMBS_HEIGHT))
-            .flex_none()
-            // shortcut: clips a long path at the right, where breadcrumbsWidget.ts reveals the last item; until breadcrumbs scroll.
+        let widget = div()
+            .flex_1()
+            .min_w_0()
+            .h_full()
             .overflow_hidden()
             // The breadcrumbs sit in the title (editortabscontrol.css) and each item is pointer (breadcrumbsWidget.css).
             .cursor_pointer()
             .flex()
+            // breadcrumbsWidget.ts `revealLast`: a path wider than the widget shows its end; the row is at least as
+            // wide as the widget, so a short one starts at the left.
+            .justify_end()
+            .child(div().flex_none().min_w_full().flex().children(items));
+        div()
+            .relative()
+            .h(px(BREADCRUMBS_HEIGHT))
+            .flex_none()
+            .overflow_hidden()
+            .flex()
             .bg(self.color("breadcrumb.background"))
             .text_color(foreground)
-            .children(items)
+            .child(widget)
+            .children(self.editor_type_picker(cx))
             .when_some(title_border, |crumbs, color| crumbs.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
     }
 
@@ -1066,6 +1092,8 @@ impl Workbench {
         let line_highlight = editor.document().scheme != crate::output::OUTPUT_SCHEME && (!in_cell || focused) && !self.is_interactive_input(editor);
         let char_width = metrics.char_width;
         let fold_controls = self.fold_controls.opacity(Instant::now());
+        let settings_file = self.edits_settings_file(editor);
+        let edit_setting_line = settings_file.then(|| self.edit_setting_line(editor)).flatten();
         let fold_control_color = self.color("editorGutter.foldingControlForeground");
         let fold_background = self.color("editor.foldBackground");
         let fold_placeholder = self.color("editor.foldPlaceholderForeground");
@@ -1454,11 +1482,13 @@ impl Workbench {
                             _ => {}
                         }
                     }));
+                let model_id = editor.model_id;
                 div()
                     .w_full()
                     .h(px(metrics.line_height))
                     .relative()
                     .flex()
+                    .when(settings_file, |row| row.on_mouse_move(cx.listener(move |workbench, _: &MouseMoveEvent, window, cx| workbench.edit_setting_mouse_moved(model_id, index, window, cx))))
                     .children(self.diff_margin(editor, index, metrics))
                     .children(self.quick_diff_glyph(editor, index, metrics, cx))
                     .children(self.comment_glyph(editor, index, metrics, cx))
@@ -1467,7 +1497,8 @@ impl Workbench {
                             .relative()
                             .flex_none()
                             .child(self.breakpoint_glyph_margin(editor, index, metrics.glyph_margin_width(), metrics.line_height, cx))
-                            .children(self.lightbulb_glyph(editor, index, metrics.line_height, cx).map(|lightbulb| lightbulb.absolute().top_0().left_0())),
+                            .children(self.lightbulb_glyph(editor, index, metrics.line_height, cx).map(|lightbulb| lightbulb.absolute().top_0().left_0()))
+                            .children(self.edit_setting_glyph(editor, index, metrics.glyph_margin_width(), metrics.line_height, edit_setting_line, cx)),
                     )
                     .child(self.gutter_mouse(number, index, cx))
                     .child(self.fold_control(index, collapsed, metrics, fold_control_color, fold_controls, cx))

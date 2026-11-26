@@ -266,7 +266,10 @@ impl Workbench {
     /// debugAdapterManager.ts `canSetBreakpointsIn`: languages of `contributes.breakpoints`, or everywhere with
     /// `debug.allowBreakpointsEverywhere`; never in jsonc or log files.
     pub(crate) fn can_set_breakpoints_in_active_editor(&self) -> bool {
-        let Some(editor) = self.editors.active() else { return false };
+        self.editors.active().is_some_and(|editor| self.can_set_breakpoints_in(editor))
+    }
+
+    pub(crate) fn can_set_breakpoints_in(&self, editor: &crate::editor::OpenEditor) -> bool {
         let language = editor.document().language_id.clone();
         let language = language.as_str();
         if language.is_empty() || language == "jsonc" || language == "log" {

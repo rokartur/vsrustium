@@ -113,3 +113,20 @@ Found by the pairs and fixed: a drag of a centered sash moved only that margin, 
 Same: the empty part (title with Maximize Secondary Side Bar and Hide Secondary Side Bar, "Drag a view here to display."), the Maximize Secondary Side Bar tooltip below the action, right-aligned at the window edge; maximized, the side bar, the editor and the panel hidden with the part filling the window and the toggled action's `actionBar.toggledBackground`; restored, the earlier layout and width; the narrow panel (aux bar open) with the Problems filter at the top of the view; while dragging, the empty part's content in `editorGroup.dropBackground`; dropped, the Problems view in the secondary side bar (its tab, View as Table, Collapse All, the separator, Maximize, Hide, the filter at the top of the view, the message wrapped), the panel on Terminal with Output and the "..." overflow.
 
 Differences: the reference keeps the tooltip after the click (Restore Secondary Side Bar, and Maximize after the second click), the port hides it on click; the port draws the dragged tab's label as GPUI's drag preview, the reference's OS drag image is not in the capture; the port shows the sash grips while dragging; the terminal's own content and its "..." action (terminal rows).
+
+## Split settings editor (milestone 11, session m11f)
+
+`port/tools/ui-pair` with port/fixtures/ui-pair/m11/split-settings-edit.json and SETTINGS `{"workbench.settings.useSplitJSON": true, "workbench.editor.useModal": "off"}`, Dark Modern, 1024x768: Open User Settings (JSON), the editor type control's menu, the pointer on the cursor line's pencil, the pencil's menu, the sash dragged from x 662 to 540 and released.
+
+Equal: the two sides and their border, the breadcrumbs' items and spacing up to settings.json, the "Split Settings Editor" control with its chevron at the breadcrumbs' end, the pencil on line 1 of settings.json, the sash's hover border and the sides after the drag (the sash at x 540 to 543 in both).
+
+What differs:
+
+- The fixtures: each app's user settings.json has its own first setting and folder name.
+- The reference draws the editor type menu as a native macOS menu, outside the window capture; the port draws its custom menu (Split Settings Editor checked, Text Editor, Set Default for '**/settings.json').
+- The glyph margin hover "Edit" under the pointer on the pencil is not drawn (Monaco's GlyphHoverWidget is not ported).
+- The pencil's menu: the reference's shot caught it before its labels drew, left of the pointer; the port lists the same settings' submenus right of the pointer.
+- The breadcrumbs' `…` outline item after settings.json (the Outline view is collapsed, so the port has no outline model).
+- During the drag the shots catch the sash at different points of the pointer's path.
+
+Checks (Studio): `cargo test -p app -- preferences side_by_side editor_type breadcrumb scm breakpoint debug edit_setting` (82 passed).

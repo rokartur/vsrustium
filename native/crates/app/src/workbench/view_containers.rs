@@ -15,7 +15,7 @@ use super::hover::HoverOptions;
 use super::layout::Part;
 use super::search_view::SideBarView;
 use super::tree_view::static_id;
-use super::view_panes::{FILE_VIEW, HEADER_SIZE, OUTLINE_VIEW, TIMELINE_VIEW};
+use super::view_panes::{FILE_VIEW, HEADER_SIZE, OUTLINE_VIEW, PaneContainer, TIMELINE_VIEW};
 use crate::commands::Outcome;
 
 pub(super) struct ViewContainer {
@@ -77,7 +77,7 @@ impl Workbench {
         for id in [FILE_VIEW, OUTLINE_VIEW, TIMELINE_VIEW] {
             self.commands.register(format!("{id}.focus"), move |workbench, _, window, cx| {
                 drop(workbench.execute_command("workbench.view.explorer", Vec::new(), window, cx));
-                workbench.expand_explorer_pane(id, cx);
+                workbench.expand_pane(PaneContainer::Explorer, id, cx);
                 let focus = match id {
                     OUTLINE_VIEW => workbench.outline_pane.focus.clone(),
                     TIMELINE_VIEW => workbench.timeline.focus.clone(),
@@ -129,9 +129,12 @@ impl Workbench {
         match container.as_str() {
             "explorer" => {
                 drop(self.execute_command("workbench.view.explorer", Vec::new(), window, cx));
-                self.expand_explorer_pane(id, cx);
+                self.expand_pane(PaneContainer::Explorer, id, cx);
             }
-            "scm" => drop(self.execute_command("workbench.view.scm", Vec::new(), window, cx)),
+            "scm" => {
+                drop(self.execute_command("workbench.view.scm", Vec::new(), window, cx));
+                self.expand_pane(PaneContainer::Scm, id, cx);
+            }
             "debug" => drop(self.execute_command("workbench.view.debug", Vec::new(), window, cx)),
             "test" => drop(self.execute_command("workbench.view.testing", Vec::new(), window, cx)),
             key => {
@@ -165,8 +168,8 @@ impl Workbench {
             return false;
         }
         let shown_container = match view.container.as_str() {
-            "explorer" => return self.side_bar_view == SideBarView::Explorer && self.explorer_pane_expanded(id),
-            "scm" => SideBarView::Scm,
+            "explorer" => return self.side_bar_view == SideBarView::Explorer && self.view_pane_expanded(PaneContainer::Explorer, id),
+            "scm" => return self.side_bar_view == SideBarView::Scm && self.view_pane_expanded(PaneContainer::Scm, id),
             "debug" => SideBarView::Debug,
             "test" => SideBarView::Testing,
             key => match self.tree_views.containers.iter().find(|container| container.key == key) {

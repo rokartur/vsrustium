@@ -23,7 +23,7 @@ fn workbench_in<'a>(name: &str, cx: &'a mut TestAppContext) -> (PathBuf, gpui::E
     let workspace = Some(config::workspace::Workspace::folder(dir.clone()));
     let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), workspace, crate::languages::Languages::new(&[]), settings, HostSync::new(sender), cx));
     cx.run_until_parked();
-    workbench.update(cx, |workbench, cx| workbench.expand_explorer_pane(TIMELINE_VIEW_ID, cx));
+    workbench.update(cx, |workbench, cx| workbench.expand_pane(crate::workbench::view_panes::PaneContainer::Explorer, TIMELINE_VIEW_ID, cx));
     (dir, workbench, receiver, cx)
 }
 
@@ -259,4 +259,27 @@ fn shift_tab_reaches_the_title_toolbar_then_the_header(cx: &mut TestAppContext) 
     assert!(header, "Shift+Tab from the toolbar focuses the pane header");
     cx.simulate_keystrokes("tab");
     assert_eq!(toolbar(cx), (true, 0), "Tab from the header focuses the toolbar");
+}
+
+/// actionViewItems.ts stops a mouse down on an action: the click runs it, the header and toolbar keep no focus.
+#[gpui::test]
+fn a_click_on_a_header_action_does_not_focus_the_header(cx: &mut TestAppContext) {
+    let (dir, workbench, receiver, cx) = workbench_in("timeline-action-click", cx);
+    workbench.update_in(cx, |workbench, window, cx| {
+        register_git(workbench, false, cx);
+        workbench.open_file(dir.join("a.txt"), true, window, cx);
+        workbench.update_timeline(cx);
+    });
+    cx.run_until_parked();
+    let mut requests = timeline_requests(&receiver);
+    answer(requests.last_mut().unwrap(), json!([{ "handle": "git|1", "label": "alpha", "timestamp": 3 }]));
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.timeline.focus.clone(), cx));
+    cx.run_until_parked();
+    let pin = workbench.update(cx, |workbench, _| workbench.timeline.toolbar_bounds.borrow()[&0].center());
+    cx.simulate_click(pin, Modifiers::none());
+    let focus = workbench.update_in(cx, |workbench, window, _| {
+        (workbench.pane_header_focused(crate::workbench::view_panes::TIMELINE_VIEW, window), workbench.timeline.toolbar_focus.is_focused(window), workbench.timeline.pinned)
+    });
+    assert_eq!(focus, (false, false, true), "the click pins the timeline and moves no focus");
 }

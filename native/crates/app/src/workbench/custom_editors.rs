@@ -21,7 +21,7 @@ use crate::main_thread_quick_open::Owner;
 use crate::quick_input::{Entry, Event, Item, Kind, QuickInput};
 
 /// `DEFAULT_EDITOR_ASSOCIATION.id`: the text editor.
-const TEXT_EDITOR_ID: &str = "default";
+pub(super) const TEXT_EDITOR_ID: &str = "default";
 const CONFIGURE_DEFAULT_ID: &str = "promptOpenWith.configureDefault";
 const ASSOCIATIONS_SETTING: &str = "workbench.editorAssociations";
 const DIFF_ASSOCIATIONS_SETTING: &str = "workbench.diffEditorAssociations";

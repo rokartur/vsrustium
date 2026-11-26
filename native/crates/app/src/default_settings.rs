@@ -58,6 +58,27 @@ pub fn registered_groups(registry: &Registry, target: Target) -> Vec<SettingsGro
     groups
 }
 
+/// `DefaultSettings.getContentWithoutMostCommonlyUsed`: the registered groups of `target` as `SettingsContentBuilder`
+/// writes them, each an object of one JSON array, two spaces indented, the last setting of a group without its comma.
+pub fn default_settings_content(registry: &Registry, target: Target) -> String {
+    let groups = registered_groups(registry, target);
+    let mut lines = Vec::new();
+    for (index, group) in groups.iter().enumerate() {
+        lines.push(if index == 0 { "[{" } else { "{" }.to_string());
+        if let Some(title) = group.section_title.as_deref().filter(|title| !title.is_empty()) {
+            lines.push(format!("  // {title}"));
+        }
+        for setting in &group.settings {
+            push_setting(&mut lines, setting, "  ");
+        }
+        // `push_setting` ends a setting with its comma, then an empty line.
+        let comma = lines.len() - 2;
+        lines[comma].pop();
+        lines.push(if index == groups.len() - 1 { "}]" } else { "}," }.to_string());
+    }
+    lines.join("\n")
+}
+
 /// `DefaultRawSettingsEditorModel.content`: every registered group, tab indented, inside one object.
 pub fn raw_default_settings(registry: &Registry) -> String {
     let mut lines = vec!["{".to_string()];

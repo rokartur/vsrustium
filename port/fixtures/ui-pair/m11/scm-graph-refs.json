@@ -1,0 +1,22 @@
+[
+  {"hotkey": ["ctrl", "shift", "g"]},
+  {"wait": 2500},
+  {"hover": [128, 410]},
+  {"wait": 600},
+  {"click": [128, 410]},
+  {"wait": 1500},
+  {"shot": "ref-picker"},
+  {"click": [230, 145]},
+  {"wait": 600},
+  {"shot": "tag-checked"},
+  {"click": [788, 26]},
+  {"wait": 2000},
+  {"hover": [128, 410]},
+  {"wait": 600},
+  {"shot": "tag-filter"},
+  {"click": [128, 410]},
+  {"wait": 1500},
+  {"shot": "picker-with-tag"},
+  {"key": "escape"},
+  {"wait": 600}
+]

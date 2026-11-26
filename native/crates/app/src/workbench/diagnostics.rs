@@ -121,6 +121,12 @@ impl Workbench {
         }
     }
 
+    /// editorOptions.ts `filterValidationDecorations`: textEditor.ts sets `renderValidationDecorations` to `off` when
+    /// `problems.visibility` is false, which hides the error, warning and info squiggles (`isForValidation`).
+    pub(super) fn filters_validation_decorations(&self) -> bool {
+        self.setting("problems.visibility") == false
+    }
+
     /// The marker decorations' `className`s on model line `line`, lowest z-index first: the squiggles of
     /// codeEditorWidget.ts and editor.css; `x` maps a char column to its left edge.
     pub(super) fn marker_line_decorations(&self, editor: &OpenEditor, line: usize, char_width: f32, x: impl Fn(usize) -> f32) -> Vec<AnyElement> {
@@ -128,6 +134,7 @@ impl Workbench {
         let mut decorations: Vec<&MarkerDecoration> = model.markers.iter().filter(|decoration| decoration.start.line <= line && line <= decoration.end.line).collect();
         decorations.sort_by_key(|decoration| decoration.marker.severity);
         let line_length = editor.document().lines[line].chars().count();
+        let filtered = self.filters_validation_decorations();
         let mut elements = Vec::new();
         for decoration in decorations {
             let from = if line == decoration.start.line { decoration.start.column } else { 0 };
@@ -145,6 +152,7 @@ impl Workbench {
                     border.map(|border| div().absolute().top(px(LINE_HEIGHT)).h(px(2.)).left(px(left)).w(px(width)).bg(border).into_any_element())
                 }
                 HINT => Some(hint_decoration(left, width, self.theme.color("editorHint.foreground"), self.theme.color("editorHint.border"))),
+                _ if filtered => continue,
                 INFO => Some(squiggly_decoration(left, width, squiggle("editorInfo"))),
                 WARNING => Some(squiggly_decoration(left, width, squiggle("editorWarning"))),
                 _ => Some(squiggly_decoration(left, width, squiggle("editorError"))),
@@ -184,7 +192,11 @@ impl Workbench {
 
     /// The marker decorations' `overviewRuler` line ranges in `OverviewRulerLane.Right` by z-index: infos, warnings, errors.
     pub(super) fn marker_ruler_lines(&self, editor: &OpenEditor) -> [(Vec<(usize, usize)>, Rgba); 3] {
+        let filtered = self.filters_validation_decorations();
         let lines = |severity: u8| {
+            if filtered {
+                return Vec::new();
+            }
             let mut lines: Vec<(usize, usize)> = editor.text_model().markers.iter().filter(|decoration| decoration.marker.severity == severity).map(|decoration| (decoration.start.line, decoration.end.line)).collect();
             lines.sort();
             lines
@@ -199,6 +211,9 @@ impl Workbench {
     /// The marker decorations' inline `minimap` colors by z-index: infos, warnings, errors; hints have none.
     pub(super) fn marker_minimap_ranges(&self, editor: &OpenEditor) -> Vec<(crate::editor::Position, crate::editor::Position, Rgba)> {
         let mut ranges = Vec::new();
+        if self.filters_validation_decorations() {
+            return ranges;
+        }
         for (severity, key) in [(INFO, "minimap.infoHighlight"), (WARNING, "minimap.warningHighlight"), (ERROR, "minimap.errorHighlight")] {
             let Some(color) = self.theme.color(key) else { continue };
             ranges.extend(editor.text_model().markers.iter().filter(|decoration| decoration.marker.severity == severity).map(|decoration| (decoration.start, decoration.end, color)));

@@ -115,6 +115,7 @@ impl Workbench {
                 let anchor = gpui::Bounds::new(event.position, gpui::size(px(0.), px(0.)));
                 workbench.show_context_menu_actions(actions, &Default::default(), anchor, Vec::new(), window, cx);
             }))
+            .child(self.hover_target(gpui::SharedString::from(format!("{container}-more-hover")), super::hover::HoverContent::Text("Views and More Actions...".into()), super::hover::HoverOptions::action_item()))
     }
 }
 

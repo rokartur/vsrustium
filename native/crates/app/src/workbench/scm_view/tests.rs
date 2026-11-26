@@ -85,3 +85,27 @@ fn scm_input_models_survive_the_release_of_host_models(cx: &mut TestAppContext) 
         assert!(workbench.editors.model("vscode-scm", Path::new("git/scm0/input")).is_some());
     });
 }
+
+/// viewPaneContainer.ts `mergeViewWithContainerWhenSingleView`: Changes alone merges into the container; a history
+/// provider adds the Graph pane, and the panes' collapsed state goes to `workbench.scm.views.state`.
+#[gpui::test]
+fn the_scm_container_lays_out_changes_and_graph_as_panes(cx: &mut TestAppContext) {
+    use crate::workbench::view_panes::{PaneContainer, SCM_CHANGES_VIEW, SCM_HISTORY_VIEW};
+    let (workbench, _receiver, cx) = workbench_in("scm-panes", cx);
+    let ids = |workbench: &Workbench| workbench.panes(PaneContainer::Scm).view.as_ref().unwrap().ids().to_vec();
+    workbench.update_in(cx, |workbench, window, cx| {
+        drop(workbench.handle_scm_request("$registerSourceControl", &register(0, "/w/repo", false), window, cx));
+        workbench.layout_view_panes(700., cx);
+        assert_eq!(ids(workbench), [SCM_CHANGES_VIEW]);
+        assert!(workbench.view_pane_expanded(PaneContainer::Scm, SCM_CHANGES_VIEW));
+        drop(workbench.handle_scm_request("$updateSourceControl", &[json!(0), json!({ "hasHistoryProvider": true })], window, cx));
+        workbench.layout_view_panes(700., cx);
+        assert_eq!(ids(workbench), [SCM_CHANGES_VIEW, SCM_HISTORY_VIEW]);
+        workbench.set_pane_expanded(PaneContainer::Scm, 1, false, cx);
+        assert!(!workbench.view_pane_expanded(PaneContainer::Scm, SCM_HISTORY_VIEW));
+    });
+    let stored = workbench.read_with(cx, |workbench, _| workbench.workspace_storage.lock().unwrap().get("workbench.scm.views.state").map(str::to_owned)).unwrap();
+    let stored: Value = serde_json::from_str(&stored).unwrap();
+    assert_eq!(stored[SCM_HISTORY_VIEW]["collapsed"], json!(true));
+    assert_eq!(stored[SCM_CHANGES_VIEW]["collapsed"], json!(false));
+}

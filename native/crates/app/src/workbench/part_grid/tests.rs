@@ -287,6 +287,33 @@ fn maximizing_the_secondary_side_bar_hides_the_other_parts_and_restore_brings_th
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
+/// layout.ts `showEditorIfHidden`: an editor opened under a maximized secondary side bar or panel brings the editor
+/// area back.
+#[gpui::test]
+fn opening_an_editor_restores_a_maximized_part(cx: &mut TestAppContext) {
+    let stores = stores();
+    stores.workspace.lock().unwrap().set("workbench.panelpart.activepanelid", super::super::output_view::OUTPUT_VIEW_ID.to_string());
+    let dir = std::env::temp_dir().join(format!("code-gpui-maximized-open-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.txt"), "a").unwrap();
+    std::fs::write(dir.join("b.txt"), "b").unwrap();
+    let (workbench, window_cx) = open(Some(dir.clone()), &stores, cx);
+    let run = |command: &str, cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx)));
+    let open_file = |name: &str, cx: &mut VisualTestContext| workbench.update_in(cx, |workbench, window, cx| workbench.open_file_in_active_group(dir.join(name), true, window, cx));
+
+    open_file("a.txt", window_cx);
+    run("workbench.action.toggleMaximizedAuxiliaryBar", window_cx);
+    assert!(!workbench.read_with(window_cx, |workbench, _| workbench.is_part_visible(Part::Editor)));
+    open_file("b.txt", window_cx);
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_part_visible(Part::Editor) && !workbench.is_auxiliary_bar_maximized()));
+
+    run("workbench.action.toggleMaximizedPanel", window_cx);
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_panel_maximized()));
+    open_file("a.txt", window_cx);
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_part_visible(Part::Editor) && !workbench.is_panel_maximized()));
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 #[gpui::test]
 fn a_panel_view_dropped_on_the_secondary_side_bar_opens_there_and_stays_there(cx: &mut TestAppContext) {
     use super::super::output_view::OUTPUT_VIEW_ID;

@@ -1,0 +1,14 @@
+[
+  {"wait": 3000},
+  {"hover": [150, 82]},
+  {"wait": 300},
+  {"hover": [214, 82]},
+  {"wait": 1500},
+  {"shot": "header-action"},
+  {"hover": [287, 52]},
+  {"wait": 1500},
+  {"shot": "view-title-action"},
+  {"hover": [923, 18]},
+  {"wait": 1500},
+  {"shot": "title-bar-action"}
+]

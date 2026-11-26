@@ -23,6 +23,8 @@ fn read_aliases(mapping: &Path, icons: &Path) -> HashMap<String, String> {
             }
         }
     }
+    // codicons.ts registers 'git-fetch' again at 0xec1d, repo-fetch's glyph, over codiconsLibrary.ts's 0xecb2.
+    aliases.insert("git-fetch".into(), "repo-fetch".into());
     aliases
 }
 
@@ -33,5 +35,6 @@ mod tests {
         let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
         assert!(super::svg_path(&app_root, "plus").ends_with("add.svg"));
         assert!(super::svg_path(&app_root, "gear").ends_with("gear.svg"));
+        assert!(super::svg_path(&app_root, "git-fetch").ends_with("repo-fetch.svg"));
     }
 }

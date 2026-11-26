@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use super::explorer_find::ExplorerFind;
+use super::hover::HoverOptions;
 use super::input_box_view::{InputId, InputLook, InputView};
 use super::search_view::SideBarView;
 use crate::commands::Outcome;
@@ -186,22 +187,22 @@ impl Workbench {
         let shown = self.explorer_title_actions_shown(window);
         let refresh_enabled = !self.folder.as_ref().is_some_and(|tree| tree.is_filtering());
         let actions = [
-            ("new-file", "workbench.files.action.createFileFromExplorer", true),
-            ("new-folder", "workbench.files.action.createFolderFromExplorer", true),
-            ("refresh", "workbench.files.action.refreshFilesExplorer", refresh_enabled),
-            ("collapse-all", "workbench.files.action.collapseExplorerFolders", true),
+            ("new-file", "New File...", "workbench.files.action.createFileFromExplorer", true),
+            ("new-folder", "New Folder...", "workbench.files.action.createFolderFromExplorer", true),
+            ("refresh", "Refresh Explorer", "workbench.files.action.refreshFilesExplorer", refresh_enabled),
+            ("collapse-all", "Collapse Folders in Explorer", "workbench.files.action.collapseExplorerFolders", true),
         ];
         let hover = self.color("toolbar.hoverBackground");
         // 4px from the header's end, measured against the reference with ui-pair (m12/workspace-folders.json).
         let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(4.)).when(!shown, |bar| bar.invisible().when(self.pane_hover_reachable(), |bar| bar.group_hover(super::view_panes::FILE_VIEW, |bar| bar.visible())));
-        for (icon, command, enabled) in actions {
+        for (icon, title, command, enabled) in actions {
             let foreground = if enabled { self.foreground_or("icon.foreground") } else { self.color("disabledForeground") };
             bar = bar.child(self.icon(icon, 20., 16., foreground).id(command).rounded(px(4.)).when(enabled, |action| {
                 action.cursor_pointer().hover(|action| action.bg(hover)).on_click(cx.listener(move |workbench, _: &gpui::ClickEvent, window, cx| {
                     cx.stop_propagation();
                     workbench.execute_command(command, Vec::new(), window, cx);
                 }))
-            }));
+            }).child(self.action_hover(title, command, HoverOptions::action_item())));
         }
         bar
     }

@@ -177,6 +177,6 @@ impl Workbench {
             .rounded(px(5.))
             .cursor_pointer()
             .hover(|action| action.bg(self.color("toolbar.hoverBackground")))
-            .child(self.hover_target(gpui::SharedString::from(format!("outline-action-hover-{icon}")), HoverContent::Text(title), HoverOptions::mouse()))
+            .child(self.hover_target(gpui::SharedString::from(format!("outline-action-hover-{icon}")), HoverContent::Text(title), HoverOptions::action_item()))
     }
 }

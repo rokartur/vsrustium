@@ -51,6 +51,23 @@ impl Workbench {
             }
         })
         .detach();
+        let (display_changes, mut display) = unbounded();
+        crate::power::watch_accessibility_display(display_changes);
+        cx.spawn(async move |workbench, cx| {
+            while display.next().await.is_some() {
+                // accessibilityService.ts fires `onDidChangeReducedMotion` for the OS value only while the setting is auto.
+                let updated = workbench.update(cx, |workbench, cx| {
+                    if workbench.setting("workbench.reduceMotion") == json!("auto") {
+                        workbench.restyle_webviews();
+                        cx.notify();
+                    }
+                });
+                if updated.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
         self.commands.register("workbench.action.configureMeteredConnection", |workbench, _, window, cx| {
             workbench.show_metered_connection_picker(window, cx);
             Outcome::done()
