@@ -62,6 +62,9 @@ impl Workbench {
             let (scheme, path) = (document.scheme.clone(), document.path.clone());
             drop(document);
             self.search_model_changed(&scheme, &path);
+            if change.is_some() {
+                self.cell_status_bar_content_changed(&scheme, &path, cx);
+            }
             if let Some(change) = &change {
                 self.search_editor_edited(&path, change);
                 self.format_on_type_content_changed(change);
@@ -108,6 +111,9 @@ impl Workbench {
         let document = self.editors.tab_model(index).document();
         let (scheme, path) = (document.scheme.clone(), document.path.clone());
         drop(document);
+        if scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME {
+            return self.save_notebook_editor(&path.to_string_lossy(), cx);
+        }
         self.save_model_with(scheme, path, SaveReason::Explicit, SaveOptions { force: true, ..SaveOptions::default() }, cx)
     }
 

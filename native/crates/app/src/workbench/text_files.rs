@@ -90,6 +90,10 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.files.saveAs", |workbench, _, _, cx| {
+            if let Some(key) = workbench.active_notebook_editor().map(|editor| editor.notebook.clone()) {
+                let saved = workbench.save_notebook_as(&key, cx);
+                return when_saved(vec![saved], |_| Value::Null, cx);
+            }
             let Some(editor) = workbench.editors.active() else { return Outcome::done() };
             let (scheme, path) = (editor.document().scheme.clone(), editor.document().path.clone());
             let saved = workbench.save_as(scheme, path, SaveOptions { force: true, ..SaveOptions::default() }, cx);
@@ -181,6 +185,9 @@ impl Workbench {
         }
         if scheme == super::url_actions::TRUSTED_DOMAINS_SCHEME {
             return self.save_trusted_domains(&path, cx);
+        }
+        if scheme == super::webview_panels::WEBVIEW_PANEL_SCHEME {
+            return self.save_custom_document(&path, cx);
         }
         let (sender, receiver) = oneshot::channel();
         let Some(model) = self.editors.model_mut(&scheme, &path) else {
@@ -375,7 +382,7 @@ impl Workbench {
     }
 
     /// Runs `run` with the workbench's window, for work a caller without one must do there.
-    fn in_window(&self, cx: &mut Context<Self>, run: impl FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static) {
+    pub(super) fn in_window(&self, cx: &mut Context<Self>, run: impl FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>) + 'static) {
         cx.spawn(async move |_, cx| {
             let window = cx.update(|cx| cx.windows().into_iter().find_map(|window| window.downcast::<Workbench>()));
             if let Some(window) = window {

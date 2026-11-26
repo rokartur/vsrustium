@@ -68,6 +68,20 @@ impl Workbench {
     }
 }
 
+/// electron-main app.ts `open-url`: the last active window handles a url the system hands the running app; with no
+/// window, a new one opens with it.
+pub(crate) fn open_system_url(url: String, cx: &mut gpui::App) {
+    // The stack is ordered front to back but can be empty (no window ordered in yet): any window then.
+    let last_active = cx.window_stack().unwrap_or_default().into_iter().chain(cx.windows()).find_map(|window| window.downcast::<Workbench>());
+    match last_active {
+        Some(handle) => drop(handle.update(cx, |workbench, window, cx| {
+            window.activate_window();
+            workbench.open_protocol_url(&url, window, cx);
+        })),
+        None => crate::open_window_or_log(crate::WindowRequest { open_url: Some(url), ..crate::WindowRequest::default() }, cx),
+    }
+}
+
 /// urlService.ts `open`: answers whether a handler took the url.
 pub(super) async fn handle_url(workbench: &WeakEntity<Workbench>, uri: Uri, trusted: bool, cx: &mut AsyncWindowContext) -> bool {
     let mut uri = uri;
@@ -250,6 +264,25 @@ mod tests {
         assert_eq!(parse_line_and_column("/a/b.ts:10"), ("/a/b.ts".into(), Some((10., 1.))));
         assert_eq!(parse_line_and_column("/a/b.ts"), ("/a/b.ts".into(), None));
         assert_eq!(parse_line_and_column("/a:b/c.ts:3"), ("/a:b/c.ts".into(), Some((3., 1.))));
+    }
+
+    #[gpui::test]
+    fn a_url_the_system_hands_the_app_opens_in_the_last_active_window(cx: &mut gpui::TestAppContext) {
+        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let theme = crate::theme::load_theme(&[exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("vsrustium-open-url-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("User")).unwrap();
+        let file = dir.join("notes.txt");
+        std::fs::write(&file, "one\ntwo\n").unwrap();
+        let settings = std::sync::Arc::new(std::sync::Mutex::new(config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None)));
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), settings, crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
+        workbench.update(cx, |workbench, _| workbench.update_setting("security.promptForLocalFileProtocolHandling", json!(false)));
+        cx.cx.update(|cx| open_system_url(format!("{URL_PROTOCOL}://file{}:2:1", file.display()), cx));
+        cx.run_until_parked();
+        let opened = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| (editor.document().path.clone(), editor.selections[0].start().line)));
+        assert_eq!(opened, Some((file, 1)));
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

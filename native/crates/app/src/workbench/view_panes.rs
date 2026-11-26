@@ -376,12 +376,23 @@ impl Workbench {
             .into_any_element()
     }
 
+    /// GPUI's group hover changes only on a mouse move, where a browser drops `:hover` once `.context-view-block`
+    /// covers the pointer: the pane counts as not hovered while a context menu is open.
+    pub(super) fn pane_hover_reachable(&self) -> bool {
+        self.context_menu.is_none()
+    }
+
     /// `.pane-header`: a click, Enter or Space toggles, Left collapses, Right expands, Up and Down move to the
     /// neighbouring header; dragged onto another pane it moves this one.
     #[allow(clippy::too_many_arguments)]
     fn pane_header(&self, index: usize, id: &'static str, title: &str, description: Option<String>, actions: Option<AnyElement>, expanded: bool, count: usize, window: &Window, cx: &mut Context<Self>) -> Div {
         let focus = &self.explorer_panes.focus[id];
         let focused = focus.is_focused(window);
+        // paneview.css: the actions show on `.pane:focus-within` and with `workbench.view.alwaysShowHeaderActions`.
+        let actions_shown = focused
+            || (id == TIMELINE_VIEW && self.timeline.focus.is_focused(window))
+            || (id == OUTLINE_VIEW && self.outline_pane.focus.is_focused(window))
+            || self.setting("workbench.view.alwaysShowHeaderActions") == json!(true);
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
         let background = self.color("sideBar.background");
         let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| index > 0);
@@ -418,7 +429,7 @@ impl Workbench {
                 .children(description.filter(|_| expanded).map(|description| {
                     div().ml(px(10.)).text_size(px(12.)).text_color(self.color("panelTitle.inactiveForeground")).overflow_hidden().whitespace_nowrap().child(description)
                 }))
-                .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().group_hover(id, |actions| actions.visible()).when(focused, |actions| actions.visible()).child(actions)))
+                .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().when(self.pane_hover_reachable(), |actions| actions.group_hover(id, |actions| actions.visible())).when(actions_shown, |actions| actions.visible()).child(actions)))
                 .when(id == FILE_VIEW, |header| header.child(self.explorer_title_actions(window, cx)))
                 .when(focused && self.explorer_panes.pointer_focused != Some(id), |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
                 .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, window, cx| {

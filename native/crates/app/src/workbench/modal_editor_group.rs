@@ -83,7 +83,7 @@ impl Workbench {
                 if workbench.shows_webview(editor) {
                     return div().flex_1().min_h_0().flex().flex_col().child(workbench.webview_editor_body(editor));
                 }
-                let breadcrumbs = (workbench.setting("breadcrumbs.enabled") != json!(false)).then(|| workbench.breadcrumbs(editor, cx));
+                let breadcrumbs = (workbench.setting("breadcrumbs.enabled") != json!(false)).then(|| workbench.breadcrumbs(editor).children(workbench.editor_type_picker(cx)));
                 div().flex_1().min_h_0().flex().flex_col().children(breadcrumbs).children(workbench.unicode_banner(editor, cx)).child(workbench.text_area(editor, window, cx))
             };
             match workbench.editors.id == MODAL_GROUP {

@@ -98,6 +98,10 @@ impl Workbench {
             self.host.send_color_theme(self.theme.kind);
             self.host.send_syntax_highlighting_theme_changed();
         }
+        // webviewElement.ts restyles on `onDidChangeReducedMotion`.
+        if affects(change, "workbench.reduceMotion") {
+            self.restyle_webviews();
+        }
         self.update_model_options(before);
         if ["editor.folding", "editor.foldingStrategy", "editor.foldingMaximumRegions", "editor.defaultFoldingRangeProvider"].iter().any(|key| affects(change, key)) {
             self.trigger_folding_model_changed(cx);

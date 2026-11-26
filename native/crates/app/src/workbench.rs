@@ -103,8 +103,12 @@ pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
+mod editor_type_picker;
+mod notebook_editor;
+mod notebook_outline;
+mod notebook_status_bar;
 mod notebooks;
-pub(crate) use notebooks::focused_cell;
+pub(crate) use notebooks::notebook_cells;
 mod notifications_view;
 mod panel;
 mod part_grid;
@@ -215,7 +219,8 @@ mod webview_views;
 mod media_preview;
 mod editor_insets;
 mod image_carousel;
-mod webview_panels;
+pub(crate) mod webview_panels;
+mod custom_documents;
 mod url_actions;
 pub(crate) mod url_handler;
 mod workspace_actions;
@@ -390,6 +395,10 @@ pub struct Workbench {
     pub search_editors: search_editor_view::SearchEditors,
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
+    notebook_views: notebook_editor::NotebookViews,
+    /// The tab the command line opened before the editors registered (editorResolverService.ts): its breadcrumbs have
+    /// no editor type picker until the active editor changes, as breadcrumbsControl.ts computes it on that change.
+    editor_type_picker_pending: Option<u32>,
     pub scm: scm_view::ScmView,
     timeline: timeline_view::TimelineView,
     scm_graph: scm_graph_view::ScmGraph,
@@ -472,6 +481,7 @@ impl Render for Workbench {
         self.refresh_document_highlights(window, cx);
         self.refresh_outline_pane(cx);
         self.update_webview_panels(window, cx);
+        self.update_notebook_views(window, cx);
         self.update_diff_editor();
         self.update_merge_editor(cx);
         self.update_multi_diff_editor();
@@ -667,6 +677,8 @@ impl Workbench {
             search_editors: HashMap::new(),
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
+            notebook_views: notebook_editor::NotebookViews::new(cx),
+            editor_type_picker_pending: None,
             scm: scm_view::ScmView::new(cx),
             timeline: timeline_view::TimelineView::new(cx),
             scm_graph: Default::default(),
@@ -839,6 +851,7 @@ impl Workbench {
         workbench.register_url_commands();
         workbench.register_local_history_commands();
         workbench.register_extensions_view_commands();
+        workbench.register_view_focus_commands();
         workbench.register_workspace_recommendations_commands();
         workbench.register_localization_commands();
         workbench.register_new_file_commands();
@@ -861,12 +874,14 @@ impl Workbench {
             workbench.store_explorer_view_state();
             workbench.store_editor_view_states();
             workbench.save_editor_part_state();
+            workbench.store_editor_resolver_cache();
             async {}
         })
         .detach();
         cx.on_release(|workbench, _| {
             workbench.store_explorer_view_state();
             workbench.store_editor_view_states();
+            workbench.store_editor_resolver_cache();
         })
         .detach();
         workbench.customize_theme();
@@ -907,6 +922,11 @@ impl Workbench {
             drop(self.open_with_resolver(&exthost::scan::file_uri(&path), Some(&view_type), options, window, cx));
             return;
         }
+        self.open_text_file(path, pinned, window, cx);
+    }
+
+    /// Opens or activates the file in the text editor, whatever editor its resource resolves to.
+    pub(super) fn open_text_file(&mut self, path: PathBuf, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
         match self.editors.find(&path) {
             Some(index) => {
                 self.editors.activate(index);
@@ -934,6 +954,9 @@ impl Workbench {
 
     /// Keeps the Explorer selection and the extension host in step with the group.
     fn editors_changed(&mut self, cx: &mut Context<Self>) {
+        if self.editor_type_picker_pending.is_some() && self.editor_type_picker_pending != self.editors.active_tab().map(|tab| tab.model_id) {
+            self.editor_type_picker_pending = None;
+        }
         if std::mem::take(&mut self.editors.closed_last_editor) {
             self.close_group_if_empty(self.editors.id);
         }
@@ -1219,6 +1242,13 @@ impl Workbench {
         div().relative().child(indicator).child(self.icon(name, 36., 24., self.color("modernActivityBarItem.activeForeground")))
     }
 
+    /// style.css `.hc-black .monaco-list:not(.element-focused):focus:before`: in high contrast a focused list
+    /// without a focused row is outlined in focusBorder, above its sticky rows.
+    fn high_contrast_list_outline(&self, list_focused: bool, has_focused_row: bool) -> Option<Div> {
+        let color = self.theme.color("focusBorder").filter(|_| self.theme.kind.is_high_contrast() && list_focused && !has_focused_row)?;
+        Some(div().absolute().inset_0().border_1().border_color(color))
+    }
+
     /// The Explorer: title, then the folder's view with its tree, Outline and Timeline as panes.
     fn side_bar_view(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("sideBar.foreground");
@@ -1480,7 +1510,7 @@ impl Workbench {
                     // `horizontalScrolling`: unwrapped rows as wide as the widest, at least the view.
                     .child(div().flex_none().flex().flex_col().when(horizontal, |rows| rows.self_start().min_w_full().whitespace_nowrap()).children(rows))
                     .child(self.explorer_empty_area(cx)),
-                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx))
+                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.high_contrast_list_outline(tree_focused, tree.focused.is_some())).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx))
             // shortcut: extension webview views sit below the Explorer's panes, not in view_panes.rs; milestone 11 moves them in.
             .children(self.webview_view_panes(cx))
             // The pane view is laid out 5px shorter than the side bar content.

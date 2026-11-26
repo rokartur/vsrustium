@@ -223,7 +223,8 @@ impl Workbench {
                     .h(px(height))
                     .bg(gutter)
                     .on_hover(cx.listener(|workbench, hovered: &bool, _, cx| {
-                        workbench.sticky_scroll.fold_icons.set_shown(*hovered, std::time::Instant::now());
+                        // stickyScroll.css fades the icons with reduced motion too: folding.css's reduce-motion rule is for the margin.
+                        workbench.sticky_scroll.fold_icons.set_shown(*hovered, std::time::Instant::now(), true);
                         cx.notify();
                     }))
                     .children(numbers),

@@ -100,7 +100,8 @@ impl Workbench {
             self.problems.table_view.columns.layout(width);
         }
         let columns: Vec<f32> = self.problems.table_view.columns.sizes();
-        let border = if self.problems.table_view.hovered { self.theme.color("tree.tableColumnsBorder").unwrap_or(gpui::transparent_black().into()) } else { gpui::transparent_black().into() };
+        // listWidget.ts: the column borders show on hover with motion, always with reduced motion.
+        let border = if self.problems.table_view.hovered || self.is_motion_reduced() { self.theme.color("tree.tableColumnsBorder").unwrap_or(gpui::transparent_black().into()) } else { gpui::transparent_black().into() };
         let header = div()
             .h(px(HEADER_HEIGHT))
             .flex_none()

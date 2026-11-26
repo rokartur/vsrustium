@@ -3,6 +3,9 @@
 //! host. A cell's text is a workbench text model at the cell's `vscode-notebook-cell` URI, so it is not kept here.
 
 pub mod kernels;
+pub mod layout;
+pub mod outline;
+pub mod renderers;
 
 use base64::Engine;
 use base64::engine::general_purpose::{STANDARD, URL_SAFE};
@@ -172,7 +175,10 @@ pub struct Applied {
     pub event: Option<Value>,
     pub document_metadata_changed: bool,
     pub added: Vec<NewCellText>,
-    pub removed: Vec<Value>,
+    pub removed: Vec<Cell>,
+    /// `computeUndoRedo`: the edits that undo these, the last applied first. A replace's inverse names the cells it
+    /// brings back in `restore` (their URIs) for the caller, which has their text, to fill in `cells`.
+    pub undo: Vec<Value>,
 }
 
 pub struct NotebookModel {
@@ -185,12 +191,24 @@ pub struct NotebookModel {
     pub dirty: bool,
     /// The serializer's `TransientOptions`: `transientOutputs`, `transientCellMetadata`, `transientDocumentMetadata`.
     pub transient: Value,
+    /// Cell edits of the notebook editor to undo and redo; the cells' text edits are on their models' stacks, all
+    /// in one order by stamp (notebookTextModel.ts pushes both to the notebook's undo group).
+    pub undo: Vec<CellsUndo>,
+    pub redo: Vec<CellsUndo>,
+}
+
+/// A cell edit on the undo stack: the edits that revert it and the ones that apply it again.
+#[derive(Clone, Debug)]
+pub struct CellsUndo {
+    pub stamp: u64,
+    pub undo: Vec<Value>,
+    pub redo: Vec<Value>,
 }
 
 impl NotebookModel {
     /// `NotebookTextModel` from `NotebookData` (a `NotebookDataDto`); the new cells' texts are returned with it.
     pub fn new(uri: Value, view_type: &str, data: &Value, transient: Value) -> (Self, Vec<NewCellText>) {
-        let mut model = NotebookModel { uri, view_type: view_type.to_owned(), metadata: object_or_empty(&data["metadata"]), cells: Vec::new(), version_id: 0, next_handle: 0, dirty: false, transient };
+        let mut model = NotebookModel { uri, view_type: view_type.to_owned(), metadata: object_or_empty(&data["metadata"]), cells: Vec::new(), version_id: 0, next_handle: 0, dirty: false, transient, undo: Vec::new(), redo: Vec::new() };
         let cells = data["cells"].as_array().cloned().unwrap_or_default();
         let (cells, texts) = model.create_cells(&cells);
         model.cells = cells;
@@ -316,8 +334,11 @@ impl NotebookModel {
                 }
                 let (cells, texts) = self.create_cells(&dtos);
                 let dtos: Vec<Value> = cells.iter().zip(&texts).map(|(cell, text)| cell_dto(cell, &text.source)).collect();
+                let added = cells.len();
                 let removed: Vec<Cell> = self.cells.splice(index..index + count, cells).collect();
-                applied.removed.extend(removed.into_iter().map(|cell| cell.uri));
+                let restore: Vec<Value> = removed.iter().map(|cell| cell.uri.clone()).collect();
+                applied.undo.insert(0, json!({ "editType": edit::REPLACE, "index": index, "count": added, "cells": [], "restore": restore }));
+                applied.removed.extend(removed);
                 applied.added.extend(texts);
                 events.push(json!({ "kind": change::MODEL_CHANGE, "changes": [[index, count, dtos]] }));
                 Ok(true)
@@ -329,6 +350,7 @@ impl NotebookModel {
                 }
                 let moved: Vec<Cell> = self.cells.drain(index..index + length).collect();
                 self.cells.splice(new_index..new_index, moved);
+                applied.undo.insert(0, json!({ "editType": edit::MOVE, "index": new_index, "length": length, "newIdx": index }));
                 events.push(json!({ "kind": change::MOVE, "index": index, "length": length, "newIdx": new_index }));
                 Ok(true)
             }
@@ -373,6 +395,7 @@ impl NotebookModel {
                     return Ok(false);
                 }
                 self.cells[index].metadata = metadata.clone();
+                applied.undo.insert(0, json!({ "editType": edit::METADATA, "index": index, "metadata": old }));
                 events.push(json!({ "kind": change::CELL_METADATA, "index": index, "metadata": metadata }));
                 let transient = &self.transient["transientCellMetadata"];
                 Ok(without_keys(&old, transient) != without_keys(&metadata, transient))
@@ -390,7 +413,8 @@ impl NotebookModel {
                 if self.cells[index].language == language {
                     return Ok(false);
                 }
-                self.cells[index].language = language.clone();
+                let old = std::mem::replace(&mut self.cells[index].language, language.clone());
+                applied.undo.insert(0, json!({ "editType": edit::CELL_LANGUAGE, "index": index, "language": old }));
                 events.push(json!({ "kind": change::CELL_LANGUAGE, "index": index, "language": language }));
                 Ok(true)
             }
@@ -401,7 +425,8 @@ impl NotebookModel {
                 }
                 let transient = &self.transient["transientDocumentMetadata"];
                 let dirtying = without_keys(&self.metadata, transient) != without_keys(&metadata, transient);
-                self.metadata = metadata;
+                let old = std::mem::replace(&mut self.metadata, metadata);
+                applied.undo.insert(0, json!({ "editType": edit::DOCUMENT_METADATA, "metadata": old }));
                 applied.document_metadata_changed = true;
                 Ok(dirtying)
             }

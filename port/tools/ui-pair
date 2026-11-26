@@ -6,8 +6,8 @@
 // env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated;
 // env SETTINGS = a JSON object of user settings for both)
 // Steps, in window points (both windows are 1024x768):
-//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y]}  {"key": "return"}  {"key": "escape", "foreground": true} (a real HID key down and up)
-//   {"scroll": [x, y], "amount": notches} (real wheel notches down, the pointer left there)  {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
+//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y], "foreground": true}  {"key": "return"}  {"key": "escape", "foreground": true} (a real HID key down and up, the window brought to front and left there; also on hotkey)
+//   {"scroll": [x, y], "amount": notches} (real wheel notches down, the pointer left there)  {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"type": "Text", "foreground": true} (capitals as shift plus the letter)  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"], "button": "middle"}: a slow drag, captured while held
 //   {"windows": "name"}: the titles, sizes and visibility of the app's windows, as <app>-<name>.json
 //   {"restart": true}: after the app quit (a Cmd+Q step), start it again on the same user data and folder
@@ -90,9 +90,10 @@ function startReference(paths: string[], userData: string) {
 function portUserDataDir() {
 	const userData = mkdtempSync(join(scratch, 'port-user-'));
 	mkdirSync(join(userData, 'User'));
-	// Trust is off in referenceUserData; SETTINGS turns it on for both. Accessibility support is off in both unless
-	// SETTINGS sets it: the screen reader prompt would cover the shots of a run under VoiceOver.
-	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({ 'security.workspace.trust.enabled': false, 'workbench.startupEditor': 'none', 'editor.accessibilitySupport': 'off', ...settings }));
+	// Trust is off in referenceUserData; SETTINGS turns it on for both. cua-driver reads the accessibility tree, which
+	// the port takes for a screen reader as the reference does, so both run with accessibility support off. Reduced
+	// motion as in referenceUserData.
+	writeFileSync(join(userData, 'User/settings.json'), JSON.stringify({ 'security.workspace.trust.enabled': false, 'workbench.startupEditor': 'none', 'editor.accessibilitySupport': 'off', 'workbench.reduceMotion': 'on', ...settings }));
 	return userData;
 }
 
@@ -119,20 +120,29 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 		} else if (step.doubleClick) {
 			await cua('double_click', { ...target, ...at(step.doubleClick) });
 		} else if (step.rightClick) {
-			await cua('right_click', { ...target, ...at(step.rightClick) });
-		} else if (step.key) {
-			await cua('press_key', { ...target, key: step.key, delivery_mode: step.foreground ? 'foreground' : undefined });
-		} else if (step.hotkey) {
-			await cua('hotkey', { ...target, keys: step.hotkey });
+			await cua('right_click', { ...target, ...at(step.rightClick), delivery_mode: step.foreground ? 'foreground' : undefined });
+		} else if (step.key || step.hotkey) {
+			if (step.foreground) {
+				// A foreground key alone restores the previous app after it: the window would turn inactive between
+				// the keys of a chord, which leaves chord mode (keybindingResolver `_scheduleLeaveChordMode`).
+				await bringToFront(target);
+			}
+			const delivery_mode = step.foreground ? 'foreground' : undefined;
+			await (step.key ? cua('press_key', { ...target, key: step.key, delivery_mode }) : cua('hotkey', { ...target, keys: step.hotkey, delivery_mode }));
 		} else if (step.type) {
 			// Key by key: type_text refuses windows without an accessible text field, as GPUI's.
 			// press_key knows no shifted symbols: they go as shift plus the US layout's base key.
 			const shifted: Record<string, string> = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0', '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
+			if (step.foreground) {
+				await bringToFront(target);
+			}
+			const delivery_mode = step.foreground ? 'foreground' : undefined;
 			for (const key of step.type) {
-				if (shifted[key]) {
-					await cua('press_key', { ...target, key: shifted[key], modifiers: ['shift'] });
+				const upper = key !== key.toLowerCase();
+				if (shifted[key] || upper) {
+					await cua('press_key', { ...target, key: shifted[key] ?? key.toLowerCase(), modifiers: ['shift'], delivery_mode });
 				} else {
-					await cua('press_key', { ...target, key: key === ' ' ? 'space' : key });
+					await cua('press_key', { ...target, key: key === ' ' ? 'space' : key, delivery_mode });
 				}
 			}
 		} else if (step.wait) {
@@ -200,6 +210,15 @@ async function shot(app: string, pid: number, windowId: number, name: string) {
 	const file = resolve(outDir, `${app}-${name}.png`);
 	await cua('get_window_state', { pid, window_id: sheet?.window_id ?? main, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: file });
 	console.log(`${app}-${name}.png${sheet ? ' (sheet)' : ''}`);
+}
+
+async function bringToFront(target: object) {
+	// A sheet (the delete confirmation) keeps the window from turning key: the app is in front all the same.
+	await cua('bring_to_front', target).catch(error => {
+		if (!String(error).includes('"front_process_matches_target": true')) {
+			throw error;
+		}
+	});
 }
 
 async function cua(tool: string, args: object) {

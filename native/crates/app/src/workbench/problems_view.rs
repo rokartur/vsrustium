@@ -279,7 +279,10 @@ impl Workbench {
                 workbench.open_panel_view(MARKERS_CONTAINER_ID, cx);
                 workbench.focus_problems(window, cx);
             },
-            render: |workbench, window, cx| workbench.problems_body(window, cx).into_any_element(),
+            render: |workbench, window, cx| {
+                let filter = (!workbench.view_filter_in_header(MARKERS_CONTAINER_ID)).then(|| workbench.problems_filter_box(window, cx));
+                div().flex_1().min_h_0().flex().flex_col().children(filter).child(workbench.problems_body(window, cx)).into_any_element()
+            },
             // The navigation group: the filter, View as Tree/Table (order 3), Collapse All in the tree (order 2).
             actions: |workbench, window, cx| {
                 let table = workbench.problems_table_mode();
@@ -290,7 +293,7 @@ impl Workbench {
                 div()
                     .flex()
                     .items_center()
-                    .child(workbench.problems_filter_box(window, cx))
+                    .when(workbench.view_filter_in_header(MARKERS_CONTAINER_ID), |actions| actions.child(workbench.problems_filter_box(window, cx)))
                     .when(!table, |actions| actions.child(workbench.search_action("collapse-all", "workbench.actions.treeView.workbench.panel.markers.view.collapseAll", true, cx).mr(px(4.))))
                     .child(workbench.search_action(icon, command, true, cx))
                     .into_any_element()
@@ -595,6 +598,7 @@ impl Workbench {
         let (total, shown) = self.problems_counts();
         self.view_filter_box(
             ViewFilter {
+                container: MARKERS_CONTAINER_ID,
                 input: InputId::ProblemsFilter,
                 focused: self.problems.filter_focus.is_focused(window),
                 placeholder: FILTER_PLACEHOLDER,
@@ -710,15 +714,17 @@ impl Workbench {
     /// `renderMessage`: no problems at all, none in the active file, or none the filters let through with a Clear
     /// Filters link.
     fn problems_message(&self, total: usize, resources: &[ResourceMarkers], cx: &mut Context<Self>) -> Div {
-        let message = div().pl(px(20.)).line_height(px(22.)).flex().flex_wrap();
+        let message = div().pl(px(20.)).line_height(px(22.));
         let filtered_out = match self.problems.active_file {
             true => !resources.is_empty(),
             false => total > 0,
         };
         if !filtered_out {
+            // A block, so the text wraps in a narrow view as the reference's does.
             let text = if self.problems.active_file { "No problems have been detected in the current file." } else { "No problems have been detected in the workspace." };
             return message.child(text);
         }
+        let message = message.flex().flex_wrap();
         let link = div()
             .id("problems-clear-filters")
             .ml(px(4.))

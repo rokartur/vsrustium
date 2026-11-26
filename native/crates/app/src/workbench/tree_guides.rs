@@ -200,7 +200,8 @@ impl Workbench {
     /// How far the 100ms opacity fade that follows the pointer over the list has gone: 1 over it, 0 away.
     fn list_hover_fade(&self, list: ListId, duration: Duration, window: &Window) -> f32 {
         let Some((over, since)) = self.list_hover(list) else { return 0. };
-        let progress = (since.elapsed().as_secs_f32() / duration.as_secs_f32()).min(1.);
+        // tree.css: the fade is a `.monaco-enable-motion` transition.
+        let progress = if self.is_motion_reduced() { 1. } else { (since.elapsed().as_secs_f32() / duration.as_secs_f32()).min(1.) };
         if progress < 1. {
             window.request_animation_frame();
         }

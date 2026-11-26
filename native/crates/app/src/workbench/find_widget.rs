@@ -721,7 +721,8 @@ impl Workbench {
     /// The widget over the text area's top right corner (overlayWidgets.ts TOP_RIGHT_CORNER), `area_width` wide.
     pub(super) fn find_widget(&self, area_width: f32, content_left: f32, minimap_width: f32, window: &mut Window, cx: &mut Context<Self>) -> Option<Stateful<Div>> {
         let state = &self.find.controller.state;
-        let elapsed = self.find.toggled.map_or(SLIDE, |toggled| toggled.elapsed());
+        // findWidget.css: reduced motion shows and hides the widget without its slide.
+        let elapsed = self.find.toggled.filter(|_| !self.is_motion_reduced()).map_or(SLIDE, |toggled| toggled.elapsed());
         if !state.is_revealed && elapsed >= SLIDE {
             return None;
         }

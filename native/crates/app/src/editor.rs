@@ -32,6 +32,7 @@ mod comment;
 pub(crate) mod cursor;
 pub mod drag_and_drop;
 mod edit;
+pub use edit::next_undo_stamp;
 pub mod find;
 pub mod folding;
 pub mod injected_text;
@@ -120,8 +121,9 @@ impl TextDocument {
     /// encoding, else the one its BOM or zero bytes show, else `files.encoding`.
     // shortcut: binary files open as text; upstream refuses them (FILE_IS_BINARY) and shows the binary editor.
     pub fn from_bytes(scheme: &str, path: &Path, bytes: &[u8], requested: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
-        let detected = encoding::detect(bytes).encoding;
-        let encoding = encoding::read_encoding(settings, (scheme == "file").then_some(path), requested, detected);
+        let resource = (scheme == "file").then_some(path);
+        let detected = crate::encoding_guess::detect(bytes, settings, resource, false);
+        let encoding = encoding::read_encoding(settings, resource, requested, detected.as_deref());
         let text = encoding::decode(bytes, &encoding);
         Self::from_text(scheme, path, &text, encoding, None, languages, settings)
     }
@@ -559,6 +561,8 @@ pub struct TextModel {
     pub markers_truncated: bool,
     /// Each replace as (version it applied to, start, end, new end), for the model's other editors to follow.
     pub(crate) edits: Vec<(u32, Position, Position, Position)>,
+    /// The placeholder model of a custom document's webview editor: whether the document is dirty.
+    pub custom_document_dirty: bool,
 }
 
 /// One model shared by the editors of its resource in every group.
@@ -632,7 +636,7 @@ impl OpenEditor {
     fn new(document: TextDocument, preview: bool, model_id: u32) -> Self {
         let indentation = document.indentation;
         let guides = indent_guides(&document.lines, indentation.tab_size, indentation.indent_size(), document.off_side);
-        let model = TextModel { document, version_id: 1, history: History::default(), guides, host_reference: None, associated_file: false, markers: Vec::new(), markers_truncated: false, edits: Vec::new() };
+        let model = TextModel { document, version_id: 1, history: History::default(), guides, host_reference: None, associated_file: false, markers: Vec::new(), markers_truncated: false, edits: Vec::new(), custom_document_dirty: false };
         Self::of_model(Rc::new(RefCell::new(model)), preview, model_id)
     }
 
@@ -749,6 +753,10 @@ pub struct EditorGroup {
     pub multi_diffs: HashMap<u32, MultiDiffInput>,
     /// The merge editors among `editors`, by their entry's model id: each edits its result model.
     pub merges: HashMap<u32, crate::merge_editor::MergeInput>,
+    /// For an editor among `editors` that stacks several live code editors (a notebook's cells), by its entry's
+    /// model id: the model the group's code editor edits, the focused one (`INotebookEditor.activeCodeEditor`).
+    /// The others draw as `embedded_code_editor`s without the focus.
+    pub stacked_editors: HashMap<u32, crate::diff_editor::Side>,
     /// `$registerTextEditorDecorationType` render options by decoration type key.
     pub decoration_types: HashMap<String, serde_json::Value>,
     pub disposed: model_service::DisposedModels,
@@ -759,19 +767,40 @@ impl EditorGroup {
     /// The model the code editor edits: the active editor's, or the modified side of the active diff editor.
     pub fn active(&self) -> Option<&OpenEditor> {
         let tab = self.active_tab()?;
+        self.code_editor_of(tab)
+    }
+
+    /// The code editor a tab shows: a diff's modified editor, a merge editor's result model, else the tab itself.
+    fn code_editor_of<'a>(&'a self, tab: &'a OpenEditor) -> Option<&'a OpenEditor> {
+        if let Some(editor) = self.diffs.get(&tab.model_id).and_then(|diff| diff.modified_editor.as_ref()) {
+            return Some(editor);
+        }
         match self.edited_side(tab.model_id) {
             Some(side) => self.model(&side.scheme, &side.path),
             None => Some(tab),
         }
     }
 
-    /// The side a diff editor (its modified one) or a merge editor (its result) edits in the code editor.
+    /// The side a diff editor (its modified one), a merge editor (its result) or a notebook editor (its focused cell)
+    /// edits in the code editor.
     fn edited_side(&self, id: u32) -> Option<crate::diff_editor::Side> {
-        self.diffs.get(&id).map(|diff| diff.modified.clone()).or_else(|| self.merges.get(&id).map(|merge| merge.result.clone()))
+        let stacked = || self.stacked_editors.get(&id).cloned();
+        self.diffs.get(&id).map(|diff| diff.modified.clone()).or_else(|| self.merges.get(&id).map(|merge| merge.result.clone())).or_else(stacked)
+    }
+
+    /// The tab of group `id` that shows, as `group_active` without resolving the model it edits.
+    pub fn group_active_tab(&self, id: u32) -> Option<&OpenEditor> {
+        match self.group(id) {
+            Some(group) => group.editors.get(group.active_index()?),
+            None => self.active_tab(),
+        }
     }
 
     pub fn active_mut(&mut self) -> Option<&mut OpenEditor> {
         let id = *self.recent.first()?;
+        if self.diffs.get(&id).is_some_and(|diff| diff.modified_editor.is_some()) {
+            return self.diffs.get_mut(&id).and_then(|diff| diff.modified_editor.as_mut());
+        }
         match self.edited_side(id) {
             Some(modified) => self.model_mut(&modified.scheme, &modified.path),
             None => self.editors.iter_mut().find(|editor| editor.model_id == id),
@@ -822,10 +851,28 @@ impl EditorGroup {
 
     /// Opens a diff editor of two open models as `open` opens an editor; `entry` is its text-less tab document.
     pub fn open_diff(&mut self, entry: TextDocument, input: DiffInput, preview: bool) {
+        let mut input = input;
+        self.attach_modified_editor(&mut input);
         self.next_model_id += 1;
         self.diffs.insert(self.next_model_id, input);
         let editor = OpenEditor::new(entry, preview, self.next_model_id);
         self.insert(editor, preview);
+    }
+
+    /// Gives a diff its own code editor of the modified model, at the start of the model.
+    pub fn attach_modified_editor(&mut self, input: &mut DiffInput) {
+        let Some(model) = self.model(&input.modified.scheme, &input.modified.path).map(|editor| editor.model.clone()) else { return };
+        self.next_model_id += 1;
+        input.modified_editor = Some(OpenEditor::of_model(model, false, self.next_model_id));
+    }
+
+    /// The modified side's editor of a diff taken out of `diffs` (its `modified_editor` and `modified`): its own,
+    /// else the model's.
+    pub fn diff_modified_mut<'a>(&'a mut self, own: &'a mut Option<OpenEditor>, modified: &crate::diff_editor::Side) -> Option<&'a mut OpenEditor> {
+        match own.as_mut() {
+            Some(editor) => Some(editor),
+            None => self.model_mut(&modified.scheme, &modified.path),
+        }
     }
 
     /// Opens a multi diff editor as `open_diff` opens a diff editor.
@@ -886,7 +933,9 @@ impl EditorGroup {
     /// is disposed.
     fn keep_or_dispose(&mut self, model: OpenEditor) {
         self.save_view_state(&model);
-        if Rc::strong_count(&model.model) > 1 {
+        // A diff's modified editor holds the model too, but the model stays in `models` for `model` to find.
+        let diff_editors = self.diffs.values().filter(|diff| diff.modified_editor.as_ref().is_some_and(|editor| Rc::ptr_eq(&editor.model, &model.model))).count();
+        if Rc::strong_count(&model.model) - diff_editors > 1 {
             return;
         }
         if self.is_referenced(&model, Instant::now()) {
@@ -946,10 +995,7 @@ impl EditorGroup {
     pub fn group_active(&self, id: u32) -> Option<(&OpenEditor, Viewport)> {
         let Some(group) = self.group(id) else { return self.active().map(|editor| (editor, self.viewport)) };
         let tab = &group.editors[group.active_index()?];
-        let editor = match self.edited_side(tab.model_id) {
-            Some(side) => self.model(&side.scheme, &side.path)?,
-            None => tab,
-        };
+        let editor = self.code_editor_of(tab)?;
         Some((editor, group.viewport))
     }
 
@@ -997,17 +1043,24 @@ impl EditorGroup {
         self.next_group_id += 1;
         let id = self.next_group_id;
         let mut group = GroupState { id, editors: Vec::new(), recent: Vec::new(), viewport: self.viewport, unicode_banner_closed: false };
-        let copied = self.next_model_id + 1;
-        if let Some(tab) = self.active_tab().filter(|_| copy_active) {
-            let mut copy = OpenEditor::of_model(tab.model.clone(), false, copied);
-            copy.restore_view_state(&tab.view_state(self.viewport), self.viewport);
-            if let Some(diff) = self.diffs.get(&tab.model_id) {
-                let input = DiffInput { inline_now: diff.inline_now, ..DiffInput::new(diff.original.clone(), diff.modified.clone(), diff.label.clone()) };
+        let source = self.active_tab().filter(|_| copy_active).map(|tab| (tab.model.clone(), tab.view_state(self.viewport), tab.model_id));
+        if let Some((model, view_state, tab_id)) = source {
+            self.next_model_id += 1;
+            let mut copy = OpenEditor::of_model(model, false, self.next_model_id);
+            copy.restore_view_state(&view_state, self.viewport);
+            let diff = self.diffs.get(&tab_id).map(|diff| {
+                let view_state = diff.modified_editor.as_ref().map(|editor| editor.view_state(self.viewport));
+                (DiffInput { inline_now: diff.inline_now, ..DiffInput::new(diff.original.clone(), diff.modified.clone(), diff.label.clone()) }, view_state)
+            });
+            if let Some((mut input, view_state)) = diff {
+                self.attach_modified_editor(&mut input);
+                if let (Some(editor), Some(view_state)) = (input.modified_editor.as_mut(), view_state) {
+                    editor.restore_view_state(&view_state, self.viewport);
+                }
                 self.diffs.insert(copy.model_id, input);
             }
             group.recent.push(copy.model_id);
             group.editors.push(copy);
-            self.next_model_id = copied;
         }
         self.other_groups.push(group);
         id
@@ -1050,7 +1103,8 @@ impl EditorGroup {
     /// Every editor's cursors follow the edits other editors of its model made (render calls it each frame).
     pub fn sync_editors(&mut self) {
         let others = self.other_groups.iter_mut().flat_map(|group| &mut group.editors);
-        for editor in self.editors.iter_mut().chain(others) {
+        let diff_editors = self.diffs.values_mut().filter_map(|diff| diff.modified_editor.as_mut());
+        for editor in self.editors.iter_mut().chain(others).chain(diff_editors) {
             editor.sync_with_model();
         }
     }
@@ -1091,6 +1145,7 @@ impl EditorGroup {
         self.diffs.remove(model_id);
         self.multi_diffs.remove(model_id);
         self.merges.remove(model_id);
+        self.stacked_editors.remove(model_id);
     }
 
     fn insert(&mut self, mut editor: OpenEditor, preview: bool) {

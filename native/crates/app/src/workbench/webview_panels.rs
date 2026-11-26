@@ -52,12 +52,12 @@ pub(super) struct WebviewPanel {
     /// The extension's view type; the editor id is `mainThreadWebview-<viewType>` (`WebviewViewTypeTransformer`).
     pub(super) view_type: String,
     pub(super) title: String,
-    extension_id: String,
+    pub(super) extension_id: String,
     /// `webviewOriginStore.getOrigin`: one origin per view type and extension, so its storage persists.
-    origin: String,
+    pub(super) origin: String,
     pub(super) html: String,
     /// `IWebviewContentOptions`.
-    content_options: Value,
+    pub(super) content_options: Value,
     retain_context_when_hidden: bool,
     /// `do-update-state`: what `vscode.setState` stored, given back when a released webview loads again.
     pub(super) state: Value,
@@ -276,7 +276,8 @@ impl Workbench {
                 true => visible_views.contains(&panel.path),
                 false => visible_editors.iter().any(|(scheme, path)| panel.scheme == *scheme && panel.path == *path),
             };
-            if shown && panel.webview.is_none() {
+            // WKWebView needs the main thread, which cargo test threads are not.
+            if shown && panel.webview.is_none() && !cfg!(test) {
                 created.push(panel.handle.clone());
             }
             if shown && panel.revive {
@@ -436,6 +437,9 @@ impl Workbench {
         if event.id.starts_with(super::editor_insets::INSET_ID_PREFIX) {
             return self.handle_editor_inset_event(event);
         }
+        if let Some(tab) = event.id.strip_prefix(super::notebook_editor::WEBVIEW_ID_PREFIX) {
+            return self.handle_notebook_webview_event(tab.parse().unwrap_or_default(), &event.channel, &event.data, window, cx);
+        }
         let Some(panel) = self.webview_panel_mut(&event.id) else { return };
         let data = event.data;
         match event.channel.as_str() {
@@ -502,7 +506,7 @@ impl Workbench {
     }
 
     /// mainThreadWebviews.ts `onDidClickLink`: `isSupportedLink`, then the opener service.
-    fn open_webview_link(&mut self, link: &str, enable_command_uris: &Value, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_webview_link(&mut self, link: &str, enable_command_uris: &Value, window: &mut Window, cx: &mut Context<Self>) {
         let (scheme, rest) = link.split_once(':').unwrap_or_default();
         match scheme {
             "http" | "https" | "mailto" => cx.open_url(link),
@@ -548,6 +552,7 @@ impl Workbench {
             let Some(custom) = panel.custom.filter(|custom| custom.resolved && panel.scheme == WEBVIEW_PANEL_SCHEME) else { continue };
             let open = self.webview_panels.panels.iter().any(|other| other.view_type == panel.view_type && other.custom.as_ref().is_some_and(|other| other.resource == custom.resource));
             if !open {
+                self.custom_document_disposed(&custom.resource, &panel.view_type);
                 self.host.send("ExtHostCustomEditors", "$disposeCustomDocument", vec![custom.resource, json!(panel.view_type)]);
             }
         }
@@ -677,7 +682,7 @@ impl Workbench {
 
     pub(super) fn webview_styles(&self) -> Value {
         let label = self.color_themes.iter().find(|entry| entry.settings_id == self.theme.settings_id).map_or(self.theme.settings_id.clone(), |entry| entry.label.clone());
-        webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true)
+        webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true, self.is_motion_reduced())
     }
 
     /// webviewIconManager.ts: the dark icon for dark and high contrast themes, the light one otherwise.
@@ -806,7 +811,7 @@ pub(super) fn percent_decode(text: &str) -> String {
 
 /// A `did-keydown` from the host page as the keystroke GPUI would have seen: index.html forwards the keys its
 /// frame does not handle, which upstream go to the workbench's keybinding service.
-fn keystroke(data: &Value) -> Option<Keystroke> {
+pub(super) fn keystroke(data: &Value) -> Option<Keystroke> {
     let code = data["code"].as_str().unwrap_or_default();
     let key = data["key"].as_str()?;
     let key = if let Some(letter) = code.strip_prefix("Key") {

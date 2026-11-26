@@ -210,7 +210,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     cx.simulate_mouse_up(file_row, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(menu_titles(&workbench, cx), ["Reveal in Finder", "---", "Select for Compare", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
+    assert_eq!(menu_titles(&workbench, cx), ["Reveal in Finder", "Open in Integrated Terminal", "---", "Select for Compare", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")]);
 
     // The pointer focuses the item under it; Down goes on from there and skips the separator; Enter runs it.
@@ -221,9 +221,9 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     assert_eq!(focused(cx), None);
     cx.simulate_mouse_move(point(px(150.), px(148.)), None, Modifiers::none());
     cx.simulate_keystrokes("pagedown");
+    assert_eq!(focused(cx), Some(14));
+    cx.simulate_keystrokes("pageup down down down down down down down down");
     assert_eq!(focused(cx), Some(13));
-    cx.simulate_keystrokes("pageup down down down down down down down");
-    assert_eq!(focused(cx), Some(12));
     cx.simulate_keystrokes("enter");
     cx.run_until_parked();
     assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_none() && workbench.explorer.edit.as_ref().is_some_and(|edit| edit.renamed.is_some())));
@@ -234,8 +234,11 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     cx.simulate_mouse_down(empty, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
     // As the reference's (port/fixtures/ui-pair/m12/workspace-folders.json), less the commands the port lacks; imageCarousel.contribution.ts adds Open in Images Preview (navigation, order 25).
-    let below = ["New File...", "New Folder...", "Reveal in Finder", "Open in Images Preview", "---", "Add Folder to Workspace...", "Open Folder Settings", "Remove Folder from Workspace", "---", "Open Timeline", "---", "(Paste)", "---", "Copy Path", "Copy Relative Path"];
+    let below = ["New File...", "New Folder...", "Reveal in Finder", "Open in Images Preview", "Open in Integrated Terminal", "---", "Add Folder to Workspace...", "Open Folder Settings", "Remove Folder from Workspace", "---", "Find in Folder...", "---", "Open Timeline", "---", "(Paste)", "---", "Copy Path", "Copy Relative Path"];
     assert_eq!(menu_titles(&workbench, cx), below);
+    // The menu takes the focus and `.context-view-block` the pane's hover: the title actions hide.
+    assert!(workbench.update_in(cx, |workbench, window, _| !workbench.explorer_title_actions_shown(window)));
+    assert!(workbench.read_with(cx, |workbench, _| !workbench.pane_hover_reachable()));
     cx.simulate_keystrokes("escape");
     assert!(workbench.update_in(cx, |workbench, window, _| workbench.context_menu.is_none() && workbench.explorer.focus.is_focused(window)));
 
@@ -243,7 +246,7 @@ fn the_context_menu_selects_the_row_and_runs_its_items_with_keys_and_clicks(cx: 
     // Items are 24px from the border and the 4px padding, the separators 11px.
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     let top = workbench.read_with(cx, |workbench, _| f32::from(workbench.context_menu.as_ref().unwrap().levels[0].origin.y));
-    let delete = point(px(150.), px(top + 5. + 24. * 8. + 11. * 5. + 12.));
+    let delete = point(px(150.), px(top + 5. + 24. * 9. + 11. * 5. + 12.));
     cx.simulate_mouse_down(delete, MouseButton::Left, Modifiers::alt());
     cx.simulate_mouse_up(delete, MouseButton::Left, Modifiers::alt());
     assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_some()), "too early");
@@ -317,7 +320,7 @@ fn extension_items_follow_the_right_clicked_rows_resource(cx: &mut TestAppContex
     let file_row = point(px(120.), px(129.));
     cx.simulate_mouse_down(file_row, MouseButton::Right, Modifiers::none());
     cx.run_until_parked();
-    assert_eq!(menu_titles(&workbench, cx), ["Open Text Preview", "Reveal in Finder", "---", "Select for Compare", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
+    assert_eq!(menu_titles(&workbench, cx), ["Open Text Preview", "Reveal in Finder", "Open in Integrated Terminal", "---", "Select for Compare", "---", "Open Timeline", "---", "Cut", "Copy", "---", "Copy Path", "Copy Relative Path", "---", "Rename...", "Delete"]);
     // markdown.showPreview opens only a `vscode.Uri`, which the host revives from `$mid` 1.
     let resource = workbench.read_with(cx, |workbench, _| workbench.context_menu.as_ref().unwrap().args[0].clone());
     assert_eq!(resource["$mid"], 1);
@@ -622,5 +625,40 @@ fn typing_a_letter_focuses_the_matching_row(cx: &mut TestAppContext) {
     cx.simulate_keystrokes("a");
     assert_eq!(focused(cx), Some(dir.join("a.txt")), "after 800ms a new word starts");
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.folder.as_ref().unwrap().selected.clone()), [dir.join("a.txt")], "the selection stays");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// style.css `.hc-black .monaco-list:not(.element-focused):focus:before`: the Explorer focused by its view command
+/// has no focused row, so high contrast outlines the list.
+#[gpui::test]
+fn the_focused_explorer_without_a_focused_row_is_outlined_in_high_contrast(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-hc-outline", cx);
+    workbench.update_in(cx, |workbench, window, cx| {
+        let themes = scan_extension(&workbench.app_root.join("extensions/theme-defaults"), true).unwrap();
+        workbench.theme = load_theme(&[themes], "Default High Contrast").unwrap();
+        drop(workbench.execute_command("workbench.view.explorer", Vec::new(), window, cx));
+    });
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, _| {
+        let focused_row = workbench.folder.as_ref().unwrap().focused.clone();
+        assert_eq!(focused_row, None);
+        assert!(workbench.high_contrast_list_outline(workbench.explorer.focus.is_focused(window), focused_row.is_some()).is_some());
+    });
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// searchActionsFind.ts `FindInFolderAction` by its Shift+Alt+F key: the Search view opens with the folder in
+/// "files to include".
+#[gpui::test]
+fn find_in_folder_searches_the_selected_folder(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = explorer("explorer-find-in-folder", cx);
+    select(&workbench, &dir.join("sub"), cx);
+    cx.simulate_keystrokes("shift-alt-f");
+    cx.run_until_parked();
+    workbench.read_with(cx, |workbench, _| {
+        assert_eq!(workbench.side_bar_view, crate::workbench::search_view::SideBarView::Search);
+        assert!(workbench.search.details_visible);
+        assert_eq!(workbench.search.value(crate::workbench::search_view::SearchField::Include), "./sub");
+    });
     std::fs::remove_dir_all(dir).unwrap();
 }

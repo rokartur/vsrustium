@@ -391,6 +391,11 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::ExplorerContext, None, "revealFileInOS", "Reveal in Finder", "navigation", 20., Some("resourceScheme == 'file' || resourceScheme == 'vscode-userdata'"), None),
     // imageCarousel.contribution.ts `OpenImagesInCarouselFromExplorerAction`.
     (MenuId::ExplorerContext, None, "workbench.action.openImagesInCarousel", "Open in Images Preview", "navigation", 25., Some("config.imageCarousel.explorerContextMenu.enabled && (explorerResourceIsFolder || resourceExtname =~ /^\\.(png|jpg|jpeg|jpe|gif|webp|svg|bmp|ico|mp4|webm|mov)$/i)"), None),
+    // externalTerminal.contribution.ts; the port has no remote, so the `vscode-remote` alternative is left out.
+    (MenuId::ExplorerContext, None, "openInIntegratedTerminal", "Open in Integrated Terminal", "navigation", 30., Some("resourceScheme == 'file' && (config.terminal.explorerKind == 'integrated' || config.terminal.explorerKind == 'both')"), None),
+    (MenuId::ExplorerContext, None, "openInTerminal", "Open in External Terminal", "navigation", 31., Some("resourceScheme == 'file' && (config.terminal.explorerKind == 'external' || config.terminal.explorerKind == 'both')"), None),
+    // searchActionsFind.ts.
+    (MenuId::ExplorerContext, None, "filesExplorer.findInFolder", "Find in Folder...", "4_search", 10., Some("explorerResourceIsFolder"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.cut", "Cut", "5_cutcopypaste", 8., Some("!explorerResourceIsRoot && !explorerResourceReadonly"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.copy", "Copy", "5_cutcopypaste", 10., Some("!explorerResourceIsRoot"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.paste", "Paste", "5_cutcopypaste", 20., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly && fileCopied")),

@@ -1,5 +1,8 @@
 use std::path::{Path, PathBuf};
 
+use gpui::{Context, Window};
+use serde_json::Value;
+
 use crate::commands::Outcome;
 
 use super::Workbench;
@@ -13,6 +16,8 @@ impl Workbench {
             workbench.open_external_terminal();
             Outcome::done()
         });
+        self.commands.register("openInTerminal", |workbench, args, window, cx| workbench.open_resources_in_terminal(&args, false, window, cx));
+        self.commands.register("openInIntegratedTerminal", |workbench, args, window, cx| workbench.open_resources_in_terminal(&args, true, window, cx));
     }
 
     /// externalTerminal.contribution.ts `openNativeConsole`: the last active workspace root, else the active file's
@@ -25,6 +30,29 @@ impl Workbench {
             containing.or(workspace.folders.first()).map(|folder| folder.path.clone())
         });
         let cwd = root.or_else(|| active.and_then(|file| file.parent().map(Path::to_path_buf)));
+        self.spawn_external_terminal(cwd);
+    }
+
+    /// externalTerminal.contribution.ts `openInTerminal` and `openInIntegratedTerminal`: a terminal in each distinct
+    /// folder of the resources, a file's parent for a file.
+    fn open_resources_in_terminal(&mut self, args: &[Value], integrated: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let mut cwds: Vec<PathBuf> = Vec::new();
+        for resource in self.multi_selected_resources(args, window) {
+            let cwd = if resource.is_dir() { resource } else { resource.parent().map(Path::to_path_buf).unwrap_or(resource) };
+            if !cwds.contains(&cwd) {
+                cwds.push(cwd);
+            }
+        }
+        for cwd in cwds {
+            match integrated {
+                true => self.create_terminal_in(cwd, window, cx),
+                false => self.spawn_external_terminal(Some(cwd)),
+            }
+        }
+        Outcome::done()
+    }
+
+    fn spawn_external_terminal(&mut self, cwd: Option<PathBuf>) {
         let exec = self.setting("terminal.external.osxExec");
         let (program, args) = open_terminal_command(exec.as_str(), cwd.as_deref());
         let mut command = std::process::Command::new(program);

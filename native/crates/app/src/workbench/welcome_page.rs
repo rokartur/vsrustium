@@ -1275,7 +1275,7 @@ impl Workbench {
         let pre = self.app_root.join("src/vs/workbench/contrib/webview/browser/pre");
         let mut webview = Webview::new(window, WEBVIEW_ID, WEBVIEW_ORIGIN, "", pre, roots, events);
         let label = self.color_themes.iter().find(|entry| entry.settings_id == self.theme.settings_id).map_or(self.theme.settings_id.clone(), |entry| entry.label.clone());
-        webview.send("styles", webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true));
+        webview.send("styles", webview::theme_data(&self.theme, &label, &self.setting("editor"), self.setting("accessibility.underlineLinks") == true, self.is_motion_reduced()));
         let allow_scripts = !matches!(media, Media::Svg { .. });
         webview.send("content", json!({ "contents": html, "title": "", "options": { "allowMultipleAPIAcquire": false, "allowScripts": allow_scripts, "allowForms": false }, "state": Value::Null, "cspSource": "'self' https://*.vscode-cdn.net", "confirmBeforeClose": "keyboardOnly" }));
         self.welcome.media = Some(MediaWebview { step, theme, webview, checked_on, enabled: None });

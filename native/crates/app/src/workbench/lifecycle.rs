@@ -269,17 +269,22 @@ async fn backup_tracker_before_shutdown(workbench: &WeakEntity<Workbench>, reaso
     };
     // An error saving is left to the steps below, as `doSaveAllBeforeShutdown` errors are only logged.
     futures::future::join_all(auto_saves).await;
-    let backed_up = workbench.update(cx, |workbench, _| {
+    let backed_up = workbench.update(cx, |workbench, cx| {
         if workbench.dirty_editors().is_empty() {
             workbench.discard_all_backups();
-            return Some(true);
+            return Some((true, Vec::new()));
         }
-        workbench.backs_up_on_shutdown(reason).then(|| workbench.backup_before_shutdown())
+        workbench.backs_up_on_shutdown(reason).then(|| (workbench.backup_before_shutdown(), workbench.backup_custom_documents_before_shutdown(cx)))
     });
+    let backed_up = match backed_up {
+        Ok(Some((text, custom))) => Some(text && futures::future::join_all(custom).await.iter().all(|backup| matches!(backup, Ok(Some(_))))),
+        Ok(None) => None,
+        Err(_) => Some(true),
+    };
     match backed_up {
-        Ok(Some(true)) | Err(_) => false,
-        Ok(Some(false)) => backup_failed(workbench, reason, cx).await,
-        Ok(None) => confirm_before_shutdown(workbench, cx).await,
+        Some(true) => false,
+        Some(false) => backup_failed(workbench, reason, cx).await,
+        None => confirm_before_shutdown(workbench, cx).await,
     }
 }
 

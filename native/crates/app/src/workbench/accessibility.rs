@@ -122,6 +122,16 @@ impl Workbench {
         }
     }
 
+    /// `isMotionReduced`: `workbench.reduceMotion` on, or auto with the macOS Reduce Motion setting, read on each call
+    /// as Chromium's `prefers-reduced-motion` query follows it. Gates the `.monaco-enable-motion` animations.
+    pub(crate) fn is_motion_reduced(&self) -> bool {
+        match self.setting("workbench.reduceMotion").as_str() {
+            Some("on") => true,
+            Some("off") => false,
+            _ => objc2_app_kit::NSWorkspace::sharedWorkspace().accessibilityDisplayShouldReduceMotion(),
+        }
+    }
+
     pub(super) fn accessibility_context(&self, context: &mut std::collections::HashMap<String, Value>) {
         context.insert("accessibilityModeEnabled".into(), json!(self.is_screen_reader_optimized()));
         self.accessible_view_context(context);

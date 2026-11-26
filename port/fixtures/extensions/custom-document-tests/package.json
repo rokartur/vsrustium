@@ -1,0 +1,17 @@
+{
+	"name": "custom-document-tests",
+	"publisher": "port",
+	"version": "0.0.1",
+	"main": "./extension.js",
+	"activationEvents": ["onCustomEditor:testCustomDocument.cdoc"],
+	"engines": { "vscode": "^1.90.0" },
+	"contributes": {
+		"customEditors": [
+			{
+				"viewType": "testCustomDocument.cdoc",
+				"displayName": "Test custom document",
+				"selector": [{ "filenamePattern": "*.cdoc" }]
+			}
+		]
+	}
+}

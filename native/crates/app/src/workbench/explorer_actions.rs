@@ -192,8 +192,7 @@ impl Workbench {
         ];
         let hover = self.color("toolbar.hoverBackground");
         // 4px from the header's end, measured against the reference with ui-pair (m12/workspace-folders.json).
-        // The pane's hover is its hitbox's, so a context menu's block hides the actions as `.context-view-block` does.
-        let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(4.)).when(!shown, |bar| bar.invisible().group_hover(super::view_panes::FILE_VIEW, |bar| bar.visible()));
+        let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(4.)).when(!shown, |bar| bar.invisible().when(self.pane_hover_reachable(), |bar| bar.group_hover(super::view_panes::FILE_VIEW, |bar| bar.visible())));
         for (icon, command, enabled) in actions {
             let foreground = if enabled { self.foreground_or("icon.foreground") } else { self.color("disabledForeground") };
             bar = bar.child(self.icon(icon, 20., 16., foreground).id(command).rounded(px(4.)).when(enabled, |action| {
@@ -273,6 +272,9 @@ impl Workbench {
         let input_focused = self.explorer.input_focus.is_focused(window) || self.explorer.find.focus.is_focused(window);
         let focused = input_focused || self.explorer.focus.is_focused(window);
         context.insert("foldersViewVisible".into(), json!(true));
+        // The electron-browser externalTerminal contribution registers `terminal.explorerKind`, default `integrated`;
+        // core-settings.json holds the browser registry, without it.
+        context.entry("config.terminal.explorerKind".into()).or_insert(json!("integrated"));
         context.insert("filesExplorerFocus".into(), json!(focused));
         context.insert("explorerViewletFocus".into(), json!(focused));
         // The Explorer is the only view of the side bar.
@@ -381,7 +383,7 @@ impl Workbench {
     /// explorerView.ts `selectActiveFile` with `explorer.autoReveal`: selects the active file unless
     /// `explorer.autoRevealExclude` matches it, and with `true` scrolls a row out of view to the middle (`reveal(item, 0.5)`).
     pub(super) fn reveal_active_file(&mut self) {
-        let Some(path) = self.editors.active().map(|editor| editor.document().path.clone()) else { return };
+        let Some(path) = self.active_notebook_resource().map(|(_, path)| path).or_else(|| self.editors.active().map(|editor| editor.document().path.clone())) else { return };
         // `EditorResourceAccessor.getOriginalUri`: a custom editor or media preview reveals its file.
         let path = self.webview_resource(&path).unwrap_or(path);
         let auto_reveal = self.setting("explorer.autoReveal");

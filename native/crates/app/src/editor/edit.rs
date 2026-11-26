@@ -121,8 +121,17 @@ impl History {
     }
 }
 
+/// A stamp later than every one before, for undo groups and the notebook edits they interleave with
+/// (undoRedoService.ts orders a resource group's elements by when they were pushed).
+pub fn next_undo_stamp() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 #[derive(Debug)]
 struct UndoGroup {
+    /// When the group opened, in the order of every model's groups (`next_undo_stamp`).
+    stamp: u64,
     edits: Vec<AppliedEdit>,
     selections_before: Vec<Selection>,
     selections_after: Vec<Selection>,
@@ -190,6 +199,9 @@ impl OpenEditor {
         // A notebook cell's text is no working copy: its notebook is the one dirty.
         if self.document().scheme == crate::notebook::CELL_SCHEME {
             return false;
+        }
+        if self.document().scheme == crate::workbench::webview_panels::WEBVIEW_PANEL_SCHEME {
+            return self.text_model().custom_document_dirty;
         }
         self.text_model().history.alternative_version_id != self.text_model().history.saved_alternative_version_id
     }
@@ -745,6 +757,12 @@ impl OpenEditor {
         Some(change)
     }
 
+    /// The stamps of the groups undo and redo would take next: a notebook's cells share one undo order by them.
+    pub fn undo_stamps(&self) -> (Option<u64>, Option<u64>) {
+        let history = &self.text_model().history;
+        (history.undo.last().map(|group| group.stamp), history.redo.last().map(|group| group.stamp))
+    }
+
     pub fn last_change_was_undo(&self) -> bool {
         self.text_model().history.undone_version_id == self.text_model().version_id
     }
@@ -1047,7 +1065,7 @@ impl OpenEditor {
                 group.selections_after = selections_after;
                 group.alternative_after = version_id;
             }
-            None => history.undo.push(UndoGroup { edits, selections_before, selections_after, alternative_before, alternative_after: version_id }),
+            None => history.undo.push(UndoGroup { stamp: next_undo_stamp(), edits, selections_before, selections_after, alternative_before, alternative_after: version_id }),
         }
         history.open = true;
         drop(model);

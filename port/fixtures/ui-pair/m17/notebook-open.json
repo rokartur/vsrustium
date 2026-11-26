@@ -1,0 +1,10 @@
+[
+	{ "wait": 8000 },
+	{ "hotkey": ["cmd", "p"] },
+	{ "wait": 800 },
+	{ "type": "sample.ipynb" },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 12000 },
+	{ "shot": "notebook-open" }
+]

@@ -234,8 +234,11 @@ impl Workbench {
             "file" => Some(std::fs::read(path).map_err(|error| format!("Unable to read file '{}' ({error})", path.display()))?),
             _ => None,
         };
-        let detected = bytes.as_deref().and_then(|bytes| encoding::detect(bytes).encoding);
-        let resolved = encoding::read_encoding(&self.settings.lock().unwrap(), (scheme == "file").then_some(path), Some(requested), detected);
+        let settings = self.settings.lock().unwrap();
+        let resource = (scheme == "file").then_some(path);
+        let detected = bytes.as_deref().and_then(|bytes| crate::encoding_guess::detect(bytes, &settings, resource, false));
+        let resolved = encoding::read_encoding(&settings, resource, Some(requested), detected.as_deref());
+        drop(settings);
         if model.document().encoding != resolved {
             model.document_mut().encoding = resolved.clone();
             self.host.send("ExtHostDocuments", "$acceptEncodingChanged", vec![uri.clone(), json!(resolved)]);

@@ -113,7 +113,6 @@ pub fn detect_by_bom(bytes: &[u8]) -> Option<&'static str> {
 
 /// `detectEncodingFromBuffer` without auto guessing: the BOM, else UTF-16 when zero bytes sit only at odd (LE) or
 /// even (BE) positions of the first 512 bytes; any other zero byte makes the bytes binary.
-// shortcut: `files.autoGuessEncoding` (jschardet) is not ported for the files the workbench reads; the extension host guesses for `workspace.decode`.
 pub fn detect(bytes: &[u8]) -> Detected {
     let encoding = detect_by_bom(bytes);
     if encoding == Some(UTF16BE) || encoding == Some(UTF16LE) {

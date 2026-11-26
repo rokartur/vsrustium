@@ -1,0 +1,16 @@
+[
+	{ "hotkey": ["cmd", "shift", "p"] },
+	{ "wait": 800 },
+	{ "type": "Manage Workspace Trust" },
+	{ "wait": 1500 },
+	{ "key": "return" },
+	{ "wait": 2500 },
+	{ "hotkey": ["cmd", "return"], "foreground": true },
+	{ "wait": 2000 },
+	{ "scroll": [300, 250], "amount": 10 },
+	{ "wait": 1000 },
+	{ "shot": "trust-table" },
+	{ "key": "down", "foreground": true },
+	{ "wait": 500 },
+	{ "shot": "trust-section-focus" }
+]

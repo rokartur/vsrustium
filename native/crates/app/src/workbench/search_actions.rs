@@ -232,11 +232,16 @@ impl Workbench {
         for (id, include) in [("search.action.restrictSearchToFolder", true), ("search.action.excludeFromSearch", false)] {
             self.commands.register(id, move |workbench, _, window, cx| {
                 if let Some(RowKey::Folder(path) | RowKey::File(path)) = workbench.search.focused.clone() {
-                    workbench.search_with_folder(&path, include, window, cx);
+                    workbench.search_with_folder(&[path], include, window, cx);
                 }
                 Outcome::done()
             });
         }
+        self.commands.register("filesExplorer.findInFolder", |workbench, args, window, cx| {
+            let resources = workbench.multi_selected_resources(&args, window);
+            workbench.search_with_folder(&resources, true, window, cx);
+            Outcome::done()
+        });
         for (id, exclude) in [("search.action.excludeFileTypeFromSearch", true), ("search.action.includeFileTypeInSearch", false)] {
             self.commands.register(id, move |workbench, _, window, cx| {
                 if let Some(RowKey::File(path)) = workbench.search.focused.clone() {
@@ -331,17 +336,26 @@ impl Workbench {
         cx.notify();
     }
 
-    /// searchActionsFind.ts `searchWithFolderCommand` from the results and searchView.ts `_searchWithIncludeOrExclude`:
-    /// the folder of `path` goes into the include or exclude input.
-    fn search_with_folder(&mut self, path: &Path, include: bool, window: &mut Window, cx: &mut Context<Self>) {
-        let folder = match path.is_dir() {
-            true => path.to_path_buf(),
-            false => path.parent().unwrap_or(path).to_path_buf(),
-        };
+    /// searchActionsFind.ts `searchWithFolderCommand` and searchView.ts `_searchWithIncludeOrExclude`: the folders of
+    /// `resources` go into the include or exclude input of the Search view, or of a search editor by `search.mode`.
+    fn search_with_folder(&mut self, resources: &[PathBuf], include: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let folders: Vec<PathBuf> = resources.iter().map(|path| if path.is_dir() { path.clone() } else { path.parent().unwrap_or(path).to_path_buf() }).collect();
         let workspace_folders: Vec<_> = self.workspace().iter().flat_map(|workspace| &workspace.folders).map(|folder| (folder.path.clone(), folder.name.clone())).collect();
-        let folders: Vec<WorkspaceFolder> = workspace_folders.iter().map(|(path, name)| WorkspaceFolder { path, name }).collect();
-        let workspace = search_paths::Workspace { folders: &folders, single_folder: folders.len() == 1 && self.workspace().is_some_and(|workspace| workspace.file.is_none()), home: None };
-        let folder_paths = search_paths::resolve_resources_for_search_includes(&[folder], &workspace);
+        let workspace_folders: Vec<WorkspaceFolder> = workspace_folders.iter().map(|(path, name)| WorkspaceFolder { path, name }).collect();
+        let workspace = search_paths::Workspace { folders: &workspace_folders, single_folder: workspace_folders.len() == 1 && self.workspace().is_some_and(|workspace| workspace.file.is_none()), home: None };
+        let folder_paths = search_paths::resolve_resources_for_search_includes(&folders, &workspace);
+        let mode = self.setting("search.mode");
+        if let Some(location) = match mode.as_str() {
+            Some("newEditor") => Some("new"),
+            Some("reuseEditor") => Some("reuse"),
+            _ => None,
+        } {
+            let key = if include { "filesToInclude" } else { "filesToExclude" };
+            let outcome = self.execute_command("search.action.openEditor", vec![json!({ key: folder_paths.join(", "), "showIncludesExcludes": true, "location": location })], window, cx);
+            super::keyboard::report_failure(outcome, cx);
+            return;
+        }
+        self.open_search_view(cx);
         if folder_paths.is_empty() || folder_paths.iter().any(|path| path == ".") {
             self.search.input_mut(SearchField::Include).value.set_value(String::new());
             self.focus_search_widget(true, false, window, cx);
@@ -397,7 +411,7 @@ impl Workbench {
         for id in super::explorer_keyboard::EXPLORER_LIST_COMMANDS {
             let search_run = commands.iter().find(|(search_id, _)| *search_id == id).map(|(_, run)| *run);
             self.commands.register(id, move |workbench, _, window, cx| {
-                if workbench.keybindings_table_list_command(id, window, cx) || workbench.references_peek_list_command(id, window, cx) || workbench.hierarchy_peek_list_command(id, window, cx) {
+                if workbench.keybindings_table_list_command(id, window, cx) || workbench.references_peek_list_command(id, window, cx) || workbench.hierarchy_peek_list_command(id, window, cx) || workbench.notebook_list_command(id, window, cx) {
                     return Outcome::done();
                 }
                 match search_run {
