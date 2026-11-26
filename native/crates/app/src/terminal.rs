@@ -154,6 +154,9 @@ pub struct TerminalInstance {
     pub cwds: Vec<String>,
     /// The marks and output of the command being entered or run.
     current: FinishedCommand,
+    /// markNavigationAddon.ts `_currentMarker` and its temporary decoration.
+    current_mark: marks::CurrentMark,
+    pub navigation_highlight: Option<marks::NavigationHighlight>,
 }
 
 /// `ITerminalCommand`: lines are absolute buffer lines, as `BufferPoint` counts them.
@@ -233,6 +236,8 @@ impl TerminalInstance {
             commands: Vec::new(),
             cwds: Vec::new(),
             current: FinishedCommand::default(),
+            current_mark: marks::CurrentMark::Bottom,
+            navigation_highlight: None,
         };
         if instance.launch.extension_pty {
             return (instance, None);
@@ -481,6 +486,7 @@ impl TerminalInstance {
 
     /// `sendText` and typed input: the terminal follows the input (xterm.js `scrollOnUserInput`).
     pub fn input(&mut self, data: &str) {
+        self.current_mark = marks::CurrentMark::Bottom;
         self.record(json!({ "type": "input", "data": data }));
         self.write_input(data);
     }

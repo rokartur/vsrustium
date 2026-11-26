@@ -30,6 +30,7 @@ impl Workbench {
             self.commands.register(id, move |workbench, _, _, cx| {
                 if let Some(instance) = workbench.terminal_view.active_instance_mut() {
                     if previous { instance.scroll_to_previous_mark() } else { instance.scroll_to_next_mark() }
+                    workbench.end_navigation_outline_later(cx);
                     cx.notify();
                 }
                 Outcome::done()
@@ -70,7 +71,7 @@ impl Workbench {
         let rows = self.terminal_view.instance(id)?.term.screen_lines();
         let overlay = grid::sticky_scroll_bounds(pane, rows, &sticky, metrics, self.terminal_scrollbar_width());
         let local = Bounds::new(overlay.origin - pane.origin, overlay.size);
-        let reveal_line = sticky.reveal_line;
+        let (reveal_start, reveal_end) = sticky.reveal;
         Some(
             div()
                 .id(("terminal-sticky-scroll", id as usize))
@@ -88,8 +89,9 @@ impl Workbench {
                     cx.stop_propagation();
                     workbench.terminal_view.set_active(id);
                     if let Some(instance) = workbench.terminal_view.instance_mut(id) {
-                        instance.reveal_line(reveal_line);
+                        instance.reveal_rows(reveal_start, reveal_end);
                     }
+                    workbench.end_navigation_outline_later(cx);
                     window.focus(&workbench.terminal_view.focus, cx);
                     cx.notify();
                 }))

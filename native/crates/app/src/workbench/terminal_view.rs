@@ -1052,6 +1052,7 @@ impl Workbench {
             .children(self.terminal_sticky_scroll_hit_area(id, cx))
             .children(self.terminal_resize_overlay(id))
             .children(self.terminal_command_guide(id))
+            .children(self.terminal_navigation_highlight(id))
             .children(self.terminal_decorations(id, cx))
             .children(self.terminal_initial_hint(id, focused, cx))
             .on_hover(cx.listener(move |workbench, hovered: &bool, _, cx| {
