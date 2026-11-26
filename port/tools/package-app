@@ -119,7 +119,8 @@ const plist = {
 	CFBundleDisplayName: product.nameLong,
 	CFBundleName: product.nameShort,
 	CFBundleExecutable: 'vsrustium',
-	CFBundleIconFile: `${product.nameShort}.icns`,
+	CFBundleIconFile: 'AppIcon',
+	CFBundleIconName: 'AppIcon',
 	CFBundleIdentifier: product.darwinBundleIdentifier,
 	CFBundleInfoDictionaryVersion: '6.0',
 	CFBundlePackageType: 'APPL',
@@ -138,8 +139,12 @@ writeFileSync(join(contents, 'Info.plist.json'), JSON.stringify(plist));
 await Bun.$`plutil -convert xml1 -o ${join(contents, 'Info.plist')} ${join(contents, 'Info.plist.json')}`;
 rmSync(join(contents, 'Info.plist.json'));
 writeFileSync(join(contents, 'PkgInfo'), 'APPL????');
-// shortcut: the app icon is Code - OSS's (resources/darwin/code.icns, MIT) until VSRustium has its own.
-cpSync('resources/darwin/code.icns', join(contents, 'Resources', `${product.nameShort}.icns`));
+// actool writes Assets.car (the Liquid Glass icon in every appearance) and AppIcon.icns (macOS 15 and older); it
+// exits 0 without writing either when the .icon folder is not named AppIcon.icon, and fails on a relative path.
+await Bun.$`xcrun actool ${join(root, 'resources/darwin/AppIcon.icon')} --compile ${join(contents, 'Resources')} --platform macosx --minimum-deployment-target ${plist.LSMinimumSystemVersion} --app-icon AppIcon --output-partial-info-plist /dev/null --errors`;
+if (!existsSync(join(contents, 'Resources/Assets.car')) || !existsSync(join(contents, 'Resources/AppIcon.icns'))) {
+	throw new Error('actool wrote no app icon');
+}
 for (const icon of new Set<string>(reference.CFBundleDocumentTypes.map((type: { CFBundleTypeIconFile: string }) => type.CFBundleTypeIconFile))) {
 	cpSync(join('resources/darwin', icon), join(contents, 'Resources', icon));
 }
