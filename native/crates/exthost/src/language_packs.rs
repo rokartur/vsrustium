@@ -35,16 +35,20 @@ pub fn set_nls(user_data: &Path, nls: Nls) {
     let _ = USER_DATA.set(user_data.to_path_buf());
 }
 
-/// `MainThreadLocalization`: `$fetchBuiltInBundleUri` answers the translation file's URI, `$fetchBundleContents`
-/// the file's text.
-pub fn serve_localization(method: &str, args: &[Value]) -> Option<Value> {
+/// `MainThreadLocalization`: `$fetchBuiltInBundleUri` answers the translation file's URI or undefined,
+/// `$fetchBundleContents` the file's text, rejecting as `fileService.readFile` does when it cannot be read.
+pub fn serve_localization(method: &str, args: &[Value]) -> Result<Value, Value> {
     match method {
         "$fetchBuiltInBundleUri" => {
-            let (id, language) = (args.first()?.as_str()?, args.get(1)?.as_str()?);
-            built_in_bundle_path(USER_DATA.get()?, id, language).map(|path| crate::scan::file_uri(&path))
+            let (Some(id), Some(language)) = (args.first().and_then(Value::as_str), args.get(1).and_then(Value::as_str)) else { return Ok(Value::Null) };
+            let path = USER_DATA.get().and_then(|user_data| built_in_bundle_path(user_data, id, language));
+            Ok(path.map_or(Value::Null, |path| crate::scan::file_uri(&path)))
         }
-        "$fetchBundleContents" => std::fs::read_to_string(args.first()?["path"].as_str()?).ok().map(Value::String),
-        _ => None,
+        "$fetchBundleContents" => {
+            let path = args.first().and_then(|uri| uri["path"].as_str()).unwrap_or_default();
+            std::fs::read_to_string(path).map(Value::String).map_err(|error| crate::main_thread::serialized_error(&format!("Unable to read file '{path}' ({error})")))
+        }
+        _ => Ok(Value::Null),
     }
 }
 
