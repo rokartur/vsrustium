@@ -82,8 +82,7 @@ impl Workbench {
             .map(|part| match editor.document().scheme.as_str() {
                 // A webview editor has no breadcrumbs: its resource has no file system provider.
                 WEBVIEW_PANEL_SCHEME => part,
-                // shortcut: a notebook editor has no breadcrumbs yet (the notebook and its outline upstream).
-                crate::notebook::CELL_SCHEME | crate::notebook::NOTEBOOK_EDITOR_SCHEME => part,
+                _ if self.active_notebook_resource().is_some_and(|(scheme, _)| scheme == "untitled") => part,
                 super::extension_editor::EXTENSION_EDITOR_SCHEME => part.child(self.extension_editor_body(&editor.document().path, cx)),
                 super::welcome_page::WALKTHROUGH_SCHEME => part.child(self.walkthrough_editor_body(&editor.document().path, window, cx)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
@@ -95,7 +94,8 @@ impl Workbench {
                 // mergeEditor.ts: the merge editor has no breadcrumbs.
                 _ if self.editors.active_merge().is_some() => part,
                 _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
-                _ => part.child(self.breadcrumbs(editor).opacity(self.unfocused_editor_opacity(window))),
+                // editorHeaderControl.ts: the breadcrumbs below the tabs have the editor type picker.
+                _ => part.child(self.breadcrumbs(editor).children(self.editor_type_picker(cx)).opacity(self.unfocused_editor_opacity(window))),
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
@@ -343,7 +343,12 @@ impl Workbench {
     /// The file's path below its workspace folder, one item per segment (breadcrumbs.filePath relative), after the
     /// folder's name in a workspace (`BreadcrumbsModel._initFilePathInfo`).
     pub(super) fn breadcrumbs(&self, editor: &OpenEditor) -> Div {
-        let path = &editor.document().path;
+        let foreground = self.color("breadcrumb.foreground");
+        // A notebook editor's breadcrumbs are its notebook's resource and the notebook outline (notebookOutline.ts).
+        let is_notebook = matches!(editor.document().scheme.as_str(), crate::notebook::CELL_SCHEME | crate::notebook::NOTEBOOK_EDITOR_SCHEME);
+        let (notebook_path, notebook_items) = self.notebook_breadcrumbs(foreground, BREADCRUMBS_HEIGHT).filter(|_| is_notebook).unzip();
+        let document = editor.document();
+        let path = notebook_path.as_ref().unwrap_or(&document.path);
         let workspace = self.workspace();
         let folder = workspace.and_then(|workspace| workspace.folder_of(path));
         let relative: PathBuf = match folder {
@@ -354,19 +359,28 @@ impl Workbench {
         if let Some(folder) = folder.filter(|_| workspace.is_some_and(|workspace| workspace.file.is_some())) {
             segments.insert(0, folder.name.clone());
         }
-        let foreground = self.color("breadcrumb.foreground");
         let file = segments.len() - 1;
-        let symbols = self.breadcrumb_symbols(editor);
-        let last = file + symbols.len();
-        let symbol_items = symbols.into_iter().map(|(kind, name)| {
-            let codicon = kind.map(crate::symbol_icons::codicon);
-            let color = codicon.and_then(crate::symbol_icons::color_key).and_then(|key| self.theme.color(key)).unwrap_or(foreground);
-            let icon = codicon.filter(|_| self.setting("breadcrumbs.icons") != false).map(|codicon| self.icon(codicon, 16., 16., color));
-            (icon, name)
-        });
+        let symbol_items: Vec<(Option<Div>, String)> = match notebook_items {
+            Some(items) => items,
+            None => self
+                .breadcrumb_symbols(editor)
+                .into_iter()
+                .map(|(kind, name)| {
+                    let codicon = kind.map(crate::symbol_icons::codicon);
+                    let color = codicon.and_then(crate::symbol_icons::color_key).and_then(|key| self.theme.color(key)).unwrap_or(foreground);
+                    let icon = codicon.filter(|_| self.setting("breadcrumbs.icons") != false).map(|codicon| self.icon(codicon, 16., 16., color));
+                    (icon, name)
+                })
+                .collect(),
+        };
+        let last = file + symbol_items.len();
         let file_items = segments.into_iter().enumerate().map(|(index, segment)| {
             // The 16px before each item is the item's own ::before; folders have no icon in Seti, the file does.
-            let file_icon = if index == file { self.document_icon(editor, BREADCRUMBS_HEIGHT, foreground) } else { None };
+            let file_icon = match (index == file, &notebook_path) {
+                (false, _) => None,
+                (true, Some(path)) => self.file_icons.as_ref().and_then(|icons| icons.file_icon(path, self.languages.language_of(path, ""), self.theme.kind, 13., BREADCRUMBS_HEIGHT, foreground)),
+                (true, None) => self.document_icon(editor, BREADCRUMBS_HEIGHT, foreground),
+            };
             (file_icon, segment)
         });
         let items = file_items.chain(symbol_items).enumerate().map(|(index, (icon, segment))| {

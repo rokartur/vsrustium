@@ -531,8 +531,9 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.show_trust_modal_on_start(window, cx);
                 workbench.start_backups(&user_data, backup_folder, cx);
                 perf::mark("code/willRestoreEditors");
+                let resolver_cache = workbench.take_editor_resolver_cache();
                 if let Some(file) = file {
-                    workbench.open_file(file, true, window, cx);
+                    workbench.open_startup_file(file, &resolver_cache, window, cx);
                 } else if workbench.editors.active().is_some() && window.focused(cx).is_none() {
                     // editorGroupView.ts `restoreEditors`: the active group's restored editor takes the focus unless
                     // something else took it meanwhile.

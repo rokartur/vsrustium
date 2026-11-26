@@ -411,7 +411,7 @@ impl Workbench {
         for id in super::explorer_keyboard::EXPLORER_LIST_COMMANDS {
             let search_run = commands.iter().find(|(search_id, _)| *search_id == id).map(|(_, run)| *run);
             self.commands.register(id, move |workbench, _, window, cx| {
-                if workbench.keybindings_table_list_command(id, window, cx) || workbench.references_peek_list_command(id, window, cx) || workbench.hierarchy_peek_list_command(id, window, cx) {
+                if workbench.keybindings_table_list_command(id, window, cx) || workbench.references_peek_list_command(id, window, cx) || workbench.hierarchy_peek_list_command(id, window, cx) || workbench.notebook_list_command(id, window, cx) {
                     return Outcome::done();
                 }
                 match search_run {

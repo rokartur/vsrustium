@@ -291,7 +291,7 @@ impl Builder<'_, '_> {
 }
 
 /// The first `$(name)` or `$(name~modifier)` of `text`: the text before it, the codicon id, the rest.
-fn split_icon(text: &str) -> Option<(&str, &str, &str)> {
+pub(crate) fn split_icon(text: &str) -> Option<(&str, &str, &str)> {
     let mut search = 0;
     while let Some(found) = text[search..].find("$(") {
         let start = search + found;

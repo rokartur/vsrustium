@@ -29,6 +29,9 @@ const ASSOCIATIONS_SETTING: &str = "workbench.editorAssociations";
 const RANK_DEFAULT: u8 = 4;
 pub(super) const RANK_BUILTIN: u8 = 3;
 const RANK_TEXT_EDITOR: u8 = 2;
+/// `RegisteredEditorPriority.option`.
+const RANK_OPTION: u8 = 1;
+const RESOLVER_CACHE_KEY: &str = "editorOverrideService.cache";
 
 #[derive(Default)]
 pub struct CustomEditors {
@@ -132,6 +135,43 @@ impl Workbench {
         (view_type != TEXT_EDITOR_ID).then_some(view_type)
     }
 
+    /// editorResolverService.ts `cacheEditors` on `onWillSaveState`: the globs of every editor but the optional ones,
+    /// and of the user's associations, whose resources the next start opens only after the extensions registered.
+    pub(super) fn store_editor_resolver_cache(&self) {
+        let mut patterns: Vec<String> = Vec::new();
+        for contribution in self.editor_contributions().into_iter().filter(|contribution| contribution.rank != RANK_OPTION) {
+            patterns.extend(contribution.patterns);
+        }
+        patterns.extend(self.editor_associations().into_iter().map(|(pattern, _)| pattern));
+        patterns.sort();
+        patterns.dedup();
+        self.profile_storage.lock().unwrap().set(RESOLVER_CACHE_KEY, Value::from(patterns).to_string());
+    }
+
+    /// The previous session's `editorOverrideService.cache`, read and removed on startup as the resolver does.
+    pub fn take_editor_resolver_cache(&mut self) -> Vec<String> {
+        let mut storage = self.profile_storage.lock().unwrap();
+        let cache = storage.get(RESOLVER_CACHE_KEY).and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
+        storage.delete(RESOLVER_CACHE_KEY);
+        cache
+    }
+
+    /// The command line's file on startup. editorResolverService.ts `resolveEditor` runs before the extensions
+    /// registered their editors and waits for them only when the cache or a user association names the file's glob,
+    /// so on a first start a `.ipynb` opens as JSON in the text editor.
+    pub fn open_startup_file(&mut self, path: PathBuf, resolver_cache: &[String], window: &mut Window, cx: &mut Context<Self>) {
+        let waits_for_extensions = resource_matcher("file", &path).is_some_and(|matches| {
+            resolver_cache.iter().any(|pattern| matches(pattern)) || self.editor_associations().iter().any(|(pattern, view_type)| view_type != TEXT_EDITOR_ID && matches(pattern))
+        });
+        match waits_for_extensions {
+            true => self.open_file(path, true, window, cx),
+            false => {
+                self.open_text_file(path, true, window, cx);
+                self.editor_type_picker_pending = self.editors.active_tab().map(|tab| tab.model_id);
+            }
+        }
+    }
+
     /// `getEditorMatches(resource).defaultRule`: the id of the editor that opens the resource, `default` for the text
     /// editor, and the glob a new default would be written for. Without `associations` it is the natural default.
     /// The contributed custom editors, then the built-in media previews.
@@ -141,7 +181,7 @@ impl Workbench {
         contributions
     }
 
-    fn default_editor(&self, scheme: &str, path: &Path, associations: bool) -> (String, String) {
+    pub(super) fn default_editor(&self, scheme: &str, path: &Path, associations: bool) -> (String, String) {
         let extension_pattern = format!("*{}", path.extension().map(|extension| format!(".{}", extension.to_string_lossy())).unwrap_or_default());
         let text_editor = (TEXT_EDITOR_ID.to_owned(), extension_pattern.clone());
         let Some(matches) = resource_matcher(scheme, path) else { return text_editor };
@@ -178,15 +218,7 @@ impl Workbench {
     /// editorCommands.ts `reopenEditorWith` on the active editor: `override_id` is an editor id, None asks with the
     /// open with picker.
     pub(super) fn reopen_active_editor_with(&mut self, override_id: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let Some(editor) = self.editors.active() else { return Outcome::done() };
-        let (resource, current) = match self.webview_panels.panels.iter().find(|panel| editor.document().is(&panel.scheme, &panel.path)) {
-            Some(panel) => match &panel.custom {
-                Some(custom) => (custom.resource.clone(), panel.view_type.clone()),
-                // A webview panel has no resource to reopen.
-                None => return Outcome::done(),
-            },
-            None => (editor.document().uri(), TEXT_EDITOR_ID.to_owned()),
-        };
+        let Some((resource, current)) = self.active_editor_type() else { return Outcome::done() };
         match override_id {
             Some(editor_id) => self.reopen_with(&resource, &current, &editor_id, false, window, cx),
             None => {
@@ -196,18 +228,51 @@ impl Workbench {
         }
     }
 
-    /// `group.replaceEditors`: a text model's editor stays and gains or loses its webview; a custom document's editor
-    /// closes first.
-    // shortcut: the custom document's replacement opens where the group opens editors, not in the closed one's place.
-    fn reopen_with(&mut self, resource: &Value, current: &str, editor_id: &str, preserve_focus: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+    /// The active editor's resource and the id of the editor showing it (`activeEditor.editorId`): a notebook's type,
+    /// a custom editor's view type or the text editor; a webview panel has no resource to reopen.
+    pub(super) fn active_editor_type(&self) -> Option<(Value, String)> {
+        if let Some(model) = self.active_notebook_editor().and_then(|editor| self.host.notebooks.model(&editor.notebook)) {
+            return Some((model.uri.clone(), model.view_type.clone()));
+        }
+        let editor = self.editors.active()?;
+        match self.webview_panels.panels.iter().find(|panel| editor.document().is(&panel.scheme, &panel.path)) {
+            Some(panel) => panel.custom.as_ref().map(|custom| (custom.resource.clone(), panel.view_type.clone())),
+            None => Some((editor.document().uri(), TEXT_EDITOR_ID.to_owned())),
+        }
+    }
+
+    /// `group.replaceEditors`: a text model's editor stays and gains or loses its webview; a custom document's or a
+    /// saved notebook's editor closes first.
+    // shortcut: the replacement opens where the group opens editors, not in the closed one's place.
+    pub(super) fn reopen_with(&mut self, resource: &Value, current: &str, editor_id: &str, preserve_focus: bool, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         if current == editor_id {
             return Outcome::done();
         }
-        if let Some(index) = self.editors.active_index().filter(|&index| self.editors.editors[index].document().scheme == WEBVIEW_PANEL_SCHEME) {
+        let notebook_dirty = self.active_notebook_editor().and_then(|editor| self.host.notebooks.model(&editor.notebook)).is_some_and(|model| model.dirty);
+        let replaced = |scheme: &str| scheme == WEBVIEW_PANEL_SCHEME || (scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME && !notebook_dirty);
+        if let Some(index) = self.editors.active_index().filter(|&index| replaced(&self.editors.editors[index].document().scheme)) {
             self.editors.close(index);
             self.editors_changed(cx);
         }
         self.open_with_resolver(resource, Some(editor_id), json!({ "preserveFocus": preserve_focus }), window, cx)
+    }
+
+    /// The editors that can open the resource: the text editor, then the contributed ones matching it (by glob or a
+    /// user association) by rank, as id, label, provider and whether it is a `*` option nobody associated.
+    pub(super) fn resource_editors(&self, scheme: &str, path: &Path) -> Vec<(String, String, String, bool)> {
+        let mut editors = vec![(TEXT_EDITOR_ID.to_owned(), "Text Editor".to_owned(), "Built-in".to_owned(), RANK_TEXT_EDITOR, false)];
+        if let Some(matches) = resource_matcher(scheme, path) {
+            let associated: Vec<String> = self.editor_associations().into_iter().filter(|(pattern, _)| matches(pattern)).map(|(_, view_type)| view_type).collect();
+            for contribution in self.editor_contributions() {
+                let is_associated = associated.contains(&contribution.view_type);
+                if is_associated || contribution.patterns.iter().any(|pattern| matches(pattern)) {
+                    let universal_option = !is_associated && contribution.rank == RANK_OPTION && contribution.patterns.iter().all(|pattern| pattern == "*");
+                    editors.push((contribution.view_type, contribution.display_name, contribution.provider, contribution.rank, universal_option));
+                }
+            }
+        }
+        editors[1..].sort_by_key(|(_, _, _, rank, _)| std::cmp::Reverse(*rank));
+        editors.into_iter().map(|(id, label, provider, _, universal_option)| (id, label, provider, universal_option)).collect()
     }
 
     /// openWithEditorPicker.ts `doPick`: the text editor, then the resource's editors by rank, and the entry that
@@ -215,19 +280,9 @@ impl Workbench {
     fn show_open_with_picker(&mut self, resource: Value, current: String, configure_default: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Ok((scheme, path)) = uri_parts(&resource) else { return };
         let (default_id, pattern) = self.default_editor(scheme, &path, true);
-        let mut editors = vec![(TEXT_EDITOR_ID.to_owned(), "Text Editor".to_owned(), "Built-in".to_owned(), RANK_TEXT_EDITOR)];
-        if let Some(matches) = resource_matcher(scheme, &path) {
-            let associated: Vec<String> = self.editor_associations().into_iter().filter(|(pattern, _)| matches(pattern)).map(|(_, view_type)| view_type).collect();
-            for contribution in self.editor_contributions() {
-                if associated.contains(&contribution.view_type) || contribution.patterns.iter().any(|pattern| matches(pattern)) {
-                    editors.push((contribution.view_type, contribution.display_name, contribution.provider, contribution.rank));
-                }
-            }
-        }
-        editors[1..].sort_by_key(|(_, _, _, rank)| std::cmp::Reverse(*rank));
         let mut entries = Vec::new();
         let mut ids = Vec::new();
-        for (id, label, detail, _) in editors {
+        for (id, label, detail, _) in self.resource_editors(scheme, &path) {
             let description = match (id == current, id == default_id) {
                 (true, true) => Some("Active and Default".to_owned()),
                 (true, false) => Some("Active".to_owned()),
@@ -280,7 +335,7 @@ impl Workbench {
 
     /// editorResolverService.ts `setDefaultEditor`: the association for the default rule's glob, removed when the
     /// editor is the one the resource opens with without it.
-    fn set_default_editor(&mut self, resource: &Value, editor_id: &str) {
+    pub(super) fn set_default_editor(&mut self, resource: &Value, editor_id: &str) {
         let Ok((scheme, path)) = uri_parts(resource) else { return };
         let (default_id, pattern) = self.default_editor(scheme, &path, true);
         let (natural_id, _) = self.default_editor(scheme, &path, false);
@@ -539,7 +594,7 @@ fn custom_editor_contributions(extensions: &[exthost::scan::ScannedExtension]) -
             let Some(view_type) = contribution["viewType"].as_str() else { continue };
             let priority = &contribution["priority"];
             let rank = match priority.as_str().or(priority["textEditor"].as_str()) {
-                Some("option") => 1,
+                Some("option") => RANK_OPTION,
                 Some("explicit") => 0,
                 Some("builtin") if is_builtin => RANK_BUILTIN,
                 _ => RANK_DEFAULT,
@@ -554,7 +609,7 @@ fn custom_editor_contributions(extensions: &[exthost::scan::ScannedExtension]) -
             let Some(view_type) = contribution["type"].as_str() else { continue };
             let rank = match contribution["priority"].as_str() {
                 None | Some("default") => RANK_DEFAULT,
-                Some(_) => 1,
+                Some(_) => RANK_OPTION,
             };
             let selectors = contribution["selector"].as_array().into_iter().flatten();
             let patterns = selectors.filter_map(|selector| selector["filenamePattern"].as_str().or(selector["filenamePattern"]["include"].as_str())).map(str::to_owned).collect();

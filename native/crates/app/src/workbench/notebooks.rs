@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use super::host_requests::uri_parts;
+use super::notebook_editor::CellReveal;
 use crate::commands::Outcome;
 use crate::editor::{OpenEditor, TextDocument};
 use crate::host_sync::FileJob;
@@ -28,6 +29,8 @@ type NotebookResult = Result<Value, Value>;
 const UPDATE_OUTPUT: u64 = 1;
 const UPDATE_OUTPUT_ITEMS: u64 = 2;
 const UPDATE_EXECUTION_STATE: u64 = 3;
+/// mainThreadDocuments.ts `BoundModelReferenceCollection` `_maxAge`.
+const HOST_REFERENCE_AGE: std::time::Duration = std::time::Duration::from_secs(3 * 60);
 
 impl Workbench {
     pub(crate) fn handle_notebook_request(&mut self, proxy: &str, method: &str, args: &[Value], window: &mut Window, cx: &mut Context<Self>) -> Outcome {
@@ -39,11 +42,22 @@ impl Workbench {
                 self.register_notebook_serializer(handle, arg(2).as_str().unwrap_or_default(), arg(3).clone(), arg(4).clone());
                 Outcome::done()
             }
+            ("MainThreadNotebook", "$registerNotebookCellStatusBarItemProvider") => {
+                self.register_cell_status_bar_provider(handle, arg(1).as_u64(), arg(2).as_str().unwrap_or_default().to_owned(), cx);
+                Outcome::done()
+            }
+            ("MainThreadNotebook", "$unregisterNotebookCellStatusBarItemProvider") => {
+                self.unregister_cell_status_bar_provider(handle, cx);
+                Outcome::done()
+            }
+            ("MainThreadNotebook", "$emitCellStatusBarEvent") => {
+                self.cell_status_bar_event(handle, cx);
+                Outcome::done()
+            }
             ("MainThreadNotebook", "$unregisterNotebookSerializer") => {
                 self.host.notebooks.serializers.retain(|serializer| serializer.handle != handle);
                 Outcome::done()
             }
-            // Cell status bar items wait for the notebook editor's cells.
             ("MainThreadNotebook", _) => Outcome::done(),
             ("MainThreadNotebookDocuments", "$tryCreateNotebook") => self.try_create_notebook(arg(0).clone(), cx),
             ("MainThreadNotebookDocuments", "$tryOpenNotebook") => self.try_open_notebook(arg(0).clone(), cx),
@@ -58,7 +72,19 @@ impl Workbench {
                 Outcome::Pending(receiver)
             }
             ("MainThreadNotebookEditors", "$tryShowNotebookDocument") => self.try_show_notebook(arg(0).clone(), arg(2).clone(), window, cx),
-            ("MainThreadNotebookEditors", "$tryRevealRange") => Outcome::done(),
+            ("MainThreadNotebookEditors", "$tryRevealRange") => {
+                let Some(tab) = self.host.notebooks.editors.iter().find(|editor| Some(editor.id.as_str()) == arg(0).as_str()).map(|editor| editor.tab_model_id) else { return Outcome::done() };
+                let reveal = match arg(2).as_u64() {
+                    Some(1) => CellReveal::Center,
+                    Some(2) => CellReveal::CenterIfOutside,
+                    Some(3) => CellReveal::Top,
+                    _ => CellReveal::InView,
+                };
+                let (start, end) = (arg(1)["start"].as_u64().unwrap_or_default() as usize, arg(1)["end"].as_u64().unwrap_or_default() as usize);
+                self.reveal_notebook_cells(tab, start, end, reveal);
+                cx.notify();
+                Outcome::done()
+            }
             ("MainThreadNotebookEditors", "$trySetSelections") => {
                 let selections = cell_ranges(arg(1));
                 if let Some(editor) = self.host.notebooks.editors.iter_mut().find(|editor| Some(editor.id.as_str()) == arg(0).as_str()) {
@@ -78,7 +104,32 @@ impl Workbench {
         }
     }
 
+    /// notebookVariableCommands.ts `_executeNotebookVariableProvider`: the named variables of the notebook's bound
+    /// kernel, when it has a variable provider.
+    fn execute_notebook_variable_provider(&mut self, resource: Option<&Value>, cx: &mut Context<Self>) -> Outcome {
+        let Some(model) = resource.and_then(|uri| self.host.notebooks.model(&notebook::uri_string(uri))) else { return Outcome::Ready(Ok(json!([]))) };
+        let (uri, key, view_type) = (model.uri.clone(), model.uri_string(), model.view_type.clone());
+        let kernels = &mut self.host.notebooks.kernels;
+        let Some(handle) = kernels.matching(&view_type, &key).1.filter(|kernel| kernel.has_variable_provider).map(|kernel| kernel.handle) else { return Outcome::Ready(Ok(json!([]))) };
+        let request_id = format!("{handle}variables{}", kernels.variable_request_index);
+        kernels.variable_request_index += 1;
+        kernels.variable_requests.insert(request_id.clone(), Vec::new());
+        let call = self.host.call_cancellable("ExtHostNotebookKernels", "$provideVariables", vec![json!(handle), json!(request_id), uri, Value::Null, json!("named"), json!(0)]);
+        let (sender, receiver) = oneshot::channel();
+        cx.spawn(async move |workbench, cx| {
+            let answer = call.await;
+            let collected = workbench.update(cx, |workbench, _| workbench.host.notebooks.kernels.variable_requests.remove(&request_id).unwrap_or_default()).unwrap_or_default();
+            let _ = sender.send(match answer {
+                Ok(Err(error)) => Err(error),
+                _ => Ok(json!(collected)),
+            });
+        })
+        .detach();
+        Outcome::Pending(receiver)
+    }
+
     pub(super) fn register_notebook_commands(&mut self) {
+        self.commands.register("_executeNotebookVariableProvider", |workbench, args, _, cx| workbench.execute_notebook_variable_provider(args.first(), cx));
         self.commands.register("_resolveNotebookContentProvider", |workbench, _, _, _| Outcome::Ready(Ok(json!(workbench.notebook_types().iter().map(NotebookType::info).collect::<Vec<_>>()))));
         self.commands.register("_executeDataToNotebook", |_, args, _, cx| {
             let view_type = args.first().and_then(Value::as_str).unwrap_or_default().to_owned();
@@ -132,6 +183,7 @@ impl Workbench {
             self.commands.register(id, move |workbench, _, window, cx| workbench.insert_cell_below(kind, window, cx));
         }
         self.commands.register("notebook.selectKernel", |workbench, _, window, cx| workbench.show_kernel_picker(window, cx));
+        self.register_notebook_list_commands();
         self.commands.register("notebook.cell.copyDown", |workbench, args, _, cx| {
             let Some((key, indices)) = workbench.cells_from_args(&args) else { return Outcome::done() };
             let Some(&index) = indices.first() else { return Outcome::done() };
@@ -170,7 +222,7 @@ impl Workbench {
         };
         let uri = (1..).map(|counter| notebook::untitled_uri(counter, &ending, &view_type)).find(|uri| self.host.notebooks.model(&notebook::uri_string(uri)).is_none()).expect("a free name");
         let content = options.get("content").filter(|content| !content.is_null()).cloned();
-        // notebookServiceImpl.ts keeps an untitled model until it is disposed; nothing here disposes one yet.
+        // The untitled model stays until it is disposed: a save as lets it go (`replace_notebook_editor`).
         self.host.notebooks.held.push(notebook::uri_string(&uri));
         let (sender, receiver) = oneshot::channel();
         cx.spawn(async move |workbench, cx| {
@@ -188,9 +240,20 @@ impl Workbench {
             Err(error) => return Outcome::Ready(Err(error)),
         };
         let key = notebook::uri_string(&uri);
-        if !self.host.notebooks.held.contains(&key) {
-            self.host.notebooks.held.push(key.clone());
-        }
+        // `BoundModelReferenceCollection.add`: the host's reference goes after three minutes.
+        self.host.notebooks.held.push(key.clone());
+        let expiring = key.clone();
+        cx.spawn(async move |workbench, cx| {
+            cx.background_executor().timer(HOST_REFERENCE_AGE).await;
+            let _ = workbench.update(cx, |workbench, cx| {
+                let held = &mut workbench.host.notebooks.held;
+                if let Some(index) = held.iter().position(|held| *held == expiring) {
+                    held.remove(index);
+                }
+                workbench.editors_changed(cx);
+            });
+        })
+        .detach();
         if self.host.notebooks.model(&key).is_some() {
             return Outcome::Ready(Ok(uri));
         }
@@ -305,13 +368,20 @@ impl Workbench {
                 model.cells.iter().skip(start).take(count).map(|cell| cell.handle).collect::<Vec<_>>()
             })
             .collect();
-        let applied = model.apply_edits(edits).map_err(|error| serialized_error(&error))?;
+        let mut applied = model.apply_edits(edits).map_err(|error| serialized_error(&error))?;
         let (uri, dirty, metadata, view_type) = (model.uri.clone(), model.dirty, model.metadata.clone(), model.view_type.clone());
         self.cancel_removed_executions(key, &view_type, &uri, &removed_handles);
         for text in &applied.added {
             self.create_cell_model(text);
         }
-        let removed: Vec<(String, std::path::PathBuf)> = applied.removed.iter().filter_map(|uri| uri_parts(uri).ok()).map(|(scheme, path)| (scheme.to_owned(), path)).collect();
+        // A replace's inverse brings its cells back with their text, read before their text models go.
+        for undo in &mut applied.undo {
+            if let Some(restore) = undo.as_object_mut().and_then(|undo| undo.remove("restore")) {
+                let cells: Vec<Value> = restore.as_array().into_iter().flatten().filter_map(|uri| applied.removed.iter().find(|cell| cell.uri == *uri)).map(|cell| self.cell_data(cell)).collect();
+                undo["cells"] = json!(cells);
+            }
+        }
+        let removed: Vec<(String, std::path::PathBuf)> = applied.removed.iter().filter_map(|cell| uri_parts(&cell.uri).ok()).map(|(scheme, path)| (scheme.to_owned(), path)).collect();
         self.editors.models.retain(|model| !removed.iter().any(|(scheme, path)| model.document().is(scheme, path)));
         if let Some(event) = &applied.event {
             let metadata = if applied.document_metadata_changed { metadata } else { Value::Null };
@@ -321,6 +391,9 @@ impl Workbench {
             self.host.send("ExtHostNotebookDocuments", "$acceptDirtyStateChanged", vec![uri, json!(dirty)]);
         }
         self.editors_changed(cx);
+        if applied.event.is_some() {
+            self.update_notebook_cell_status_bars(key, cx);
+        }
         Ok(applied)
     }
 
@@ -333,7 +406,11 @@ impl Workbench {
                 return Err(serialized_error(&format!("Notebook '{key}' has changed in the meantime (version {version}, now {})", model.version_id)));
             }
             let cell_edits: Vec<Value> = group.iter().map(|edit| edit["cellEdit"].clone()).collect();
-            self.apply_notebook_edits(&key, &cell_edits, cx)?;
+            // `computeUndo`: a workspace edit's cell edits are one step of the notebook's undo stack.
+            let applied = self.apply_notebook_edits(&key, &cell_edits, cx)?;
+            if !applied.undo.is_empty() {
+                self.push_cells_undo(&key, applied.undo, cell_edits);
+            }
         }
         Ok(Value::Null)
     }
@@ -372,6 +449,71 @@ impl Workbench {
         receiver
     }
 
+    /// A notebook editor's save (`NotebookEditorInput.save`): an untitled notebook saves as a file picked in the save
+    /// dialog.
+    pub(super) fn save_notebook_editor(&mut self, key: &str, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
+        match self.host.notebooks.model(key).is_some_and(|model| model.uri["scheme"] == "untitled") {
+            true => self.save_notebook_as(key, cx),
+            false => self.save_notebook(key, cx),
+        }
+    }
+
+    /// `NotebookEditorInput.saveAs`: the save dialog at the workspace's folder with the notebook's name, the
+    /// serialized notebook written there, the target notebook opened in place of the source editor; an untitled
+    /// source is disposed (notebookEditorModel.ts `saveAs` reverts it).
+    pub(super) fn save_notebook_as(&mut self, key: &str, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
+        let (sender, receiver) = oneshot::channel();
+        let Some(model) = self.host.notebooks.model(key) else {
+            let _ = sender.send(false);
+            return receiver;
+        };
+        let name = uri_parts(&model.uri).ok().and_then(|(_, path)| path.file_name().map(|name| name.to_os_string())).unwrap_or_default();
+        let suggested = match model.uri["scheme"] == "untitled" {
+            true => self.default_file_path().join(name),
+            false => uri_parts(&model.uri).map(|(_, path)| path).unwrap_or_default(),
+        };
+        let snapshot = model.snapshot(|cell| self.cell_text(&cell.uri));
+        let (source, view_type, untitled) = (model.uri.clone(), model.view_type.clone(), model.uri["scheme"] == "untitled");
+        let picked = self.pick_file_to_save(suggested, cx);
+        let key = key.to_owned();
+        cx.spawn(async move |workbench, cx| {
+            let Ok(Some(target)) = picked.await else {
+                let _ = sender.send(false);
+                return;
+            };
+            let written = match notebook_to_data(&workbench, cx, &view_type, snapshot).await {
+                Ok(bytes) => match workbench.update(cx, |workbench, _| workbench.host.run_files(FileJob::Write(resource(&exthost::scan::file_uri(&target)), bytes))) {
+                    Ok(write) => matches!(write.await, Ok(Ok(_))),
+                    Err(_) => false,
+                },
+                Err(_) => false,
+            };
+            if written {
+                let _ = workbench.update(cx, |workbench, cx| workbench.replace_notebook_editor(&key, &source, untitled, &target, &view_type, cx));
+            }
+            let _ = sender.send(written);
+        })
+        .detach();
+        receiver
+    }
+
+    /// After a save as: the source notebook's editor closes (an untitled source is clean and let go) and the target
+    /// opens as a notebook in its place.
+    fn replace_notebook_editor(&mut self, key: &str, source: &Value, untitled: bool, target: &std::path::Path, view_type: &str, cx: &mut Context<Self>) {
+        if untitled && let Some(model) = self.host.notebooks.model_mut(key) {
+            model.dirty = false;
+            self.host.send("ExtHostNotebookDocuments", "$acceptDirtyStateChanged", vec![source.clone(), json!(false)]);
+        }
+        self.host.notebooks.held.retain(|held| held != key);
+        if let Some(index) = self.editors.editors.iter().position(|editor| editor.document().is(NOTEBOOK_EDITOR_SCHEME, Path::new(key))) {
+            self.editors.close(index);
+        }
+        let target_uri = exthost::scan::file_uri(target);
+        let view_type = view_type.to_owned();
+        self.in_window(cx, move |workbench, window, cx| drop(workbench.open_with_resolver(&target_uri, Some(&view_type), json!({ "pinned": true }), window, cx)));
+        self.editors_changed(cx);
+    }
+
     pub(super) fn save_dirty_notebooks(&mut self, cx: &mut Context<Self>) -> Vec<oneshot::Receiver<bool>> {
         let dirty: Vec<String> = self.host.notebooks.models.iter().filter(|model| model.dirty && model.uri["scheme"] != "untitled").map(|model| model.uri_string()).collect();
         dirty.iter().map(|key| self.save_notebook(key, cx)).collect()
@@ -379,28 +521,35 @@ impl Workbench {
 
     /// `_workbench.revertAllDirty` for notebooks: a file notebook reads its resource again, an untitled one is clean.
     pub(super) fn revert_dirty_notebooks(&mut self, cx: &mut Context<Self>) {
-        let dirty: Vec<(Value, String)> = self.host.notebooks.models.iter().filter(|model| model.dirty).map(|model| (model.uri.clone(), model.view_type.clone())).collect();
-        for (uri, view_type) in dirty {
-            if uri["scheme"] == "untitled" {
-                self.host.notebooks.model_mut(&notebook::uri_string(&uri)).expect("listed above").dirty = false;
-                self.host.send("ExtHostNotebookDocuments", "$acceptDirtyStateChanged", vec![uri, json!(false)]);
-                continue;
-            }
-            cx.spawn(async move |workbench, cx| {
-                let Ok(data) = read_notebook(&workbench, cx, &uri, &view_type).await else { return };
-                let _ = workbench.update(cx, |workbench, cx| {
-                    let key = notebook::uri_string(&uri);
-                    let Some(model) = workbench.host.notebooks.model_mut(&key) else { return };
-                    let edits = reset_edits(model, &data);
-                    if workbench.apply_notebook_edits(&key, &edits, cx).is_ok() {
-                        workbench.host.notebooks.model_mut(&key).expect("still open").dirty = false;
-                        workbench.host.send("ExtHostNotebookDocuments", "$acceptDirtyStateChanged", vec![uri, json!(false)]);
-                        workbench.editors_changed(cx);
-                    }
-                });
-            })
-            .detach();
+        let dirty: Vec<String> = self.host.notebooks.models.iter().filter(|model| model.dirty).map(NotebookModel::uri_string).collect();
+        for key in dirty {
+            self.revert_notebook(&key, cx);
         }
+    }
+
+    /// `revert` of one notebook: a file notebook reads its resource again, an untitled one is clean.
+    pub(super) fn revert_notebook(&mut self, key: &str, cx: &mut Context<Self>) {
+        let Some(model) = self.host.notebooks.model(key) else { return };
+        let (uri, view_type) = (model.uri.clone(), model.view_type.clone());
+        if uri["scheme"] == "untitled" {
+            self.host.notebooks.model_mut(key).expect("found above").dirty = false;
+            self.host.send("ExtHostNotebookDocuments", "$acceptDirtyStateChanged", vec![uri, json!(false)]);
+            return;
+        }
+        cx.spawn(async move |workbench, cx| {
+            let Ok(data) = read_notebook(&workbench, cx, &uri, &view_type).await else { return };
+            let _ = workbench.update(cx, |workbench, cx| {
+                let key = notebook::uri_string(&uri);
+                let Some(model) = workbench.host.notebooks.model_mut(&key) else { return };
+                let edits = reset_edits(model, &data);
+                if workbench.apply_notebook_edits(&key, &edits, cx).is_ok() {
+                    workbench.host.notebooks.model_mut(&key).expect("still open").dirty = false;
+                    workbench.host.send("ExtHostNotebookDocuments", "$acceptDirtyStateChanged", vec![uri, json!(false)]);
+                    workbench.editors_changed(cx);
+                }
+            });
+        })
+        .detach();
     }
 
     /// `$tryShowNotebookDocument`: the notebook's editor in the group of `position`, opened when that group has none.
@@ -469,11 +618,12 @@ impl Workbench {
             self.sync_notebook_editors();
         }
         // notebookEditorWidget.ts focuses the cell list, not a cell's editor: the editor takes the focus on a click
-        // into a cell. shortcut: the list itself takes no keyboard focus (no cell navigation by arrow keys yet).
+        // into a cell or Enter.
         if options["preserveFocus"] != true {
-            window.blur(cx);
+            window.focus(&self.notebook_views.list_focus, cx);
         }
         self.editors_changed(cx);
+        self.update_notebook_cell_status_bars(key, cx);
         Ok(json!(self.host.notebooks.editor(tab_model_id).expect("synced above").id))
     }
 
@@ -574,6 +724,8 @@ impl Workbench {
             .iter()
             .map(NotebookModel::uri_string)
             .filter(|key| !notebooks.held.contains(key) && !notebooks.editors.iter().any(|editor| editor.notebook == *key))
+            // `canDispose`: a dirty notebook stays until it is saved or reverted.
+            .filter(|key| notebooks.model(key).is_some_and(|model| !model.dirty))
             .collect();
         for key in released {
             let index = self.host.notebooks.models.iter().position(|model| model.uri_string() == key).expect("listed above");
@@ -823,6 +975,12 @@ impl Workbench {
             "$removeKernel" => {
                 for association in self.host.notebooks.kernels.remove(handle) {
                     self.host.send("ExtHostNotebookKernels", "$acceptNotebookAssociation", association_args(&association));
+                }
+                Outcome::done()
+            }
+            "$receiveVariable" => {
+                if let Some(collected) = arg(0).as_str().and_then(|id| self.host.notebooks.kernels.variable_requests.get_mut(id)) {
+                    collected.push(arg(1).clone());
                 }
                 Outcome::done()
             }
