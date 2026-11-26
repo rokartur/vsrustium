@@ -106,6 +106,18 @@ const hostPackages = ['@vscode/proxy-agent', '@vscode/ripgrep-universal', '@vsco
 for (const [name, path] of copyDependencies(root, hostPackages)) {
 	link(path, join(app, 'node_modules', name));
 }
+// The encoding guess worker (encoding_guess/worker.mjs, embedded in the binary) loads these from the app's
+// node_modules; upstream's notices come from its build, so their licenses are appended to the shipped copy.
+const guessPackages = ['jschardet', '@vscode/iconv-lite-umd'];
+let notices = readFileSync('ThirdPartyNotices.txt', 'utf8');
+for (const [name, path] of copyDependencies(root, guessPackages)) {
+	link(path, join(app, 'node_modules', name));
+	const manifest = JSON.parse(readFileSync(join(path, 'package.json'), 'utf8'));
+	const license = readFileSync(join(path, 'LICENSE'), 'utf8').trim();
+	notices += `\n\n---------------------------------------------------------\n\n${name} ${manifest.version}\n${manifest.homepage ?? manifest.repository?.url ?? ''}\n\n${license}\n\n---------------------------------------------------------\n`;
+}
+writeFileSync(join(app, 'ThirdPartyNotices.txt'), notices);
+cpSync('LICENSE.txt', join(app, 'LICENSE.txt'));
 
 // A pnpm entry links its dev and peer dependencies too; the ones not copied would dangle, and codesign --strict
 // refuses a bundle with a dangling link.
