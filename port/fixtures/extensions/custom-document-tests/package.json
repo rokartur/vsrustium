@@ -6,6 +6,7 @@
 	"activationEvents": ["onCustomEditor:testCustomDocument.cdoc"],
 	"engines": { "vscode": "^1.90.0" },
 	"contributes": {
+		"keybindings": [{ "key": "cmd+alt+e", "command": "_cdoc.edit", "args": "b" }],
 		"customEditors": [
 			{
 				"viewType": "testCustomDocument.cdoc",

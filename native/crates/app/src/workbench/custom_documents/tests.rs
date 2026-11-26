@@ -101,7 +101,11 @@ fn edits_undo_redo_save_and_revert_through_the_host(cx: &mut TestAppContext) {
     let resource = resource(&dir);
     assert!(!active_dirty(&workbench, cx));
 
-    host_event(&workbench, "$onDidEdit", vec![resource.clone(), json!(VIEW_TYPE), json!(1), json!("Edit")], cx);
+    // As the host revives and sends it: `$mid` and `external` besides the parts the workbench sent.
+    let mut host_resource = resource.clone();
+    host_resource["$mid"] = json!(1);
+    host_resource["external"] = json!(format!("file://{}", dir.join("folder/a.bin").display()));
+    host_event(&workbench, "$onDidEdit", vec![host_resource, json!(VIEW_TYPE), json!(1), json!("Edit")], cx);
     assert!(active_dirty(&workbench, cx));
 
     run(&workbench, "undo", cx);

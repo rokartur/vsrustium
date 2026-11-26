@@ -399,6 +399,9 @@ impl Workbench {
 
     /// `saveAs` without a target: the save dialog at `suggestSavePath`, then the save to the picked path.
     pub(super) fn save_as(&mut self, scheme: String, path: PathBuf, options: SaveOptions, cx: &mut Context<Self>) -> oneshot::Receiver<bool> {
+        if scheme == super::webview_panels::WEBVIEW_PANEL_SCHEME {
+            return self.save_custom_document_as(&path, cx);
+        }
         let (sender, receiver) = oneshot::channel();
         let suggested = self.suggest_save_path(&scheme, &path);
         let picked = self.pick_file_to_save(suggested, cx);
