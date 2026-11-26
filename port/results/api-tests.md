@@ -19,6 +19,20 @@ Not reached: tests of the reference run (402 folder, 4 workspace) the port did n
 | after the four milestone 20 code commits | 278 / 17 / 3, exit 1 after 41 s | 4 / 0 / 0 |
 
 The suite runs to its end. Fixed in between: `vscode API - network proxy support` basic auth (`$lookupAuthorization`), and the three CustomExecution task tests (`runTask` with a task name showed the problem matcher picker; the 60 s timeouts are gone, hence 41 s). Left: `env.remoteName` (asserts the removed `vscode.github-authentication`), `custom root certificate` (passes with `--node`; Bun's TLS secure context has no `context.addCACert`), `Tabs - Ensure tabs getter is correct` (opens a notebook, milestone 17).
+
+### The parity run, no MOCHA_GREP
+
+`port/tools/api-tests` on the Studio at 2b2543907d9 (branch port-m20-sweep, after the port-integrate merge): every suite, notebooks included.
+
+| suites | passing | pending | failing | not reached |
+|--------|---------|---------|---------|-------------|
+| api-folder, all (exit 1 after 123 s) | 322 | 45 | 35 | 0 |
+| removed features: chat, chat - browser tools, chat - run_in_terminal, lm, vscode API - browser, browser CDP | 3 | 18 | 34 | 0 |
+| `env.remoteName` (asserts the removed `vscode.github-authentication`) | 0 | 0 | 1 | 0 |
+| the target's suites (notebooks 39/10/0 among them) | 319 | 27 | 0 | 0 |
+| api-workspace (exit 0 after 5 s) | 4 | 0 | 0 | 0 |
+
+Against the 318/28/0 target: every test of the target's suites ran and none fails; one test more passes and one fewer is pending than in the reference run (not identified: the reference log is not kept per test). The 35 failures are all in the suites and the test the target leaves out: the removed integrated browser's API throws `undefined is not an object (evaluating 'dto.id')`, the chat and lm suites need the removed chat services.
 ## Milestone 11: tree views and editor groups
 
 `MOCHA_GREP="vscode API - tree|vscode API - window" SUITE_TIMEOUT=600 port/tools/api-tests` on the Studio, the working tree after the panel commit d1e955ab4cf with tree views and decorations: api-folder 33 passing, 0 pending, 11 failing (exit 1 after 10s). All four tree.test.ts cases pass (`TreeView - element already registered`, `... after rapid root refresh`, `... during switch and update`, `... after refresh`). The 11 failing are window.test.ts cases that open editors in view columns, which `$tryShowTextDocument` ignored then, plus `Tabs - vscode.open & vscode.diff` (fake-fs, `_workbench.diff`) and `showWorkspaceFolderPick` (`_workbench.pickWorkspaceFolder` not found).
