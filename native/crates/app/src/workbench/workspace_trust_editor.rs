@@ -3,14 +3,16 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui::{AnyElement, ClickEvent, Context, Div, FocusHandle, FontWeight, KeyDownEvent, MouseButton, ScrollHandle, Stateful, Window, div, prelude::*, px};
+use gpui::{AnyElement, ClickEvent, Context, Div, FocusHandle, FontWeight, KeyDownEvent, MouseButton, ScrollHandle, Stateful, Subscription, Window, div, prelude::*, px};
 use serde_json::Value;
 
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
+use super::input_box_view::{InputId, InputLook, InputView};
 use super::keybindings_editor_view::ModalHeader;
 use crate::commands::Outcome;
 use crate::file_dialog::FileDialog;
+use crate::input_box::InputBox;
 use crate::walkthroughs::{Node, parse_linked_text};
 
 /// `TrustedUriTableVirtualDelegate`.
@@ -26,7 +28,20 @@ pub struct TrustEditor {
     scroll: ScrollHandle,
     /// The selected row of the trusted folders table.
     selected: Option<PathBuf>,
+    /// `navOrder`: the header, the trusted and Restricted Mode boxes and the trusted folders section.
+    sections: Vec<FocusHandle>,
+    /// Edit Path: the row being edited and its path input.
+    pub edit: Option<(PathBuf, InputBox)>,
+    pub path_view: InputView,
+    pub path_focus: Option<FocusHandle>,
+    _path_blur: Option<Subscription>,
 }
+
+/// The `navOrder` sections, in their order.
+const HEADER: usize = 0;
+const TRUSTED: usize = 1;
+const UNTRUSTED: usize = 2;
+const CONFIGURATION: usize = 3;
 
 impl Workbench {
     pub(super) fn register_workspace_trust_editor_commands(&mut self) {
@@ -41,6 +56,9 @@ impl Workbench {
     fn open_workspace_trust_editor(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.close_modal_editor(window, cx);
         self.trust_editor.open = true;
+        if self.trust_editor.sections.is_empty() {
+            self.trust_editor.sections = (0..4).map(|_| cx.focus_handle()).collect();
+        }
         let focus = self.trust_editor.focus.get_or_insert_with(|| cx.focus_handle()).clone();
         window.focus(&focus, cx);
         cx.notify();
@@ -74,7 +92,7 @@ impl Workbench {
             .pt(px(12.))
             .flex()
             .flex_col()
-            .child(self.trust_header(trusted, cx))
+            .child(self.trust_section(HEADER, self.trust_header(trusted, cx), window))
             .child(
                 div()
                     .id("workspace-trust-editor-body")
@@ -83,18 +101,53 @@ impl Workbench {
                     .overflow_y_scroll()
                     .track_scroll(&self.trust_editor.scroll)
                     .child(self.trust_features(trusted, window, cx))
-                    .child(self.trusted_folders(cx)),
+                    .child(self.trust_section(CONFIGURATION, self.trusted_folders(window, cx), window)),
             )
     }
 
+    /// The root's keydown: Up and Down focus the previous or next section (`navOrder`, wrapping), Escape the editor,
     /// `KeyMod.CtrlCmd | KeyCode.Enter` toggles the trust when it can be set.
     fn workspace_trust_editor_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
-        if keystroke.key == "enter" && keystroke.modifiers.platform && !keystroke.modifiers.shift && !keystroke.modifiers.alt && !keystroke.modifiers.control {
-            cx.stop_propagation();
-            let trusted = self.workspace_trust.is_trusted();
-            self.set_workspace_trust(!trusted, window, cx);
+        let modifiers = keystroke.modifiers;
+        let plain = !modifiers.platform && !modifiers.shift && !modifiers.alt && !modifiers.control;
+        match keystroke.key.as_str() {
+            "up" | "down" if plain => {
+                let sections = self.trust_editor.sections.clone();
+                let current = sections.iter().position(|section| section.contains_focused(window, cx)).map_or(-1, |index| index as isize);
+                let next = match keystroke.key.as_str() {
+                    "down" => current + 1,
+                    _ => current.max(0) - 1,
+                };
+                let next = (next + sections.len() as isize) as usize % sections.len();
+                window.focus(&sections[next], cx);
+                // The browser scrolls a focused element into view; the header sits above the scrolled body.
+                match next {
+                    TRUSTED | UNTRUSTED => self.trust_editor.scroll.scroll_to_item(0),
+                    CONFIGURATION => self.trust_editor.scroll.scroll_to_item(1),
+                    _ => {}
+                }
+                cx.notify();
+            }
+            "escape" if plain => {
+                let focus = self.trust_editor.focus.clone().expect("the editor is open");
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            "enter" if modifiers.platform && !modifiers.shift && !modifiers.alt && !modifiers.control => {
+                cx.stop_propagation();
+                let trusted = self.workspace_trust.is_trusted();
+                self.set_workspace_trust(!trusted, window, cx);
+            }
+            _ => {}
         }
+    }
+
+    /// A `tabIndex = 0` section: focusable, outlined in focusBorder while focused (style.css `[tabindex="0"]:focus`).
+    fn trust_section(&self, index: usize, content: Div, window: &Window) -> Div {
+        let focus = &self.trust_editor.sections[index];
+        let outline = self.theme.color("focusBorder").filter(|_| focus.is_focused(window));
+        content.track_focus(focus).relative().when_some(outline, |section, color| section.child(div().absolute().inset_0().border_1().border_color(color)))
     }
 
     fn trust_header(&self, trusted: bool, cx: &mut Context<Self>) -> Div {
@@ -163,8 +216,8 @@ impl Workbench {
         trusted_items.push("All enabled extensions are activated".to_owned());
         untrusted_items.push(extensions);
 
-        let mut trusted_box = self.trust_limitations(trusted, trusted_title, trusted_subtitle).child(self.trust_list("trusted", &trusted_items, "check", self.color("debugIcon.startForeground"), cx));
-        let mut untrusted_box = self.trust_limitations(!trusted, "In Restricted Mode", &untrusted_subtitle).child(self.trust_list("untrusted", &untrusted_items, "close", self.color("editorError.foreground"), cx));
+        let mut trusted_box = self.trust_section(TRUSTED, self.trust_limitations(trusted, trusted_title, trusted_subtitle), window).child(self.trust_list("trusted", &trusted_items, "check", self.color("debugIcon.startForeground"), cx));
+        let mut untrusted_box = self.trust_section(UNTRUSTED, self.trust_limitations(!trusted, "In Restricted Mode", &untrusted_subtitle), window).child(self.trust_list("untrusted", &untrusted_items, "close", self.color("editorError.foreground"), cx));
         match trusted {
             true => untrusted_box = untrusted_box.child(self.trust_button("trust-deny", "Don't Trust", false, window, cx)),
             false => trusted_box = trusted_box.child(self.trust_button("trust-grant", "Trust", true, window, cx)),
@@ -276,7 +329,7 @@ impl Workbench {
 
     /// `WorkspaceTrustedUrisTable`: the trusted `file` folders, each with Edit Path, Open File Picker and Delete Path
     /// on hover or selection, and Add Folder below.
-    fn trusted_folders(&self, cx: &mut Context<Self>) -> Div {
+    fn trusted_folders(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let workspace_uris: Vec<PathBuf> = self.workspace().map(|workspace| workspace.folders.iter().map(|folder| folder.path.clone()).chain(workspace.file.clone()).collect()).unwrap_or_default();
         let entries = trusted_entries(self.workspace_trust.trusted_paths().collect(), &workspace_uris);
         let description = match entries.is_empty() {
@@ -288,7 +341,7 @@ impl Workbench {
             div().h(px(HEADER_ROW_HEIGHT)).flex().items_center().bg(header_background).font_weight(FontWeight::SEMIBOLD).child(div().w_1_5().pl(px(5.)).child("Host")).child(div().flex_1().pl(px(5.)).child("Path")),
         );
         for (index, (path, related)) in entries.iter().enumerate() {
-            table = table.child(self.trusted_folder_row(index, path, *related, cx));
+            table = table.child(self.trusted_folder_row(index, path, *related, window, cx));
         }
         div()
             .mt(px(8.))
@@ -302,7 +355,7 @@ impl Workbench {
             .child(div().mt(px(8.)).flex().child(self.trust_text_button("trust-add-folder", "Add Folder", cx, |workbench, window, cx| workbench.add_trusted_folders(window, cx)).mx(px(4.)).my(px(8.))))
     }
 
-    fn trusted_folder_row(&self, index: usize, path: &Path, related: bool, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn trusted_folder_row(&self, index: usize, path: &Path, related: bool, window: &Window, cx: &mut Context<Self>) -> Stateful<Div> {
         let group: gpui::SharedString = format!("trusted-folder-{index}").into();
         let selected = self.trust_editor.selected.as_deref() == Some(path);
         let label = path.to_string_lossy().into_owned();
@@ -310,12 +363,15 @@ impl Workbench {
         let deleted = path.to_owned();
         let clicked = path.to_owned();
         let opened = path.to_owned();
+        let edited = path.to_owned();
+        let editing = self.trust_editor.edit.as_ref().is_some_and(|(row, _)| row == path);
         let actions = div()
             .w(px(75.))
             .pr(px(3.))
             .flex()
             .justify_end()
             .child(self.trust_action_button(format!("trust-pick-{index}"), "folder", "Open File Picker", cx, move |workbench, window, cx| workbench.pick_trusted_folder(picked.clone(), window, cx)))
+            .child(self.trust_action_button(format!("trust-edit-{index}"), "edit", "Edit Path", cx, move |workbench, window, cx| workbench.edit_trusted_folder(edited.clone(), window, cx)))
             .child(self.trust_action_button(format!("trust-delete-{index}"), "close", "Delete Path", cx, move |workbench, window, cx| workbench.delete_trusted_folder(&deleted, window, cx)))
             .when(!selected, |actions| actions.invisible().group_hover(group.clone(), |actions| actions.visible()));
         div()
@@ -336,7 +392,11 @@ impl Workbench {
                 cx.notify();
             }))
             .child(div().w_1_5().pl(px(5.)).truncate().child("Local"))
-            .child(div().flex_1().min_w_0().pl(px(5.)).truncate().child(label))
+            .child(match editing {
+                // `.path.input-mode`: the input replaces the label and the cell loses its 5px padding.
+                true => self.trusted_path_input(window, cx).into_any_element(),
+                false => div().flex_1().min_w_0().pl(px(5.)).truncate().child(label).into_any_element(),
+            })
             .child(actions)
     }
 
@@ -398,16 +458,77 @@ impl Workbench {
         cx.spawn_in(window, async move |workbench, cx| {
             let Ok(paths) = picked.await else { return };
             let Some(new_path) = paths.into_iter().next() else { return };
-            let _ = workbench.update_in(cx, |workbench, window, cx| {
-                workbench.set_trusted_folders(std::slice::from_ref(&new_path), true, window, cx);
-                if new_path != path {
-                    workbench.set_trusted_folders(&[path], false, window, cx);
-                }
-                workbench.trust_editor.selected = Some(new_path);
-                cx.notify();
-            });
+            let _ = workbench.update_in(cx, |workbench, window, cx| workbench.replace_trusted_folder(path, new_path, window, cx));
         })
         .detach();
+    }
+
+    fn trusted_path_input(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let focused = self.trust_editor.path_focus.as_ref().is_some_and(|focus| focus.is_focused(window));
+        let border = if focused { self.theme.color("focusBorder") } else { self.theme.color("input.border") };
+        div()
+            .flex_1()
+            .min_w_0()
+            .h(px(ROW_HEIGHT))
+            .flex()
+            .bg(self.color("input.background"))
+            .text_color(self.foreground_or("input.foreground"))
+            .when_some(border, |input, color| input.border_1().border_color(color))
+            .child(div().flex_1().h_full().px(px(4.)).child(self.input_text(InputId::TrustedPath, InputLook { password: false, placeholder: None, focused }, cx)))
+    }
+
+    /// `edit(item, false)`: the row's path in an input, focused and selected; Enter accepts, Escape or blur rejects.
+    fn edit_trusted_folder(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        let mut input = InputBox::new(path.to_string_lossy().into_owned());
+        input.select_all();
+        self.trust_editor.selected = Some(path.clone());
+        self.trust_editor.edit = Some((path, input));
+        let focus = self.trust_editor.path_focus.get_or_insert_with(|| cx.focus_handle()).clone();
+        window.focus(&focus, cx);
+        self.trust_editor._path_blur = Some(cx.on_blur(&focus, window, |workbench, _, cx| drop(workbench.end_trusted_path_edit(cx))));
+        self.blink_caret(InputId::TrustedPath, window, cx);
+        cx.notify();
+    }
+
+    pub(super) fn edit_trusted_path_input(&mut self, edit: impl FnOnce(&mut InputBox), cx: &mut Context<Self>) {
+        if let Some((_, input)) = self.trust_editor.edit.as_mut() {
+            edit(input);
+        }
+        cx.notify();
+    }
+
+    /// The path input's Enter (`acceptEdit`: the new path replaces the row's) and Escape (`rejectEdit`).
+    pub(super) fn trusted_path_input_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        match key {
+            "enter" => {
+                let Some((path, input)) = self.end_trusted_path_edit(cx) else { return true };
+                self.replace_trusted_folder(path, PathBuf::from(input.value), window, cx);
+            }
+            "escape" => {
+                self.end_trusted_path_edit(cx);
+            }
+            _ => return false,
+        }
+        let focus = self.trust_editor.focus.clone().expect("the editor is open");
+        window.focus(&focus, cx);
+        true
+    }
+
+    fn end_trusted_path_edit(&mut self, cx: &mut Context<Self>) -> Option<(PathBuf, InputBox)> {
+        self.trust_editor._path_blur = None;
+        self.trust_editor.path_view.reset();
+        cx.notify();
+        self.trust_editor.edit.take()
+    }
+
+    /// `acceptEdit`: the new folder takes the old one's place among the trusted folders.
+    fn replace_trusted_folder(&mut self, old: PathBuf, new: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
+        self.set_trusted_folders(std::slice::from_ref(&new), true, window, cx);
+        if new != old {
+            self.set_trusted_folders(&[old], false, window, cx);
+        }
+        self.trust_editor.selected = Some(new);
+        cx.notify();
     }
 
     /// `delete`: the row after it (or before it) takes the selection.
@@ -469,6 +590,63 @@ fn trusted_entries(mut paths: Vec<PathBuf>, workspace_uris: &[PathBuf]) -> Vec<(
             (path, related)
         })
         .collect()
+}
+
+#[cfg(test)]
+fn trust_editor_window<'a>(name: &str, cx: &'a mut gpui::TestAppContext) -> (PathBuf, gpui::Entity<Workbench>, &'a mut gpui::VisualTestContext) {
+    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+    let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+    let dir = std::env::temp_dir().join(format!("code-gpui-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("old")).unwrap();
+    let host = crate::host_sync::HostSync::new(std::sync::mpsc::channel().0);
+    let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), host, cx));
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.set_trusted_folders(&[dir.join("old")], true, window, cx);
+        drop(workbench.execute_command(super::workspace_trust_view::MANAGE_TRUST_COMMAND_ID, Vec::new(), window, cx));
+    });
+    cx.run_until_parked();
+    (dir, workbench, cx)
+}
+
+/// workspaceTrustEditor.ts `TrustedUriPathColumnRenderer`: Edit Path puts the path in a selected input; Enter
+/// trusts the typed path in place of the row's, Escape keeps the row.
+#[cfg(test)]
+#[gpui::test]
+fn edit_path_replaces_the_trusted_folder_on_enter_and_keeps_it_on_escape(cx: &mut gpui::TestAppContext) {
+    let (dir, workbench, cx) = trust_editor_window("trust-edit-path", cx);
+    let trusted = |cx: &mut gpui::VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.workspace_trust.trusted_paths().collect::<Vec<_>>());
+    let edit = |cx: &mut gpui::VisualTestContext, path: PathBuf| workbench.update_in(cx, |workbench, window, cx| workbench.edit_trusted_folder(path, window, cx));
+    edit(cx, dir.join("old"));
+    cx.simulate_input(&dir.join("new").to_string_lossy());
+    cx.simulate_keystrokes("escape");
+    assert_eq!(trusted(cx), [dir.join("old")]);
+    assert!(workbench.read_with(cx, |workbench, _| workbench.trust_editor.edit.is_none()));
+
+    edit(cx, dir.join("old"));
+    cx.simulate_input(&dir.join("new").to_string_lossy());
+    cx.simulate_keystrokes("enter");
+    assert_eq!(trusted(cx), [dir.join("new")]);
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.trust_editor.selected.clone()), Some(dir.join("new")));
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+/// The root's keydown: Down from the editor focuses the header, Up from the header wraps to the trusted folders.
+#[cfg(test)]
+#[gpui::test]
+fn up_and_down_move_the_focus_between_the_sections(cx: &mut gpui::TestAppContext) {
+    let (dir, workbench, cx) = trust_editor_window("trust-sections", cx);
+    let focused = |cx: &mut gpui::VisualTestContext| workbench.update_in(cx, |workbench, window, _| workbench.trust_editor.sections.iter().position(|section| section.is_focused(window)));
+    cx.simulate_keystrokes("down");
+    assert_eq!(focused(cx), Some(HEADER));
+    cx.simulate_keystrokes("down down");
+    assert_eq!(focused(cx), Some(UNTRUSTED));
+    cx.simulate_keystrokes("up up up");
+    assert_eq!(focused(cx), Some(CONFIGURATION));
+    cx.simulate_keystrokes("escape");
+    assert_eq!(focused(cx), None);
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[cfg(test)]

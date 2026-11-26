@@ -389,6 +389,11 @@ const WORKBENCH_MENUS: &[Row] = &[
     // timeline.contribution.ts; the port's resource keys name `resourceSet` `hasResource`.
     (MenuId::ExplorerContext, None, "files.openTimeline", "Open Timeline", "4_timeline", 1., Some("hasResource && timelineHasProvider"), None),
     (MenuId::ExplorerContext, None, "revealFileInOS", "Reveal in Finder", "navigation", 20., Some("resourceScheme == 'file' || resourceScheme == 'vscode-userdata'"), None),
+    // externalTerminal.contribution.ts; the port has no remote, so the `vscode-remote` alternative is left out.
+    (MenuId::ExplorerContext, None, "openInIntegratedTerminal", "Open in Integrated Terminal", "navigation", 30., Some("resourceScheme == 'file' && (config.terminal.explorerKind == 'integrated' || config.terminal.explorerKind == 'both')"), None),
+    (MenuId::ExplorerContext, None, "openInTerminal", "Open in External Terminal", "navigation", 31., Some("resourceScheme == 'file' && (config.terminal.explorerKind == 'external' || config.terminal.explorerKind == 'both')"), None),
+    // searchActionsFind.ts.
+    (MenuId::ExplorerContext, None, "filesExplorer.findInFolder", "Find in Folder...", "4_search", 10., Some("explorerResourceIsFolder"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.cut", "Cut", "5_cutcopypaste", 8., Some("!explorerResourceIsRoot && !explorerResourceReadonly"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.copy", "Copy", "5_cutcopypaste", 10., Some("!explorerResourceIsRoot"), None),
     (MenuId::ExplorerContext, None, "filesExplorer.paste", "Paste", "5_cutcopypaste", 20., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly && fileCopied")),

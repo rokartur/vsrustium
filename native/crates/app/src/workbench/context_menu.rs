@@ -91,6 +91,9 @@ impl Workbench {
         let focus_to_return = window.focused(cx);
         let focus = cx.focus_handle();
         window.focus(&focus, cx);
+        // From a mouse down, GPUI's tracked focus handles under the pointer would take the focus back from the menu
+        // in the bubble phase unless the event is default prevented.
+        window.prevent_default();
         let enable_mouse_up = cx.spawn_in(window, async |workbench, cx| {
             cx.background_executor().timer(Duration::from_millis(100)).await;
             let _ = workbench.update(cx, |workbench, _| {

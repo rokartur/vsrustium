@@ -661,7 +661,7 @@ impl Workbench {
             .overflow_y_scroll()
             .track_scroll(&self.timeline.scroll)
             .children(rows);
-        let body = div().relative().size_full().flex().flex_col().children(message).child(tree);
+        let body = div().relative().size_full().flex().flex_col().children(message).child(tree).children(self.high_contrast_list_outline(tree_focused, self.timeline.focused.is_some()));
         super::view_panes::ExplorerPane {
             id: TIMELINE_VIEW_ID,
             title: "Timeline".into(),
