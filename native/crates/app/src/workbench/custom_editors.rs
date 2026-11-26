@@ -158,10 +158,12 @@ impl Workbench {
 
     /// The command line's file on startup. editorResolverService.ts `resolveEditor` runs before the extensions
     /// registered their editors and waits for them only when the cache or a user association names the file's glob,
-    /// so on a first start a `.ipynb` opens as JSON in the text editor.
+    /// so on a first start a `.ipynb` opens as JSON in the text editor. The media previews are registered by then.
     pub fn open_startup_file(&mut self, path: PathBuf, resolver_cache: &[String], window: &mut Window, cx: &mut Context<Self>) {
         let waits_for_extensions = resource_matcher("file", &path).is_some_and(|matches| {
-            resolver_cache.iter().any(|pattern| matches(pattern)) || self.editor_associations().iter().any(|(pattern, view_type)| view_type != TEXT_EDITOR_ID && matches(pattern))
+            resolver_cache.iter().any(|pattern| matches(pattern))
+                || self.editor_associations().iter().any(|(pattern, view_type)| view_type != TEXT_EDITOR_ID && matches(pattern))
+                || media_preview_contributions().iter().flat_map(|contribution| &contribution.patterns).any(|pattern| matches(pattern))
         });
         match waits_for_extensions {
             true => self.open_file(path, true, window, cx),

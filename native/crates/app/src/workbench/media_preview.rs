@@ -133,9 +133,6 @@ impl Workbench {
         self.editors_changed(cx);
         if options["preserveFocus"] != true {
             self.focus_webview_panel(&handle, window, cx);
-            if let Some(webview) = self.webview_panel_mut(&handle).and_then(|panel| panel.webview.as_mut()) {
-                webview.send("message", json!({ "message": { "type": "focus" }, "buffers": [] }));
-            }
         }
         Outcome::done()
     }
@@ -333,5 +330,17 @@ mod tests {
             assert!(!page.contains("{{"), "{page}");
             assert!(!page.contains("\"</script>"), "{page}");
         }
+    }
+
+    #[gpui::test]
+    fn opens_a_startup_image_in_its_preview_without_a_resolver_cache(cx: &mut gpui::TestAppContext) {
+        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
+        let image = app_root.join("port/fixtures/webviews/image.png");
+        workbench.update_in(cx, |workbench, window, cx| workbench.open_startup_file(image, &[], window, cx));
+        let scheme = workbench.read_with(cx, |workbench, _| workbench.editors.active().map(|editor| editor.document().scheme.clone()));
+        assert_eq!(scheme.as_deref(), Some(WEBVIEW_PANEL_SCHEME));
     }
 }
