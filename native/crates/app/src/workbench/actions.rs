@@ -44,7 +44,7 @@ impl Workbench {
         self.commands.register("_workbench.open", |workbench, args, window, cx| match &args[..] {
             [resource @ Value::Object(_), rest @ ..] => {
                 let column_and_options = rest.first().cloned().unwrap_or_default();
-                let mut options = column_and_options[1].clone();
+                let mut options = mixin_open_context(rest.get(2), column_and_options[1].clone());
                 if !column_and_options[0].is_null() {
                     options["position"] = column_and_options[0].clone();
                 }
@@ -298,6 +298,16 @@ impl Workbench {
     }
 }
 
+/// editorCommands.ts `mixinContext`: a list's open event (`{ editorOptions }`) passed after the command's arguments
+/// gives the options the arguments leave out.
+pub(super) fn mixin_open_context(context: Option<&Value>, options: Value) -> Value {
+    let Some(Value::Object(context_options)) = context.map(|context| &context["editorOptions"]) else { return options };
+    let mut merged = context_options.clone();
+    if let Value::Object(options) = options {
+        merged.extend(options);
+    }
+    Value::Object(merged)
+}
 /// The command's answer once every save is done; `answer` gets whether all of them succeeded.
 pub(super) fn when_saved(saves: Vec<oneshot::Receiver<bool>>, answer: impl FnOnce(bool) -> Value + Send + 'static, cx: &mut Context<Workbench>) -> Outcome {
     let (sender, receiver) = oneshot::channel();

@@ -96,7 +96,7 @@ fn new_window_profile(user_home: &Path) -> Option<String> {
 
 /// `toWorkspaceIdentifier(workspace).uri.toString()`: the workspace file, else the folder.
 pub fn workspace_id(workspace: &Workspace) -> WorkspaceId {
-    let path = workspace.file.as_deref().unwrap_or(&workspace.folders[0].path);
+    let path = workspace.file.as_deref().unwrap_or_else(|| &workspace.folders[0].path);
     WorkspaceId::Uri(crate::editor_history::file_uri_string(path))
 }
 

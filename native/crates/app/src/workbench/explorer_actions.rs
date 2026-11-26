@@ -47,8 +47,6 @@ pub struct ExplorerState {
     undo: UndoRedo<FileUndo>,
     pub scroll: ScrollHandle,
     pub find: ExplorerFind,
-    /// paneview.css `.pane:hover`: the folder section shows its title actions.
-    pub pane_hovered: bool,
     pub type_navigation: super::type_navigation::TypeNavigation,
 }
 
@@ -64,7 +62,7 @@ pub struct ExplorerEdit {
 
 impl ExplorerState {
     pub fn new(cx: &mut gpui::App) -> Self {
-        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new(), find: ExplorerFind::new(cx), pane_hovered: false, type_navigation: Default::default() }
+        ExplorerState { focus: cx.focus_handle(), input: InputView::default(), input_focus: cx.focus_handle(), edit: None, drop_target: None, expand_timer: None, undo: UndoRedo::default(), scroll: ScrollHandle::new(), find: ExplorerFind::new(cx), type_navigation: Default::default() }
     }
 }
 
@@ -183,11 +181,8 @@ impl Workbench {
 
     /// The folder section's title actions (explorerView.ts `MenuId.ViewTitle`), shown while the pane is hovered or
     /// holds the focus, or always with `workbench.view.alwaysShowHeaderActions` (paneview.css).
-    pub(super) fn explorer_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Option<Div> {
-        let focus_within = self.explorer.focus.is_focused(window) || self.explorer.input_focus.is_focused(window) || self.explorer.find.focus.is_focused(window);
-        if !(self.explorer.pane_hovered || focus_within || self.setting("workbench.view.alwaysShowHeaderActions") == json!(true)) {
-            return None;
-        }
+    pub(super) fn explorer_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let shown = self.explorer_title_actions_shown(window);
         let refresh_enabled = !self.folder.as_ref().is_some_and(|tree| tree.is_filtering());
         let actions = [
             ("new-file", "workbench.files.action.createFileFromExplorer", true),
@@ -196,7 +191,9 @@ impl Workbench {
             ("collapse-all", "workbench.files.action.collapseExplorerFolders", true),
         ];
         let hover = self.color("toolbar.hoverBackground");
-        let mut bar = div().ml_auto().mr(px(8.)).flex().gap(px(4.));
+        // 4px from the header's end, measured against the reference with ui-pair (m12/workspace-folders.json).
+        // The pane's hover is its hitbox's, so a context menu's block hides the actions as `.context-view-block` does.
+        let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(4.)).when(!shown, |bar| bar.invisible().group_hover(super::view_panes::FILE_VIEW, |bar| bar.visible()));
         for (icon, command, enabled) in actions {
             let foreground = if enabled { self.foreground_or("icon.foreground") } else { self.color("disabledForeground") };
             bar = bar.child(self.icon(icon, 20., 16., foreground).id(command).rounded(px(4.)).when(enabled, |action| {
@@ -206,7 +203,13 @@ impl Workbench {
                 }))
             }));
         }
-        Some(bar)
+        bar
+    }
+
+    /// Shown without a hover: the focus is in the pane, or `workbench.view.alwaysShowHeaderActions` is on.
+    pub(super) fn explorer_title_actions_shown(&self, window: &Window) -> bool {
+        let focus_within = self.explorer.focus.is_focused(window) || self.explorer.input_focus.is_focused(window) || self.explorer.find.focus.is_focused(window);
+        focus_within || self.setting("workbench.view.alwaysShowHeaderActions") == json!(true)
     }
 
     /// explorerView.ts `previousCompressedStat` and its siblings: moves the focused compact row's current folder.
@@ -221,7 +224,7 @@ impl Workbench {
 
     /// files.ts `getMultiSelectedResources`: the Explorer's context while it has focus, else the command's
     /// resource, else the active editor's.
-    fn multi_selected_resources(&self, args: &[Value], window: &Window) -> Vec<PathBuf> {
+    pub(super) fn multi_selected_resources(&self, args: &[Value], window: &Window) -> Vec<PathBuf> {
         if let Some(tree) = self.folder.as_ref().filter(|_| self.explorer.focus.is_focused(window)) {
             let context = tree.context(true, true);
             if !context.is_empty() {
@@ -255,7 +258,7 @@ impl Workbench {
     /// workspace folder.
     fn reveal_in_os(&mut self, mut resources: Vec<PathBuf>, cx: &mut Context<Self>) -> Outcome {
         if resources.is_empty() {
-            resources.extend(self.workspace().map(|workspace| workspace.folders[0].path.clone()));
+            resources.extend(self.workspace().and_then(|workspace| workspace.folders.first()).map(|folder| folder.path.clone()));
         }
         for path in resources {
             cx.reveal_path(&path);
@@ -282,6 +285,7 @@ impl Workbench {
         // tree's `WorkbenchTreeElement*` keys of the focused row.
         context.insert("listSupportsMultiselect".into(), json!(true));
         context.insert("listHasSelectionOrFocus".into(), json!(tree.focused.is_some() || !tree.selected.is_empty()));
+        context.insert("listDoubleSelection".into(), json!(tree.selected.len() == 2));
         let rows = tree.rows();
         let focused_index = tree.focused.as_ref().and_then(|focused| rows.iter().position(|row| row.path == *focused));
         if let Some(index) = focused_index {
@@ -293,7 +297,8 @@ impl Workbench {
             context.insert("treeElementHasParent".into(), json!(row.depth > 1));
         }
         // Without a focused row the keys describe the last workspace folder, a root.
-        let stat = tree.focused.clone().unwrap_or_else(|| tree.workspace.folders.last().expect("a workspace has a folder").path.clone());
+        // A workspace without folders has no root to describe.
+        let Some(stat) = tree.focused.clone().or_else(|| tree.workspace.folders.last().map(|folder| folder.path.clone())) else { return };
         let is_root = tree.focused.is_none() || tree.is_root(&stat);
         context.insert("explorerResourceIsRoot".into(), json!(is_root));
         context.insert("explorerResourceIsFolder".into(), json!(is_root || stat.is_dir()));
@@ -311,7 +316,9 @@ impl Workbench {
             context.insert("explorerViewletCompressedLastFocus".into(), json!(navigation.index == navigation.items.len() - 1));
         }
         if focused {
-            self.explorer_resource_context(tree.focused.as_deref(), context);
+            // explorerView.ts `onContextMenu`: the space below the rows stands for the only root.
+            let root = (tree.workspace.folders.len() == 1).then(|| tree.workspace.folders[0].path.as_path());
+            self.explorer_resource_context(tree.focused.as_deref().or(root), context);
         }
     }
 
@@ -444,7 +451,10 @@ impl Workbench {
         };
         let parent = match tree.context(false, false).first() {
             Some(stat) => tree.folder_for(stat),
-            None => tree.workspace.folders[0].path.clone(),
+            None => match tree.workspace.folders.first() {
+                Some(folder) => folder.path.clone(),
+                None => return Outcome::done(),
+            },
         };
         tree.expand(&parent);
         tree.new_item = Some(NewItem { parent, is_dir });
@@ -702,7 +712,7 @@ impl Workbench {
         if self.explorer.edit.is_some() {
             return Outcome::done();
         }
-        let element = tree.context(false, false).into_iter().next().unwrap_or_else(|| tree.workspace.folders[0].path.clone());
+        let Some(element) = tree.context(false, false).into_iter().next().or_else(|| tree.workspace.folders.first().map(|folder| folder.path.clone())) else { return Outcome::done() };
         let sources = crate::clipboard::distinct_parents(crate::clipboard::read_resources());
         let cut = tree.cut;
         let naming = self.incremental_naming();
@@ -880,7 +890,10 @@ impl Workbench {
             None if !copy && items.paths.iter().all(|source| source.parent().is_some_and(|parent| tree.is_root(parent))) => {
                 return self.set_explorer_drop_target(None, over, window, cx);
             }
-            None => last_root(tree),
+            None => match last_root(tree) {
+                Some(root) => root,
+                None => return self.set_explorer_drop_target(None, over, window, cx),
+            },
         };
         let rejected = items.paths.iter().any(|source| *source == target || (!copy && source.parent() == Some(&target)) || target.starts_with(source));
         self.set_explorer_drop_target((!rejected).then_some(target), over, window, cx);
@@ -893,7 +906,7 @@ impl Workbench {
         let target = match over {
             _ if self.setting("explorer.enableDragAndDrop") != json!(true) => None,
             Some(path) => Some(tree.folder_for(path)),
-            None => Some(last_root(tree)),
+            None => last_root(tree),
         };
         self.set_explorer_drop_target(target, over, window, cx);
     }
@@ -1105,8 +1118,12 @@ impl Workbench {
                 };
                 match prompt(&workbench, cx, PromptLevel::Info, message, &[add, copy, "Cancel"]).await {
                     Some(0) => {
-                        // shortcut: workspaceEditingService.addFolders is not ported (port/notes.md milestone 12); upgrade with it.
-                        notify_error(&workbench, cx, "Adding folders to the workspace is not supported yet.".to_string()).await;
+                        let _ = workbench.update_in(cx, |workbench, window, cx| {
+                            let to_add = folders.into_iter().map(|folder| (folder, None)).collect();
+                            if let Err(error) = workbench.add_workspace_folders(to_add, None, window, cx) {
+                                workbench.notify_error(error);
+                            }
+                        });
                         return;
                     }
                     Some(1) => {}
@@ -1349,8 +1366,8 @@ fn valid_paste_target(folder: &Path, name: &str, is_dir: bool, naming: Increment
 }
 
 /// Where a drop below the rows goes: `explorerService.roots`' last.
-fn last_root(tree: &crate::explorer::FileTree) -> PathBuf {
-    tree.workspace.folders.last().expect("a workspace has a folder").path.clone()
+fn last_root(tree: &crate::explorer::FileTree) -> Option<PathBuf> {
+    tree.workspace.folders.last().map(|folder| folder.path.clone())
 }
 
 fn file_name(path: &Path) -> String {

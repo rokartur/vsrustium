@@ -39,11 +39,13 @@ pub struct QuickAccess {
     pub workspace_symbols: Option<workspace_symbols::WorkspaceSymbolState>,
     /// `$registerNavigateTypeSupport`'s `lastResultId` per provider handle.
     pub workspace_symbol_results: std::collections::HashMap<u64, u64>,
+    /// `quickAccess.pick` of Compare Active File With: the picker and the active editor's resource it compares.
+    pub compare_with: Option<(i64, crate::diff_editor::Side)>,
 }
 
 impl Default for QuickAccess {
     fn default() -> Self {
-        QuickAccess { menu: command_palette::menu(&[]), history: CommandsHistory::new(command_palette::DEFAULT_HISTORY_LENGTH), editor_history: EditorHistory::default(), files: None, help_input: None, goto_line: None, symbols: None, workspace_symbols: None, workspace_symbol_results: Default::default() }
+        QuickAccess { menu: command_palette::menu(&[]), history: CommandsHistory::new(command_palette::DEFAULT_HISTORY_LENGTH), editor_history: EditorHistory::default(), files: None, help_input: None, goto_line: None, symbols: None, workspace_symbols: None, workspace_symbol_results: Default::default(), compare_with: None }
     }
 }
 
@@ -207,7 +209,7 @@ impl Workbench {
 
     /// `QuickAccessController.show`: reuses a visible picker of the same provider, else fills a new one, its first
     /// items activated as `item_activation` says.
-    fn show_quick_access_activating(&mut self, value: &str, preserve_value: bool, include_help: bool, item_activation: crate::quick_input::ItemActivation, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn show_quick_access_activating(&mut self, value: &str, preserve_value: bool, include_help: bool, item_activation: crate::quick_input::ItemActivation, window: &mut Window, cx: &mut Context<Self>) {
         // `updateConfiguration`: the configured length applies from the next pick list on.
         let limit = self.configured_command_history_length();
         self.quick_access.history.set_limit(limit);
@@ -404,10 +406,15 @@ impl Workbench {
                 if matches!(accept, Accept::Nothing) {
                     return;
                 }
-                if !in_background {
+                let compare_with = self.quick_access.compare_with.take_if(|(input, _)| *input == id).map(|(_, active)| active);
+                if !in_background || compare_with.is_some() {
                     self.hide_quick_input_by_id(id, window, cx);
                 }
-                self.accept_quick_access_pick(accept, in_background, window, cx);
+                match (compare_with, accept) {
+                    (Some(active), Accept::File { path }) => self.compare_resources(active, super::file_compare::file_side(path), None, window, cx),
+                    (Some(_), _) => {}
+                    (None, accept) => self.accept_quick_access_pick(accept, in_background, window, cx),
+                }
             }
             Event::TriggerItemButton(handle, _, _) if matches!(self.quick_access_pick(id, handle), Some(Accept::File { .. })) => {
                 // `TriggerAction.REMOVE_ITEM` of "Remove from Recently Opened".
@@ -447,6 +454,7 @@ impl Workbench {
                 self.update_quick_access_picks(id, window, cx);
             }
             Event::Hide => {
+                self.quick_access.compare_with.take_if(|(input, _)| *input == id);
                 self.dispose_goto_line(cx);
                 self.quick_access.symbols = None;
                 self.quick_inputs.remove(id);

@@ -121,6 +121,12 @@ impl MainThread for WorkbenchMainThread {
                 session.host.terminate();
                 continue;
             }
+            if (message.proxy, message.method) == ("workbench", "setWorkspaceFolders") {
+                if let Some(workspace) = session.workspace.as_mut() {
+                    workspace.set_folders(message.args.iter().filter_map(Value::as_str).map(std::path::PathBuf::from).collect());
+                }
+                continue;
+            }
             if (message.proxy, message.method) == ("workbench", "resolveTextContent") {
                 let content = self.resolve_text_content(session, &message.args[0]);
                 drop(message.reply.expect("resolveTextContent waits for its answer").send(content));

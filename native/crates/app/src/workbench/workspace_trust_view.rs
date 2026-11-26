@@ -159,6 +159,23 @@ impl Workbench {
         }
     }
 
+    /// `setWorkspaceTrust` from the Workspace Trust editor's Trust and Don't Trust buttons.
+    pub(super) fn set_workspace_trust(&mut self, trusted: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let empty_window_trusted = self.setting("security.workspace.trust.emptyWindow") == true;
+        if self.workspace_trust.set_workspace_trust(trusted, &mut self.workspace_storage.lock().unwrap(), empty_window_trusted) {
+            self.workspace_trust_changed(window, cx);
+        }
+    }
+
+    /// `setUrisTrust` from the Workspace Trust editor's trusted folders table.
+    pub(super) fn set_trusted_folders(&mut self, paths: &[std::path::PathBuf], trusted: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let empty_window_trusted = self.setting("security.workspace.trust.emptyWindow") == true;
+        if self.workspace_trust.set_uris_trust(paths, trusted, &mut self.workspace_storage.lock().unwrap(), empty_window_trusted) {
+            self.workspace_trust_changed(window, cx);
+        }
+        cx.notify();
+    }
+
     fn resolve_workspace_trust_requests(&mut self, answer: Value) {
         for request in self.workspace_trust.requests.drain(..) {
             let _ = request.send(Ok(answer.clone()));
@@ -172,7 +189,7 @@ impl Workbench {
     }
 
     /// `WorkbenchState`'s word in the Restricted Mode texts: window, folder or workspace.
-    fn trust_target(&self) -> &'static str {
+    pub(super) fn trust_target(&self) -> &'static str {
         match self.workspace() {
             None => "window",
             Some(workspace) if workspace.file.is_some() => "workspace",

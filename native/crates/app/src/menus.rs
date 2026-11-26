@@ -154,6 +154,9 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarFileMenu, None, "workbench.action.files.openFolder", "Open &&Folder...", "2_open", 2., Some("openFolderWorkspaceSupport"), Some("openFolderWorkspaceSupport")),
     (MenuId::MenubarFileMenu, None, "workbench.action.openWorkspace", "Open Wor&&kspace from File...", "2_open", 3., Some("enterMultiRootWorkspaceSupport"), Some("enterMultiRootWorkspaceSupport")),
     (MenuId::MenubarFileMenu, Some(MenuId::MenubarRecentMenu), "", "Open &&Recent", "2_open", 4., None, None),
+    (MenuId::MenubarFileMenu, None, "addRootFolder", "A&&dd Folder to Workspace...", "3_workspace", 1., Some("enterMultiRootWorkspaceSupport && !isSessionsWindow || !isSessionsWindow && workbenchState == 'workspace'"), None),
+    (MenuId::MenubarFileMenu, None, "workbench.action.saveWorkspaceAs", "Save Workspace As...", "3_workspace", 2., Some("enterMultiRootWorkspaceSupport && !isSessionsWindow"), Some("enterMultiRootWorkspaceSupport && !isSessionsWindow")),
+    (MenuId::MenubarFileMenu, None, "workbench.action.duplicateWorkspaceInNewWindow", "Duplicate Workspace", "3_workspace", 3., Some("enterMultiRootWorkspaceSupport && !isSessionsWindow"), Some("enterMultiRootWorkspaceSupport && !isSessionsWindow")),
     (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Folder", "6_close", 3., Some("workbenchState == 'folder' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
     (MenuId::MenubarFileMenu, None, "workbench.action.closeFolder", "Close &&Workspace", "6_close", 3., Some("workbenchState == 'workspace' && emptyWorkspaceSupport && !isSessionsWindow"), Some("workbenchState != 'empty' && emptyWorkspaceSupport && !isSessionsWindow")),
     // windowActions.ts (electron-browser) `CloseWindowAction`
@@ -366,6 +369,13 @@ const WORKBENCH_MENUS: &[Row] = &[
     // fileActions.contribution.ts, the ExplorerContext items of the commands the port has.
     (MenuId::ExplorerContext, None, "explorer.newFile", "New File...", "navigation", 4., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
     (MenuId::ExplorerContext, None, "explorer.newFolder", "New Folder...", "navigation", 6., Some("explorerResourceIsFolder"), Some("!explorerResourceReadonly")),
+    (MenuId::ExplorerContext, None, "addRootFolder", "Add Folder to Workspace...", "2_workspace", 10., Some("explorerResourceIsRoot && (enterMultiRootWorkspaceSupport || workbenchState == 'workspace')"), None),
+    // preferences.contribution.ts.
+    (MenuId::ExplorerContext, None, "_workbench.action.openFolderSettings", "Open Folder Settings", "2_workspace", 20., Some("explorerResourceIsRoot && explorerResourceIsFolder"), None),
+    (MenuId::ExplorerContext, None, "removeRootFolder", "Remove Folder from Workspace", "2_workspace", 30., Some("explorerResourceIsRoot && explorerResourceIsFolder && workspaceFolderCount != '0' && (enterMultiRootWorkspaceSupport || workbenchState == 'workspace')"), None),
+    (MenuId::ExplorerContext, None, "compareFiles", "Compare with Selected", "3_compare", 20., Some("!explorerResourceIsFolder && hasResource && resourceSelectedForCompare && !listDoubleSelection"), None),
+    (MenuId::ExplorerContext, None, "selectForCompare", "Select for Compare", "3_compare", 30., Some("!explorerResourceIsFolder && hasResource && !listDoubleSelection"), None),
+    (MenuId::ExplorerContext, None, "compareSelected", "Compare Selected", "3_compare", 30., Some("!explorerResourceIsFolder && hasResource && listDoubleSelection"), None),
     // timeline.contribution.ts; the port's resource keys name `resourceSet` `hasResource`.
     (MenuId::ExplorerContext, None, "files.openTimeline", "Open Timeline", "4_timeline", 1., Some("hasResource && timelineHasProvider"), None),
     (MenuId::ExplorerContext, None, "revealFileInOS", "Reveal in Finder", "navigation", 20., Some("resourceScheme == 'file' || resourceScheme == 'vscode-userdata'"), None),

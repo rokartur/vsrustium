@@ -421,6 +421,13 @@ impl HostSync {
         let _ = self.sender.send(HostMessage { proxy, method, args, reply: None, cancellable: false, files: None, extensions: None });
     }
 
+    /// mainThreadWorkspace.ts `_onDidChangeWorkspace`: the session's search folders, then `$acceptWorkspaceData`.
+    pub fn send_workspace_data(&self, workspace: &config::workspace::Workspace) {
+        let folders: Vec<Value> = workspace.folders.iter().map(|folder| Value::String(folder.path.to_string_lossy().into_owned())).collect();
+        self.send("workbench", "setWorkspaceFolders", folders);
+        self.send("ExtHostWorkspace", "$acceptWorkspaceData", vec![exthost::session::workspace_data_of(workspace)]);
+    }
+
     /// `MessageType.Terminate`: the session thread tells the host to deactivate its extensions and exit.
     pub fn stop_extension_host(&self) {
         self.send("workbench", "stopExtensionHost", Vec::new());

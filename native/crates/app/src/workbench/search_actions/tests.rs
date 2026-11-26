@@ -166,6 +166,24 @@ fn opening_a_result_with_a_replace_string_shows_the_replace_preview(cx: &mut Tes
         assert_eq!(preview.document().lines, ["omega beta", "omega", ""]);
     });
     assert_eq!(std::fs::read_to_string(dir.join("a.txt")).unwrap(), "alpha beta\nAlpha\n");
+
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.edit_search_input(SearchField::Replace, |input| input.set_value("zeta".to_string()), window, cx);
+    });
+    workbench.read_with(cx, |workbench, _| {
+        let diff = workbench.editors.active_diff().unwrap();
+        assert_eq!(workbench.editors.model("private", &diff.modified.path).unwrap().document().lines, ["zeta beta", "zeta", ""]);
+    });
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[gpui::test]
+fn search_finds_the_text_of_an_unsaved_editor_instead_of_the_file(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = search("search-unsaved", cx);
+    workbench.update_in(cx, |workbench, window, cx| workbench.open_file(dir.join("sub/b.txt"), true, window, cx));
+    cx.simulate_input("gamma ");
+    run(&workbench, "workbench.action.findInFiles", vec![json!({ "query": "gamma", "triggerSearch": true })], cx);
+    assert_eq!(result_files(&workbench, &dir, cx), [("sub/b.txt".to_string(), 1)]);
     std::fs::remove_dir_all(dir).unwrap();
 }
 

@@ -14,6 +14,7 @@ use gpui::{Context, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::host_requests::uri_parts;
 use crate::commands::Outcome;
 use crate::default_settings::raw_default_settings;
 use crate::editor::{EditReason, Position, Selection, TextDocument, VerticalReveal};
@@ -64,6 +65,15 @@ impl Workbench {
                 return Outcome::done();
             }
             workbench.open_settings_json(Target::Workspace, None, OpenSettingsOptions::sanitize(&args), window, cx)
+        });
+        // preferences.contribution.ts `_workbench.action.openFolderSettings`: the Explorer root's folder settings.
+        self.commands.register("_workbench.action.openFolderSettings", |workbench, args, window, cx| {
+            let folder = match args.first().map(uri_parts) {
+                Some(Ok((_, path))) => path,
+                _ => return Outcome::error("Folder resource required."),
+            };
+            workbench.open_settings_editor(None, Some((Target::WorkspaceFolder, Some(folder))), window, cx);
+            Outcome::done()
         });
         self.commands.register("workbench.action.openFolderSettingsFile", |workbench, _, window, cx| {
             let Some(picked) = workbench.pick_workspace_folder(&Value::Null, window, cx) else { return Outcome::done() };

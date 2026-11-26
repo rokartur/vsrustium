@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use config::indentation::{CreationOptions, creation_options};
 use config::model::Change;
-use gpui::Context;
+use gpui::{Context, Window};
 
 use crate::editor::{Indentation, guess_indentation};
 use crate::workbench::Workbench;
@@ -17,11 +17,11 @@ const SETTINGS_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 impl Workbench {
     /// Checks the settings files every 100 ms for edits made outside the port.
     // shortcut: polled by size and modification time; the files crate's FSEvents watcher covers workspace folders only.
-    pub fn watch_settings_files(&self, cx: &mut Context<Self>) {
-        cx.spawn(async move |workbench, cx| {
+    pub fn watch_settings_files(&self, window: &mut Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |workbench, cx| {
             loop {
                 cx.background_executor().timer(SETTINGS_CHECK_INTERVAL).await;
-                if workbench.update(cx, |workbench, cx| workbench.reload_changed_settings_files(cx)).is_err() {
+                if workbench.update_in(cx, |workbench, window, cx| workbench.reload_settings_files(Some(window), cx)).is_err() {
                     return;
                 }
             }
@@ -59,9 +59,21 @@ impl Workbench {
 
     /// Reloads the settings files that changed on disk and applies the change.
     pub fn reload_changed_settings_files(&mut self, cx: &mut Context<Self>) {
+        self.reload_settings_files(None, cx);
+    }
+
+    /// `reload_changed_settings_files`; a workspace file whose folders changed changes the window's folders, the
+    /// extension host restarting with `window`.
+    fn reload_settings_files(&mut self, window: Option<&mut Window>, cx: &mut Context<Self>) {
         let before = self.model_creation_options();
-        let Some(change) = self.settings.lock().unwrap().reload_changed_files() else { return };
-        self.configuration_changed(&change, before, cx);
+        let change = self.settings.lock().unwrap().reload_changed_files();
+        let folders_changed = self.settings.lock().unwrap().workspace.as_ref().map(|workspace| &workspace.folders) != self.workspace().map(|workspace| &workspace.folders);
+        if folders_changed {
+            return self.workspace_folders_changed(&change.unwrap_or_default(), before, window, cx);
+        }
+        if let Some(change) = change {
+            self.configuration_changed(&change, before, cx);
+        }
     }
 
     /// `onDidChangeConfiguration` listeners of the workbench for a change already in the settings model.

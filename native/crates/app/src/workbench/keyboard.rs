@@ -361,6 +361,7 @@ impl Workbench {
         };
         context.insert("workbenchState".into(), json!(workbench_state));
         context.insert("workspaceFolderCount".into(), json!(self.workspace().map_or(0, |workspace| workspace.folders.len())));
+        context.insert("resourceSelectedForCompare".into(), json!(self.resource_to_compare.is_some()));
         // RemoteNameContext of a local window.
         context.insert("remoteName".into(), json!(""));
         // workspace.contribution.ts WorkspaceTrustContextKeys.
