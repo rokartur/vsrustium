@@ -8,6 +8,7 @@ pub mod completion_item;
 pub mod completion_model;
 pub mod completion_service;
 pub mod keys;
+pub mod label;
 pub mod link_parsing;
 pub mod mouse;
 pub mod profiles;
