@@ -10,5 +10,8 @@
 	{ "shot": "search-editor" },
 	{ "hotkey": ["cmd", "shift", "j"] },
 	{ "wait": 800 },
-	{ "shot": "search-editor-details" }
+	{ "shot": "search-editor-details" },
+	{ "doubleClick": [540, 310] },
+	{ "wait": 1500 },
+	{ "shot": "search-editor-go-to-location" }
 ]

@@ -1,0 +1,23 @@
+[
+	{ "hotkey": ["cmd", "p"] },
+	{ "wait": 800 },
+	{ "type": "a.bin" },
+	{ "wait": 1000 },
+	{ "key": "return" },
+	{ "wait": 1500 },
+	{ "shot": "binary" },
+	{ "hotkey": ["cmd", "p"] },
+	{ "wait": 800 },
+	{ "type": "large.txt" },
+	{ "wait": 1000 },
+	{ "key": "return" },
+	{ "wait": 1500 },
+	{ "shot": "too-large" },
+	{ "hotkey": ["cmd", "p"] },
+	{ "wait": 800 },
+	{ "type": "locked.txt" },
+	{ "wait": 1000 },
+	{ "key": "return" },
+	{ "wait": 1500 },
+	{ "shot": "error" }
+]

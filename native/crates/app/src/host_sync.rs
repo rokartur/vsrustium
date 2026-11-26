@@ -128,7 +128,10 @@ impl HostSync {
     /// Sends what changed in `group` since the last call: activation for new languages, the document
     /// and editor delta, then the tab model.
     pub fn send_changes(&mut self, group: &EditorGroup) {
-        let is_entry = |editor: &&OpenEditor| matches!(editor.document().scheme.as_str(), DIFF_EDITOR_SCHEME | MULTI_DIFF_EDITOR_SCHEME | crate::merge_editor::MERGE_EDITOR_SCHEME | NOTEBOOK_EDITOR_SCHEME);
+        // An editor placeholder resolved no text model (textFileEditor.ts `handleSetInputError`).
+        let is_entry = |editor: &&OpenEditor| {
+            matches!(editor.document().scheme.as_str(), DIFF_EDITOR_SCHEME | MULTI_DIFF_EDITOR_SCHEME | crate::merge_editor::MERGE_EDITOR_SCHEME | NOTEBOOK_EDITOR_SCHEME) || editor.document().open_error.is_some()
+        };
         let is_text = |editor: &&OpenEditor| !self.webview_tabs.contains_key(&editor.document().path) && !is_entry(editor);
         // A custom text editor's model stays a document, without a text editor (customTextEditorModel.ts).
         let is_document = |editor: &&OpenEditor| self.webview_tabs.get(&editor.document().path).is_none_or(|tab| tab.custom_text) && !is_entry(editor);
@@ -707,6 +710,7 @@ mod tests {
             folding_markers: None,
             block_comment: None,
             too_large_for_tokenization: false,
+            open_error: None,
             tokens: Default::default(),
         }
     }
@@ -942,6 +946,19 @@ mod tests {
         let sent = drain(&receiver);
         assert_eq!((sent[0].proxy, sent[0].method), ("ExtHostLanguages", "$acceptLanguageIds"));
         assert_eq!(sent[0].args[0][0], json!("plaintext"));
+    }
+
+    #[test]
+    fn an_editor_placeholder_is_a_tab_without_a_document() {
+        let (sender, receiver) = channel();
+        let mut sync = HostSync::new(sender);
+        let mut group = EditorGroup::default();
+        group.open(TextDocument { open_error: Some(crate::editor::OpenError::Failed), ..document("/w/a.bin", "plaintext") }, false);
+        sync.send_changes(&group);
+        let sent = drain(&receiver);
+        assert!(!sent.iter().any(|message| message.method == "$acceptDocumentsAndEditorsDelta"));
+        let tab = &sent.iter().find(|message| message.method == "$acceptTabOperation").unwrap().args[0]["tabDto"];
+        assert_eq!(tab["input"]["kind"], 1);
     }
 
     #[test]

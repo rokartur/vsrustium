@@ -100,7 +100,7 @@ impl Workbench {
                 .text_color(foreground)
                 .hover(move |picker| picker.text_color(hover))
                 .child(div().overflow_hidden().whitespace_nowrap().text_ellipsis().child(label.clone()))
-                .child(self.icon("chevron-down", 15., 13., foreground).ml(px(2.)))
+                .child(self.icon("chevron-down", 13., 13., foreground).ml(px(2.)))
                 .child(bounds_tracker(bounds.clone()))
                 .child(self.hover_target("breadcrumbs-editor-type-hover", HoverContent::Text(format!("Editor: {label}")), HoverOptions::mouse()))
                 // contextMenuHandler.ts anchors the menu to the element: below it, its right edge where the left overflows.

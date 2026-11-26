@@ -103,6 +103,7 @@ impl Workbench {
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
                 None if self.editors.active_tab().is_some_and(|tab| tab.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME) => part.child(self.notebook_editor_body(window, cx)),
                 None if editor.document().scheme == MULTI_DIFF_EDITOR_SCHEME => part,
+                None if editor.document().open_error.is_some() => part.child(self.editor_placeholder(cx)),
                 None => match self.editors.active_merge() {
                     Some(merge) => part.child(self.merge_editor_body(merge, editor, window, cx)),
                     None => part.children(self.unicode_banner(editor, cx)).child(self.text_area(editor, window, cx).opacity(self.unfocused_editor_opacity(window))),
@@ -1023,6 +1024,9 @@ impl Workbench {
         // Past the cap there are no marks, the banner shows instead.
         let unicode = self.unicode_highlights(editor).filter(|(_, highlights)| !highlights.has_more);
         let bracket_box = (self.theme.color("editorBracketMatch.background"), self.theme.color("editorBracketMatch.border"));
+        // indentGuides.ts: the guide around the primary cursor with `editor.guides.highlightActiveIndentation`.
+        let active_guide = (self.language_setting(editor, "editor.guides.highlightActiveIndentation") != json!(false))
+            .then(|| crate::editor::active_indent_guide(&editor.text_model().guides, editor.selections[0].head.line));
         let colors = LineColors {
             number: self.color("editorLineNumber.foreground"),
             active_number: self.color("editorLineNumber.activeForeground"),
@@ -1036,6 +1040,7 @@ impl Workbench {
             selection_highlight: self.theme.color("editor.selectionHighlightBackground"),
             selection_highlight_border: self.theme.color("editor.selectionHighlightBorder"),
             guide: self.color("editorIndentGuide.background1"),
+            active_guide: self.color("editorIndentGuide.activeBackground1"),
             cursor: self.color("editorCursor.foreground"),
             primary_cursor: self.color("editorMultiCursor.primary.foreground"),
             secondary_cursor: self.color("editorMultiCursor.secondary.foreground"),
@@ -1172,7 +1177,8 @@ impl Workbench {
                 content = content.children(inner_corners).children(pieces);
                 for level in 0..editor.text_model().guides[index] {
                     let x = (level * editor.document().indentation.indent_size()) as f32 * char_width;
-                    content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(colors.guide));
+                    let active = active_guide.as_ref().is_some_and(|(lines, indent)| lines.contains(&index) && level + 1 == *indent);
+                    content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(if active { colors.active_guide } else { colors.guide }));
                 }
                 // foldingDecorations.ts COLLAPSED_HIGHLIGHTED_VISUAL_DECORATION: .folded-background over the whole line.
                 if collapsed == Some(true) {
@@ -1837,6 +1843,11 @@ impl Workbench {
         let notebook_cell = self.active_notebook_editor().filter(|_| !self.editor_focus.is_focused(window)).and_then(|editor| Some((editor.focus, self.host.notebooks.model(&editor.notebook)?.cells.len())));
         if let Some((index, count)) = notebook_cell {
             items.push((format!("Cell {} of {count}", index + 1), "", "notebook.centerActiveCell"));
+        } else if let Some(editor) = self.editors.active().filter(|editor| editor.document().open_error.is_some()) {
+            // editorStatus.ts `updateMetadataElement`: a binary editor's size; a placeholder has no text editor entries.
+            if let Some(crate::editor::OpenError::Binary(size)) = editor.document().open_error {
+                items.push((super::media_preview::format_size(size), "", ""));
+            }
         } else if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
@@ -1985,6 +1996,7 @@ struct LineColors {
     selection_highlight: Option<Rgba>,
     selection_highlight_border: Option<Rgba>,
     guide: Rgba,
+    active_guide: Rgba,
     cursor: Rgba,
     primary_cursor: Rgba,
     secondary_cursor: Rgba,

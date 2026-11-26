@@ -193,6 +193,7 @@ mod quick_input_view;
 mod text_files;
 pub(crate) mod text_model_resolver;
 mod control_characters;
+mod editor_placeholder;
 mod large_file;
 mod inspect_tokens;
 mod gutter_mouse;
@@ -936,11 +937,10 @@ impl Workbench {
             // A model without an editor, as a search replace leaves it, keeps its text.
             None => match self.editors.models.iter().position(|model| model.document().is_file(&path)) {
                 Some(index) => self.editors.show_model(index, !pinned),
-                None => match self.read_document(&path) {
-                    Ok(document) => self.editors.open(document, !pinned),
-                    // shortcut: a read error is logged, not shown as the reference's editor error placeholder.
-                    Err(error) => eprintln!("opening {}: {error}", path.display()),
-                },
+                None => {
+                    let document = self.read_file_editor_document(&path, false, false);
+                    self.editors.open(document, !pinned);
+                }
             },
         }
         self.marked_text = None;

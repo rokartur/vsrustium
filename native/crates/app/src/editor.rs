@@ -91,6 +91,21 @@ pub struct TextDocument {
     pub tokens: Tokenization,
     /// `TextModel.isTooLargeForTokenization`, decided at creation: no tokens, folding, word highlights or sticky scroll.
     pub too_large_for_tokenization: bool,
+    /// Why the file editor shows the editor placeholder in place of this empty model.
+    pub open_error: Option<OpenError>,
+}
+
+/// The errors textFileEditor.ts `handleSetInputError` turns into an editor placeholder.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OpenError {
+    /// `FILE_IS_BINARY` with the file's size in bytes: binaryEditor.ts.
+    Binary(u64),
+    /// `FILE_TOO_LARGE` with the file's size in bytes, over `workbench.editorLargeFileConfirmation`.
+    TooLarge(u64),
+    /// `FILE_NOT_FOUND`.
+    NotFound,
+    /// Any other read error.
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -119,7 +134,6 @@ impl TextDocument {
 
     /// A document of any scheme from its bytes, decoded as `TextFileService.readStream` does: in the `requested`
     /// encoding, else the one its BOM or zero bytes show, else `files.encoding`.
-    // shortcut: binary files open as text; upstream refuses them (FILE_IS_BINARY) and shows the binary editor.
     pub fn from_bytes(scheme: &str, path: &Path, bytes: &[u8], requested: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
         let resource = (scheme == "file").then_some(path);
         let detected = crate::encoding_guess::detect(bytes, settings, resource, false);
@@ -147,7 +161,7 @@ impl TextDocument {
         let eol = found_eol.unwrap_or_else(|| default_eol(settings, path, &language_id));
         let too_large_for_tokenization = too_large_for_tokenization(text, lines.len(), settings, path, &language_id);
         let tokens = Tokenization::new(languages.grammars.grammar(&language_id).filter(|_| !too_large_for_tokenization));
-        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment, tokens, too_large_for_tokenization }
+        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment, tokens, too_large_for_tokenization, open_error: None }
     }
 
     pub fn uri_string(&self) -> String {
@@ -367,6 +381,29 @@ fn spaces_diff(a: &[u16], a_length: usize, b: &[u16], b_length: usize) -> Spaces
         return SpacesDiff { spaces: spaces / tabs_diff, looks_like_alignment: false };
     }
     none
+}
+
+/// `getActiveIndentGuide` (guidesTextModelPart.ts) over the levels of `indent_guides`: the lines and level of the
+/// guide around 0-based `line`; a line that opens a block (the next line one level deeper) takes that block's guide.
+pub fn active_indent_guide(levels: &[usize], line: usize) -> (Range<usize>, usize) {
+    let initial = levels[line];
+    // (start, end, indent, whether to grow up, whether to grow down)
+    let (mut start, mut end, indent, up, down) = if levels.get(line + 1) == Some(&(initial + 1)) {
+        (line + 1, line + 1, initial + 1, false, true)
+    } else if line > 0 && levels[line - 1] == initial + 1 {
+        (line - 1, line - 1, initial + 1, true, false)
+    } else if initial == 0 {
+        return (line..line + 1, 0);
+    } else {
+        (line, line, initial, true, true)
+    };
+    while up && start > 0 && levels[start - 1] >= indent {
+        start -= 1;
+    }
+    while down && end + 1 < levels.len() && levels[end + 1] >= indent {
+        end += 1;
+    }
+    (start..end + 1, indent)
 }
 
 /// The indent level of each line, as `getLinesIndentGuides` (guidesTextModelPart.ts) computes it:
@@ -910,6 +947,19 @@ impl EditorGroup {
         self.activate(index);
     }
 
+    /// Shows `document` in the editor at `index` as a new model, also when its resource is the model it showed (an
+    /// editor placeholder resolving its file again), and activates it.
+    pub fn reload(&mut self, index: usize, document: TextDocument) {
+        self.next_model_id += 1;
+        let mut editor = OpenEditor::new(document, self.editors[index].preview, self.next_model_id);
+        self.restore_view_state(&mut editor);
+        let replaced = std::mem::replace(&mut self.editors[index], editor);
+        self.recent.retain(|id| *id != replaced.model_id);
+        self.remove_input(&replaced.model_id);
+        self.keep_or_dispose(replaced);
+        self.activate(index);
+    }
+
     /// Creates a text model with no editor, as `$tryOpenDocument` does; returns its index in `models`.
     pub fn open_model(&mut self, document: TextDocument) -> usize {
         let model = self.create_model(document, false);
@@ -1335,6 +1385,19 @@ mod tests {
     }
 
     #[test]
+    fn the_active_indent_guide_is_the_block_at_the_cursor_or_the_one_it_opens_or_closes() {
+        // a {  b  c {  d  e  }  }  x
+        let levels = [0, 1, 1, 2, 2, 1, 0, 0];
+        assert_eq!(active_indent_guide(&levels, 0), (1..6, 1));
+        assert_eq!(active_indent_guide(&levels, 2), (3..5, 2));
+        assert_eq!(active_indent_guide(&levels, 3), (3..5, 2));
+        assert_eq!(active_indent_guide(&levels, 1), (1..6, 1));
+        assert_eq!(active_indent_guide(&levels, 5), (3..5, 2));
+        assert_eq!(active_indent_guide(&levels, 6), (1..6, 1));
+        assert_eq!(active_indent_guide(&levels, 7), (7..8, 0));
+    }
+
+    #[test]
     fn finds_words_and_their_whole_word_occurrences() {
         assert_eq!(word_at("Port notes", 0), Some(0..4));
         assert_eq!(word_at("Port notes", 4), Some(0..4));
@@ -1368,6 +1431,7 @@ mod tests {
             block_comment: None,
             tokens: Tokenization::default(),
             too_large_for_tokenization: false,
+            open_error: None,
         };
         let names = |group: &EditorGroup| group.editors.iter().map(|editor| editor.document().name()).collect::<Vec<_>>();
         let mut group = EditorGroup::default();
@@ -1398,6 +1462,7 @@ mod tests {
             block_comment: None,
             tokens: Tokenization::default(),
             too_large_for_tokenization: false,
+            open_error: None,
         };
         group.open(document, false);
         let editor = group.active_mut().unwrap();

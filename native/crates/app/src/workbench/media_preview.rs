@@ -278,7 +278,7 @@ fn zoom_label(scale: Option<f64>) -> String {
 }
 
 /// files.ts `ByteSize.formatSize`.
-fn format_size(size: u64) -> String {
+pub(super) fn format_size(size: u64) -> String {
     const KB: f64 = 1024.;
     let size = size as f64;
     match size {

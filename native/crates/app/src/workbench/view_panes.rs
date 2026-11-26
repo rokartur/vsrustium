@@ -2,10 +2,12 @@
 //! viewContainerModel.ts state): headers that expand and collapse with the mouse and keys, sashes between them,
 //! headers dragged onto another pane to reorder, and the state in `workbench.explorer.views.state`.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use gpui::{
-    AnyElement, AppContext, Context, Div, DragMoveEvent, FocusHandle, FontWeight, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render, Rgba,
+    AnyElement, AppContext, Bounds, Context, Div, DragMoveEvent, FocusHandle, FontWeight, InteractiveElement, IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Render, Rgba,
     StatefulInteractiveElement, Styled, Task, Window, canvas, div, prelude::FluentBuilder, px, svg,
 };
 use serde_json::{Value, json};
@@ -165,6 +167,9 @@ pub(super) struct ExplorerPanes {
     drop: Option<(&'static str, bool)>,
     /// The header a pointer focused: paneHeaders.css `:focus:not(:focus-visible)` draws no outline until a key.
     pointer_focused: Option<&'static str>,
+    /// Each pane's bounds in the last frame. `.pane:hover` tests the pointer against them: GPUI's `is_hovered` turns
+    /// false after a key, a browser's `:hover` does not (the header actions under an open quick pick).
+    bounds: Rc<RefCell<HashMap<&'static str, Bounds<Pixels>>>>,
 }
 
 /// A view's body in the pane view: a header title and its content.
@@ -337,10 +342,10 @@ impl Workbench {
     fn pane(&self, id: &'static str, size: f32, header: Div, body: Option<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
         let drop = self.explorer_panes.drop.filter(|(target, _)| *target == id && cx.has_active_drag()).map(|(_, below)| below);
         let overlay = self.color("sideBar.dropBackground");
+        let tracked = self.explorer_panes.bounds.clone();
         let outline = self.theme.color("contrastActiveBorder");
         div()
             .id(id)
-            .group(id)
             .relative()
             .h(px(size))
             .flex_none()
@@ -349,6 +354,8 @@ impl Workbench {
             .overflow_hidden()
             .child(header)
             .when_some(body, |pane, body| pane.child(div().flex_1().min_h_0().flex().flex_col().child(body)))
+            .child(canvas(move |bounds, _, _| _ = tracked.borrow_mut().insert(id, bounds), |_, _, _, _| ()).absolute().inset_0())
+            .on_hover(cx.listener(|_, _: &bool, _, cx| cx.notify()))
             .on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<DraggedPane>, _, cx| {
                 if !event.bounds.contains(&event.event.position) {
                     return;
@@ -387,10 +394,10 @@ impl Workbench {
         window.focus(&self.explorer_panes.focus[id].clone(), cx);
     }
 
-    /// GPUI's group hover changes only on a mouse move, where a browser drops `:hover` once `.context-view-block`
+    /// `.pane:hover`. The hover changes only on a mouse move, where a browser drops `:hover` once `.context-view-block`
     /// covers the pointer: the pane counts as not hovered while a context menu is open.
-    pub(super) fn pane_hover_reachable(&self) -> bool {
-        self.context_menu.is_none()
+    pub(super) fn pane_hovered(&self, id: &'static str, window: &Window) -> bool {
+        self.context_menu.is_none() && self.explorer_panes.bounds.borrow().get(id).is_some_and(|bounds| bounds.contains(&window.mouse_position()))
     }
 
     /// `.pane-header`: a click, Enter or Space toggles, Left collapses, Right expands, Up and Down move to the
@@ -440,7 +447,7 @@ impl Workbench {
                 .children(description.filter(|_| expanded).map(|description| {
                     div().ml(px(10.)).text_size(px(12.)).text_color(self.color("panelTitle.inactiveForeground")).overflow_hidden().whitespace_nowrap().child(description)
                 }))
-                .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().when(self.pane_hover_reachable(), |actions| actions.group_hover(id, |actions| actions.visible())).when(actions_shown, |actions| actions.visible()).child(actions)))
+                .children(actions.filter(|_| expanded).map(|actions| div().ml_auto().mr(px(4.)).invisible().when(actions_shown || self.pane_hovered(id, window), |actions| actions.visible()).child(actions)))
                 .when(id == FILE_VIEW, |header| header.child(self.explorer_title_actions(window, cx)))
                 .when(focused && self.explorer_panes.pointer_focused != Some(id), |header| header.child(div().absolute().inset_0().rounded(px(4.)).border_1().border_color(self.color("focusBorder"))))
                 .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, window, cx| {

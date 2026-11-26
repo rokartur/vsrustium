@@ -356,6 +356,10 @@ impl Workbench {
         }
         if let Some(change) = change {
             self.send_model_edit(scheme, path, &change);
+            // links.ts `onDidChangeModelContent` of the active editor's model, whatever edited it (a search editor's results).
+            if self.editors.active().is_some_and(|editor| editor.document().is(scheme, path)) {
+                self.links_content_changed(&change, cx);
+            }
             cx.notify();
         }
     }

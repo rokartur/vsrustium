@@ -655,7 +655,8 @@ mod tests {
         assert_eq!(document(cx).2, "\r\n");
 
         run("workbench.action.editor.changeLanguageMode", cx);
-        assert!(labels(cx).contains(&"--languages (identifier)--Plain Text".to_string()));
+        // files.contribution.ts registers "Binary" (code-text-binary), first after the separator.
+        assert!(labels(cx).contains(&"--languages (identifier)--Binary".to_string()) && labels(cx).contains(&"Plain Text".to_string()));
         pick("Rust", cx);
         assert_eq!(document(cx).3, "rust");
         let methods: Vec<_> = receiver.try_iter().map(|message| message.method).collect();
