@@ -529,6 +529,7 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.start_terminal_host();
                 workbench.watch_editor_focus(window, cx);
                 workbench.show_trust_modal_on_start(window, cx);
+                workbench.restore_notebook_editors(window, cx);
                 workbench.start_backups(&user_data, backup_folder, window, cx);
                 perf::mark("code/willRestoreEditors");
                 let resolver_cache = workbench.take_editor_resolver_cache();

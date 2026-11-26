@@ -18,6 +18,7 @@ pub const MARKDOWN_CELL_BOTTOM_MARGIN: f32 = 6.;
 pub const MARKDOWN_CELL_LEFT_MARGIN: f32 = 8.;
 pub const MARKDOWN_CELL_GUTTER: f32 = 36.;
 pub const FOCUS_INDICATOR_LEFT_MARGIN: f32 = 4.;
+pub const FOCUS_INDICATOR_GAP: f32 = 3.;
 pub const STATUS_BAR_HEIGHT: f32 = 22.;
 pub const OUTPUT_PADDING: f32 = 8.;
 pub const MARKDOWN_PREVIEW_PADDING: f32 = 8.;

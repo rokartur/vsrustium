@@ -73,6 +73,8 @@ pub enum MenuId {
     EditorTitle,
     /// `MenuId.InteractiveToolbar`: the interactive window's and REPL editor's toolbar.
     InteractiveToolbar,
+    /// `MenuId.NotebookOutputToolbar`: the `...` dropdown left of a notebook output.
+    NotebookOutputToolbar,
     TimelineTitle,
     TimelineItemContext,
     /// timeline.contribution.ts "Filter Timeline": a toggle per timeline source.
@@ -420,6 +422,12 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::SearchContext, None, "search.action.copyPath", "Copy Path", "search_2", 2., Some("fileMatchOrFolderMatchWithResourceFocus"), None),
     (MenuId::SearchContext, None, "search.action.copyAll", "Copy All", "search_2", 3., Some("hasSearchResult"), None),
     (MenuId::SearchContext, None, "search.action.revealInSideBar", "Reveal in Explorer View", "search_3", 1., Some("fileMatchFocus && hasSearchResult"), None),
+    // editActions.ts and cellOutputActions.ts; "Open in Output Preview" needs `notebook.output.openInPreviewEditor.enabled`,
+    // a setting no build registers, and "Add Cell Output to Chat" needs chat.
+    (MenuId::NotebookOutputToolbar, None, "notebook.cell.clearOutputs", "Clear Cell Outputs", "", 0., Some("notebookCellHasOutputs && notebookEditable && notebookCellEditable && notebookCellIsFirstOutput && config.notebook.consolidatedOutputButton"), None),
+    (MenuId::NotebookOutputToolbar, None, "notebook.cellOuput.showEmptyOutputs", "Show Empty Outputs", "", 0., Some("notebookCellHasOutputs && notebookCellHasHiddenOutputs"), None),
+    (MenuId::NotebookOutputToolbar, None, "notebook.cellOutput.copy", "Copy Cell Output", "", 0., Some("notebookCellHasOutputs"), None),
+    (MenuId::NotebookOutputToolbar, None, "notebook.cellOutput.saveImage", "Save Image", "", 0., Some("notebookCellOutputMimetype =~ /^image\\//"), None),
 ];
 
 /// windowActions.ts, layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and

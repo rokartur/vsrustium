@@ -394,8 +394,11 @@ impl Workbench {
                 window.blur(cx);
             }
             "did-keydown" => {
+                // Deferred: the keystroke interceptors update the workbench, which this handler is updating.
                 if let Some(keystroke) = keystroke(&data) {
-                    window.dispatch_keystroke(keystroke, cx);
+                    window.defer(cx, move |window, cx| {
+                        window.dispatch_keystroke(keystroke, cx);
+                    });
                 }
             }
             "find-focus" => {

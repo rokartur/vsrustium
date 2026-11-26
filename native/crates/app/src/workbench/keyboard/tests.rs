@@ -129,3 +129,16 @@ fn can_have_spying_command(cx: &mut TestAppContext) {
     let (workbench, cx, calls) = workbench_with(vec![kb_item("cmd+k", "^simpleCommand", None)], cx);
     assert_eq!(press(&workbench, "cmd-k", cx, &calls), (vec!["simpleCommand".into()], None, None));
 }
+
+/// contextkeys.ts `InputFocusedContext`: a focused code editor's text is an input, so `!inputFocus` keybindings stay
+/// off there.
+#[gpui::test]
+fn a_focused_text_editor_is_an_input(cx: &mut TestAppContext) {
+    let (workbench, cx, calls) = workbench_with(vec![kb_item("a", "outside", Some("!inputFocus"))], cx);
+    assert_eq!(press(&workbench, "a", cx, &calls).0, ["outside"]);
+    let input = workbench.update_in(cx, |workbench, window, cx| {
+        window.focus(&workbench.editor_focus, cx);
+        workbench.key_context(window).get("inputFocus").cloned()
+    });
+    assert_eq!(input, Some(Value::Bool(true)));
+}

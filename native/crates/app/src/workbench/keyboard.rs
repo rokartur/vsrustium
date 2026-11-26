@@ -334,6 +334,10 @@ impl Workbench {
         context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window) || find_focused || replace_focused || button_focused || self.rename_input_focused(window)));
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
+        if editor_focused {
+            // contextkeys.ts `InputFocusedContext`: the editor's textarea is an editable element.
+            context.insert("inputFocus".into(), json!(true));
+        }
         self.notifications_context(window, &mut context);
         self.banner_context(window, &mut context);
         self.host_context(window, &mut context);

@@ -90,11 +90,18 @@ pub struct NotebookViews {
     pub(super) status_bars: super::notebook_status_bar::CellStatusBars,
     /// The cell list of the active notebook editor (notebookCellList.ts), focused when no cell editor is.
     pub(super) list_focus: FocusHandle,
+    /// notebookServiceImpl.ts `_displayOrder` after Change Presentation picks, with the `notebook.displayOrder`
+    /// value it started from (a settings change starts over).
+    mime_order: Option<(Value, Vec<String>)>,
+    /// `NotebookOutputRendererInfoStore.setPreferred`: the renderer picked by notebook type and mime.
+    preferred_renderers: HashMap<(String, String), String>,
+    /// Notebook editors the editor part restored, opened once their notebooks resolve (notebooks.rs).
+    pub(super) restores: Vec<super::notebooks::NotebookRestore>,
 }
 
 impl NotebookViews {
     pub(super) fn new(cx: &mut Context<Workbench>) -> Self {
-        NotebookViews { views: HashMap::new(), status_bars: Default::default(), list_focus: cx.focus_handle() }
+        NotebookViews { views: HashMap::new(), status_bars: Default::default(), list_focus: cx.focus_handle(), mime_order: None, preferred_renderers: HashMap::new(), restores: Vec::new() }
     }
 }
 
@@ -108,6 +115,8 @@ struct NotebookView {
     /// Markup cells in edit mode, by handle.
     editing: HashSet<u64>,
     hovered: Option<u64>,
+    /// Outputs Show Empty Outputs made visible (cellOutputViewModel.ts `alwaysShow`), by id.
+    shown_empty: HashSet<String>,
 }
 
 /// backLayerWebView.ts: the webview, what it was sent and what it measured.
@@ -119,8 +128,9 @@ struct BackLayer {
     /// Output heights by output id and preview heights by cell handle, from `dimension` messages.
     output_heights: HashMap<String, f32>,
     preview_heights: HashMap<u64, f32>,
-    /// What the webview shows: outputs by id with their cell handle and bytes, previews by handle with their text.
-    outputs: HashMap<String, (u64, Vec<u8>)>,
+    /// What the webview shows: outputs by id with their cell handle, mime and bytes, previews by handle with their
+    /// text.
+    outputs: HashMap<String, (u64, String, Vec<u8>)>,
     previews: HashMap<u64, String>,
     hidden_previews: HashSet<u64>,
     last_scroll: Value,
@@ -362,8 +372,11 @@ impl Workbench {
                 window.blur(cx);
             }
             "did-keydown" => {
+                // Deferred: the keystroke interceptors update the workbench, which this handler is updating.
                 if let Some(keystroke) = super::webview_panels::keystroke(data) {
-                    window.dispatch_keystroke(keystroke, cx);
+                    window.defer(cx, move |window, cx| {
+                        window.dispatch_keystroke(keystroke, cx);
+                    });
                 }
             }
             "fatal-error" => eprintln!("[notebook webview] {}", data["message"].as_str().unwrap_or_default()),
@@ -394,7 +407,7 @@ impl Workbench {
                     match update["isOutput"] == true {
                         true => {
                             back_layer.output_heights.insert(id.to_owned(), height as f32);
-                            if let Some((handle, _)) = back_layer.outputs.get(id) {
+                            if let Some((handle, _, _)) = back_layer.outputs.get(id) {
                                 acks.push(json!({ "cellId": cell_id(*handle), "outputId": id, "height": height }));
                             }
                         }
@@ -420,6 +433,10 @@ impl Workbench {
                 if message["type"] == "mouseEnterMarkupCell" {
                     view.hovered = Some(handle);
                     return cx.notify();
+                }
+                // The press focused the webview ("did-focus"); upstream the list then takes the focus from the iframe.
+                if let Some(back_layer) = &view.webview {
+                    back_layer.webview.release_keyboard();
                 }
                 self.focus_notebook_cell(tab, handle, false, window, cx);
             }
@@ -530,10 +547,6 @@ impl Workbench {
         context.insert("notebookEditorFocused".into(), json!(list_focused || editor_focused));
         context.insert("notebookCellListFocused".into(), json!(list_focused || editor_focused));
         context.insert("notebookCellEditorFocused".into(), json!(editor_focused));
-        if editor_focused {
-            // contextkeys.ts `InputFocusedContext`: the editor's textarea is an editable element.
-            context.insert("inputFocus".into(), json!(true));
-        }
         let Some(editor) = self.active_notebook_editor() else { return };
         let Some(model) = self.host.notebooks.model(&editor.notebook) else { return };
         context.insert("notebookType".into(), json!(model.view_type));
@@ -594,8 +607,6 @@ impl Workbench {
     fn sync_back_layer(&mut self, tab: u32, notebook: &str) {
         let Some(model) = self.host.notebooks.model(notebook) else { return };
         let rows = self.notebook_rows(tab, model);
-        let display_order: Vec<String> = self.setting("notebook.displayOrder").as_array().into_iter().flatten().filter_map(|mime| mime.as_str()).map(str::to_owned).collect();
-        let renderers = renderers::renderers(&self.extensions);
         let mut previews = Vec::new();
         let mut outputs = Vec::new();
         for row in &rows {
@@ -605,11 +616,10 @@ impl Workbench {
                 continue;
             }
             let mut offset = row.layout.output_top;
-            for output in &cell.outputs {
-                let mimes: Vec<&str> = output.items.iter().map(|item| item.mime.as_str()).collect();
-                let picked = renderers::pick_output_renderer(&display_order, &mimes, &renderers).map(|(mime, renderer)| (mime.to_owned(), renderer.id.clone()));
+            for (output, height) in cell.outputs.iter().zip(self.output_heights(tab, cell)) {
+                let picked = self.output_presentations(&model.view_type, output).into_iter().find_map(|(mime, renderer)| renderer.map(|renderer| (mime, renderer.id)));
                 outputs.push((cell.handle, cell.internal_metadata["executionId"].clone(), output.clone(), picked, row.layout.top, offset));
-                offset += self.notebook_views.views.get(&tab).and_then(|view| view.webview.as_ref()).and_then(|layer| layer.output_heights.get(&output.id)).copied().unwrap_or(0.);
+                offset += height.unwrap_or(0.);
             }
         }
         let Some(back_layer) = self.notebook_views.views.get_mut(&tab).and_then(|view| view.webview.as_mut()).filter(|layer| layer.initialized) else { return };
@@ -643,15 +653,18 @@ impl Workbench {
         let wanted: HashSet<&str> = outputs.iter().map(|output| output.2.id.as_str()).collect();
         let cleared: Vec<String> = back_layer.outputs.keys().filter(|id| !wanted.contains(id.as_str())).cloned().collect();
         for id in cleared {
-            let (handle, _) = back_layer.outputs.remove(&id).expect("listed above");
+            let (handle, _, _) = back_layer.outputs.remove(&id).expect("listed above");
             back_layer.output_heights.remove(&id);
             back_layer.post(json!({ "type": "clearOutput", "cellId": cell_id(handle), "outputId": id, "rendererId": null }));
         }
         for (handle, execution_id, output, picked, cell_top, offset) in &outputs {
             let Some((mime, renderer_id)) = picked else { continue };
             let item = output.items.iter().find(|item| item.mime == *mime).expect("picked from the output's items");
-            if back_layer.outputs.get(&output.id).is_some_and(|(_, bytes)| *bytes == item.data) {
-                continue;
+            match back_layer.outputs.get(&output.id) {
+                Some((_, sent, bytes)) if sent == mime && *bytes == item.data => continue,
+                // cellOutput.ts `_pickActiveMimeTypeRenderer`: another presentation removes the inset first.
+                Some((_, sent, _)) if sent != mime => back_layer.post(json!({ "type": "clearOutput", "cellId": cell_id(*handle), "outputId": output.id, "rendererId": null })),
+                _ => {}
             }
             let mut metadata = output.metadata.clone();
             // `createMetadata`: an image's alt text is its text/plain item.
@@ -679,7 +692,7 @@ impl Workbench {
                 "initiallyHidden": false,
             });
             back_layer.post_with_buffer(message, &item.data);
-            back_layer.outputs.insert(output.id.clone(), (*handle, item.data.clone()));
+            back_layer.outputs.insert(output.id.clone(), (*handle, mime.clone(), item.data.clone()));
         }
         let widgets: Vec<Value> = outputs
             .iter()
@@ -706,7 +719,7 @@ impl Workbench {
             let editing = view.is_some_and(|view| view.editing.contains(&cell.handle));
             let input = match cell.kind == CODE || editing {
                 true => {
-                    let outputs_height = cell.outputs.iter().map(|output| back_layer.and_then(|layer| layer.output_heights.get(&output.id)).copied().unwrap_or(0.)).sum();
+                    let outputs_height = self.output_heights(tab, cell).into_iter().flatten().sum();
                     CellInput::Editor { lines: self.cell_line_count(&cell.uri), outputs_height, markup: cell.kind != CODE }
                 }
                 false => CellInput::Preview { height: back_layer.and_then(|layer| layer.preview_heights.get(&cell.handle)).copied() },
@@ -920,7 +933,7 @@ impl Workbench {
         for row in &rows {
             let top = row.layout.top - scroll_top;
             match row.kind == CODE || row.editing {
-                true => hit_rects.push(Bounds::new(point(px(0.), px(top + row.layout.output_top)), size(px(10000.), px(row.layout.height - row.layout.output_top - layout::BOTTOM_TOOLBAR_GAP - layout::CELL_BOTTOM_MARGIN)))),
+                true => hit_rects.push(Bounds::new(point(px(layout::CODE_CELL_LEFT_MARGIN + layout::CELL_RUN_GUTTER), px(top + row.layout.output_top)), size(px(10000.), px(row.layout.height - row.layout.output_top - layout::BOTTOM_TOOLBAR_GAP - layout::CELL_BOTTOM_MARGIN)))),
                 false => hit_rects.push(Bounds::new(point(px(layout::MARKDOWN_CELL_GUTTER), px(top)), size(px(10000.), px(row.layout.output_top)))),
             }
         }
@@ -981,20 +994,22 @@ impl Workbench {
         // `notebook.inactiveFocusedCellBorder`.
         let input = self.editors.active().filter(|active| self.is_interactive_input(active)).is_some();
         let list_focused = self.notebook_views.list_focus.is_focused(window) || (self.editor_focus.is_focused(window) && !input);
-        if focused {
-            let color = if list_focused { self.color("notebook.focusedCellBorder") } else { self.color("notebook.inactiveFocusedCellBorder") };
-            let bar = |top: f32, height: f32| div().absolute().left(px(layout::FOCUS_INDICATOR_LEFT_MARGIN)).top(px(top)).w(px(2.)).h(px(height)).rounded(px(1.)).bg(color);
+        // notebookEditorWidget.ts: the bars also show, inactive, on a hovered row; 3px wide, the output bar 3px
+        // (`focusIndicatorGap`) below the code bar.
+        let hovered = self.notebook_views.views.get(&tab).is_some_and(|view| view.hovered == Some(row.handle));
+        if focused || hovered {
+            let color = if focused && list_focused { self.color("notebook.focusedCellBorder") } else { self.color("notebook.inactiveFocusedCellBorder") };
+            let bar = |top: f32, height: f32| div().absolute().left(px(layout::FOCUS_INDICATOR_LEFT_MARGIN)).top(px(top)).w(px(3.)).h(px(height)).rounded(px(1.5)).bg(color);
             let outputs_height = row.layout.height - row.layout.output_top - layout::BOTTOM_TOOLBAR_GAP - layout::CELL_BOTTOM_MARGIN;
             match row.kind == CODE || row.editing {
                 true => container = container.child(bar(row.layout.editor_top, row.layout.editor_height + layout::STATUS_BAR_HEIGHT)),
                 false => container = container.child(bar(row.layout.editor_top, row.layout.output_top)),
             }
-            if row.kind == CODE && outputs_height > 0. {
-                container = container.child(bar(row.layout.output_top, outputs_height));
+            if row.kind == CODE && outputs_height > layout::FOCUS_INDICATOR_GAP {
+                container = container.child(bar(row.layout.output_top + layout::FOCUS_INDICATOR_GAP, outputs_height - layout::FOCUS_INDICATOR_GAP));
             }
         }
         // notebookCellTitleToolbar.css: the toolbar of the hovered row, or of the focused one while the list has the focus.
-        let hovered = self.notebook_views.views.get(&tab).is_some_and(|view| view.hovered == Some(row.handle));
         let shows_toolbar = hovered || (focused && list_focused);
         container = container.child(self.insert_toolbar(tab, row, cx));
         if row.kind != CODE && !row.editing {
@@ -1016,7 +1031,7 @@ impl Workbench {
             .child(self.cell_status_bar(model, row.index, focused, window, cx));
         container = container.child(editor_box);
         if row.kind == CODE {
-            container = container.child(self.cell_run_gutter(tab, model, row, cx));
+            container = container.child(self.cell_run_gutter(tab, model, row, cx)).children(self.output_toolbars(tab, model, row, cx));
         }
         container.children(shows_toolbar.then(|| self.cell_toolbar(tab, row, cx)))
     }
@@ -1025,7 +1040,9 @@ impl Workbench {
     fn cell_editor(&self, cell: &notebook::Cell, height: f32, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let Some(editor) = self.cell_model(&cell.uri) else { return div() };
         let text_height = height - layout::EDITOR_TOP_PADDING - layout::EDITOR_BOTTOM_PADDING;
-        div().absolute().left_0().right_0().top(px(layout::EDITOR_TOP_PADDING)).h(px(text_height)).flex().overflow_hidden().child(self.embedded_code_editor(editor, window, cx))
+        // The box's 1px border takes layout space here and none upstream (an outline), so the text starts 1px higher and
+        // 1px further left.
+        div().absolute().left(px(-1.)).right_0().top(px(layout::EDITOR_TOP_PADDING - 1.)).h(px(text_height)).flex().overflow_hidden().child(self.embedded_code_editor(editor, window, cx))
     }
 
     /// cellExecution.ts and the run toolbar: the run button over the gutter of a focused cell, the execution order
@@ -1345,6 +1362,7 @@ fn query_component(text: &str) -> String {
     encoded
 }
 
+mod outputs;
 #[cfg(test)]
 mod tests;
 

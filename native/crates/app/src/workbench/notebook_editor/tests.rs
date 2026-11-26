@@ -240,3 +240,97 @@ fn the_cell_language_picker_changes_the_language_and_the_kind(cx: &mut TestAppCo
     run(&workbench, "undo", cx);
     assert_eq!(cell(cx), (crate::notebook::CODE, "python".into(), "x".into()));
 }
+
+/// cellOutput.ts `_attachToolbar`: each output's `...` menu has the `NotebookOutputToolbar` actions that hold for it
+/// (Clear Cell Outputs on the first output, no Copy on a stream after a stream, Show Empty Outputs while one is
+/// hidden) and Change Presentation first for an output with more than one; their commands copy, show and re-pick.
+#[gpui::test]
+fn the_output_toolbar_menu_and_its_commands(cx: &mut TestAppContext) {
+    let item = |mime: &str, text: &str| json!({ "mime": mime, "valueBytes": text.as_bytes() });
+    let outputs = json!([
+        { "outputId": "a", "items": [item("application/vnd.code.notebook.stdout", "hello\n")] },
+        { "outputId": "b", "items": [item("application/vnd.code.notebook.stdout", "world\n")] },
+        { "outputId": "c", "items": [item("text/html", "<b>x</b>"), item("text/plain", "x")] },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(json!([{ "cellKind": 2, "language": "python", "source": "x", "outputs": outputs, "metadata": {} }]), cx);
+    let renderers = json!({ "contributes": { "notebookRenderer": [
+        { "id": "builtin", "displayName": "Built-in", "mimeTypes": ["text/plain", "application/vnd.code.notebook.stdout"], "entrypoint": "a.js" },
+        { "id": "html", "displayName": "HTML", "mimeTypes": ["text/html"], "entrypoint": "b.js" },
+    ] } });
+    workbench.update(cx, |workbench, _| workbench.extensions = vec![exthost::scan::ScannedExtension { id: "port.renderers".into(), location: "/ext".into(), description: renderers }]);
+    let menu = |index: usize, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, _| {
+            let editor = workbench.active_notebook_editor().unwrap();
+            let model = workbench.host.notebooks.model(&editor.notebook).unwrap();
+            let actions = workbench.output_menu_actions(editor.tab_model_id, model, 0, index, window);
+            actions.into_iter().map(|action| match action {
+                crate::menus::MenuAction::Command { title, .. } => title,
+                other => format!("{other:?}"),
+            }).collect::<Vec<_>>()
+        })
+    };
+    assert_eq!(menu(0, cx), ["Clear Cell Outputs", "Copy Cell Output", "Show Empty Outputs"], "the unmeasured outputs after the first are hidden");
+    assert_eq!(menu(1, cx), ["Show Empty Outputs"]);
+    assert_eq!(menu(2, cx), ["Change Presentation", "Copy Cell Output", "Show Empty Outputs"]);
+    let uri = workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].uri.clone());
+    let context = |output: &str| vec![json!({ "start": 0, "end": 1, "outputId": output }), uri.clone()];
+    let command = |id: &str, args: Vec<serde_json::Value>, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(id, args, window, cx)));
+        cx.run_until_parked();
+    };
+    command("notebook.cellOutput.copy", context("a"), cx);
+    assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()), Some("hello\nworld".into()), "a stream copies the streams from it on");
+    command("notebook.cellOuput.showEmptyOutputs", context("a"), cx);
+    assert_eq!(menu(0, cx), ["Clear Cell Outputs", "Copy Cell Output"]);
+    command("notebook.output.pickMimetype", context("c"), cx);
+    let rows = workbench.read_with(cx, |workbench, _| {
+        let input = workbench.quick_inputs.current().unwrap();
+        input.order.iter().map(|row| &input.rows[*row]).map(|row| format!("{} {}", row.item.label, row.item.description.clone().unwrap_or_default())).collect::<Vec<_>>()
+    });
+    assert_eq!(rows, ["text/html Currently Active", "text/plain "]);
+    workbench.update_in(cx, |workbench, window, cx| {
+        let input = workbench.quick_inputs.find_mut(|_| true).unwrap();
+        let handle = input.rows.iter().find(|row| row.item.label == "text/plain").unwrap().item.handle;
+        input.set_active_items(&[handle]);
+        workbench.flush_quick_input_events(window, cx);
+    });
+    cx.simulate_keystrokes("enter");
+    cx.run_until_parked();
+    let picked = workbench.read_with(cx, |workbench, _| {
+        let model = &workbench.host.notebooks.models[0];
+        workbench.output_presentations(&model.view_type, &model.cells[0].outputs[2])[0].0.clone()
+    });
+    assert_eq!(picked, "text/plain", "the picked presentation shows from now on");
+}
+
+/// NotebookEditorSerializer: the editor part saves a notebook tab as `workbench.input.notebook` and opens it again
+/// from workspace storage once its notebook resolves.
+#[gpui::test]
+fn a_notebook_editor_comes_back_from_workspace_storage(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = workbench_with_cells(json!([{ "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} }]), cx);
+    let saved = workbench.update(cx, |workbench, _| {
+        workbench.save_editor_part_state();
+        workbench.workspace_storage.lock().unwrap().get("memento/workbench.parts.editor").map(str::to_owned).unwrap()
+    });
+    let state: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    let editor = &state["editorpart.state"]["serializedGrid"]["root"]["data"][0]["data"]["editors"][0];
+    assert_eq!(editor["id"], "workbench.input.notebook");
+    let value: serde_json::Value = serde_json::from_str(editor["value"].as_str().unwrap()).unwrap();
+    assert_eq!((value["viewType"].clone(), value["resource"]["path"].clone()), (json!("jupyter-notebook"), json!("Untitled-1.ipynb")));
+    let key = workbench.update(cx, |workbench, _| {
+        let key = workbench.host.notebooks.models[0].uri_string();
+        workbench.host.notebooks.held.push(key.clone());
+        key
+    });
+    run(&workbench, "workbench.action.closeAllEditors", cx);
+    assert!(workbench.read_with(cx, |workbench, _| workbench.editors.editors.is_empty()));
+    let storage = Arc::new(Mutex::new(storage::Storage::in_memory()));
+    storage.lock().unwrap().set("memento/workbench.parts.editor", saved);
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.restore_workspace_state(storage);
+        workbench.restore_notebook_editors(window, cx);
+    });
+    cx.run_until_parked();
+    let tabs = workbench.read_with(cx, |workbench, _| workbench.editors.editors.iter().map(|editor| (editor.document().path.to_string_lossy().into_owned(), editor.preview)).collect::<Vec<_>>());
+    assert_eq!(tabs, [(key, false)]);
+}
