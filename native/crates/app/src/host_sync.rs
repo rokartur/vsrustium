@@ -166,15 +166,13 @@ impl HostSync {
             .column_ids()
             .into_iter()
             .enumerate()
-            .filter_map(|(column, id)| {
-                let (editor, viewport) = group.group_active(id)?;
-                // A notebook editor's focused cell is the code editor the host sees (`activeCodeEditor`).
-                // shortcut: only that cell of each notebook editor is a visible text editor, not every rendered cell.
-                let editor = match editor.document().scheme == NOTEBOOK_EDITOR_SCHEME {
-                    true => crate::workbench::focused_cell(&self.notebooks, group, editor)?,
-                    false => editor,
-                };
-                is_text(&editor).then_some((column, editor, viewport))
+            .flat_map(|(column, id)| {
+                let Some((editor, viewport)) = group.group_active(id) else { return Vec::new() };
+                // Every cell of a notebook editor is a code editor the host sees, the focused one first.
+                // shortcut: every cell, where the notebook list renders only the cells in view.
+                let cells = group.group_active_tab(id).map(|tab| crate::workbench::notebook_cells(&self.notebooks, group, tab)).unwrap_or_default();
+                let editors = std::iter::once(editor).chain(cells);
+                editors.filter(|editor| is_text(editor)).map(|editor| (column, editor, viewport)).collect()
             })
             .collect();
         let mut seen_cells = Vec::new();
@@ -209,11 +207,7 @@ impl HostSync {
         if !added_editors.is_empty() {
             delta.insert("addedEditors".into(), Value::Array(added_editors));
         }
-        let active = group.active().and_then(|editor| match editor.document().scheme == NOTEBOOK_EDITOR_SCHEME {
-            true => crate::workbench::focused_cell(&self.notebooks, group, editor),
-            false => Some(editor),
-        });
-        let active_id = active.filter(is_text).map(snapshot_id);
+        let active_id = group.active().filter(is_text).map(snapshot_id);
         if active_id != self.active_editor || delta.contains_key("removedEditors") || delta.contains_key("addedEditors") {
             delta.insert("newActiveEditor".into(), json!(active_id));
         }

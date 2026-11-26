@@ -100,8 +100,9 @@ pub mod menubar;
 mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
+mod notebook_editor;
 mod notebooks;
-pub(crate) use notebooks::focused_cell;
+pub(crate) use notebooks::notebook_cells;
 mod notifications_view;
 mod panel;
 mod part_grid;
@@ -371,6 +372,7 @@ pub struct Workbench {
     pub search_editors: search_editor_view::SearchEditors,
     pub search_editor_widget: search_editor_widget::SearchEditorWidget,
     pub webview_panels: webview_panels::WebviewPanels,
+    notebook_views: notebook_editor::NotebookViews,
     pub scm: scm_view::ScmView,
     timeline: timeline_view::TimelineView,
     scm_graph: scm_graph_view::ScmGraph,
@@ -444,6 +446,7 @@ impl Render for Workbench {
         self.refresh_document_highlights(window, cx);
         self.refresh_outline_pane(cx);
         self.update_webview_panels(window, cx);
+        self.update_notebook_views(window, cx);
         self.update_diff_editor();
         self.update_merge_editor(cx);
         self.update_multi_diff_editor();
@@ -634,6 +637,7 @@ impl Workbench {
             search_editors: HashMap::new(),
             search_editor_widget: search_editor_widget::SearchEditorWidget::new(cx),
             webview_panels: Default::default(),
+            notebook_views: Default::default(),
             scm: scm_view::ScmView::new(cx),
             timeline: timeline_view::TimelineView::new(cx),
             scm_graph: Default::default(),

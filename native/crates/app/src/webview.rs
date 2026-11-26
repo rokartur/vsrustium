@@ -49,6 +49,11 @@ pub struct Webview {
     pending: Option<Vec<String>>,
 }
 
+/// WebKit needs AppKit's main thread, which unit tests do not run on.
+pub fn supported() -> bool {
+    MainThreadMarker::new().is_some()
+}
+
 impl Webview {
     /// A hidden webview over `window` loading the host page; `origin` is the webview's `this.origin`, the salt of its host name.
     pub fn new(window: &Window, id: &str, origin: &str, extension_id: &str, pre_dir: PathBuf, roots: Vec<PathBuf>, events: UnboundedSender<WebviewEvent>) -> Self {
@@ -146,7 +151,11 @@ impl Webview {
     /// Gives the keyboard back to GPUI's view, the view's superview.
     pub fn release_keyboard(&self) {
         // SAFETY: the view is alive; its superview is GPUI's view or none.
-        let (Some(window), Some(parent)) = (self.view.window(), unsafe { self.view.superview() }) else { return };
+        let (Some(window), Some(mut parent)) = (self.view.window(), unsafe { self.view.superview() }) else { return };
+        if let Some(clip) = parent.downcast_ref::<ClipView>() {
+            let Some(gpui) = (unsafe { clip.superview() }) else { return };
+            parent = gpui;
+        }
         if self.is_first_responder(&window) {
             window.makeFirstResponder(Some(&parent));
         }
@@ -174,7 +183,7 @@ impl Drop for Webview {
 }
 
 /// Shows `view` over `bounds`, in GPUI window coordinates.
-pub fn place(view: &WKWebView, window: &Window, bounds: Bounds<Pixels>) {
+pub fn place(view: &NSView, window: &Window, bounds: Bounds<Pixels>) {
     let parent = gpui_view(window);
     let (x, width, height) = (f64::from(f32::from(bounds.origin.x)), f64::from(f32::from(bounds.size.width)), f64::from(f32::from(bounds.size.height)));
     let top = f64::from(f32::from(bounds.origin.y));
@@ -186,6 +195,72 @@ pub fn place(view: &WKWebView, window: &Window, bounds: Bounds<Pixels>) {
     if view.isHidden() {
         view.setHidden(false);
     }
+}
+
+/// The notebook's back layer webview (backLayerWebView.ts) lies behind the cells upstream; here it floats over GPUI's
+/// layer, so a clip view holds it: it shows the webview inside the notebook list only, and presses reach the
+/// webview over its outputs and markdown previews only, GPUI's cells everywhere else.
+pub struct ClipState {
+    hit_rects: RefCell<Vec<NSRect>>,
+}
+
+define_class!(
+    #[unsafe(super(NSView))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "CodeGpuiWebviewClip"]
+    #[ivars = ClipState]
+    pub struct ClipView;
+
+    impl ClipView {
+        #[unsafe(method(isFlipped))]
+        fn is_flipped(&self) -> bool {
+            true
+        }
+
+        #[unsafe(method(hitTest:))]
+        // The view `hitTest:` returns is not owned (+0), so it passes through as a pointer.
+        fn hit_test(&self, point: NSPoint) -> *mut NSView {
+            // SAFETY: the clip view is GPUI's view's subview while it is hit tested.
+            let local = self.convertPoint_fromView(point, unsafe { self.superview() }.as_deref());
+            let inside = |rect: &NSRect| local.x >= rect.origin.x && local.y >= rect.origin.y && local.x < rect.origin.x + rect.size.width && local.y < rect.origin.y + rect.size.height;
+            if !self.ivars().hit_rects.borrow().iter().any(inside) {
+                return std::ptr::null_mut();
+            }
+            unsafe { msg_send![super(self), hitTest: point] }
+        }
+    }
+);
+
+impl ClipView {
+    /// A hidden clip view over `window` holding `webview`.
+    pub fn new(window: &Window, webview: &Webview) -> Retained<Self> {
+        let mtm = MainThreadMarker::new().expect("webviews live on the main thread");
+        let this = Self::alloc(mtm).set_ivars(ClipState { hit_rects: RefCell::default() });
+        let this: Retained<Self> = unsafe { msg_send![super(this), initWithFrame: NSRect::ZERO] };
+        this.setClipsToBounds(true);
+        this.setHidden(true);
+        webview.view.removeFromSuperview();
+        this.addSubview(&webview.view);
+        webview.view.setHidden(false);
+        gpui_view(window).addSubview(&this);
+        this
+    }
+
+    /// Shows the clip over `bounds` in GPUI window coordinates, its webview at `webview` (relative to the clip's
+    /// origin, as `hit_rects` are).
+    pub fn place(&self, webview: &WKWebView, window: &Window, bounds: Bounds<Pixels>, webview_frame: Bounds<Pixels>, hit_rects: Vec<Bounds<Pixels>>) {
+        place(self, window, bounds);
+        let frame = ns_rect(webview_frame);
+        if webview.frame() != frame {
+            webview.setFrame(frame);
+        }
+        *self.ivars().hit_rects.borrow_mut() = hit_rects.into_iter().map(ns_rect).collect();
+    }
+}
+
+fn ns_rect(bounds: Bounds<Pixels>) -> NSRect {
+    let value = |pixels: Pixels| f64::from(f32::from(pixels));
+    NSRect::new(NSPoint::new(value(bounds.origin.x), value(bounds.origin.y)), NSSize::new(value(bounds.size.width), value(bounds.size.height)))
 }
 
 fn gpui_view(window: &Window) -> Retained<NSView> {
@@ -355,7 +430,7 @@ fn font_ligatures(value: &Value) -> String {
 }
 
 /// color.ts `Color.Format.CSS.format`: `#rrggbb` when opaque, else `rgba(…)` with the alpha to 2 decimals.
-fn css_color(color: gpui::Rgba) -> String {
+pub fn css_color(color: gpui::Rgba) -> String {
     let byte = |value: f32| (value * 255.).round() as u8;
     let (r, g, b) = (byte(color.r), byte(color.g), byte(color.b));
     if color.a >= 1. {

@@ -69,8 +69,11 @@ impl Workbench {
                 Outcome::done()
             }
             ("MainThreadNotebookKernels", method) => self.handle_kernel_request(method, args, cx),
-            // Renderer messages wait for the renderers' webview.
-            ("MainThreadNotebookRenderers", "$postMessage") => Outcome::Ready(Ok(json!(false))),
+            ("MainThreadNotebookRenderers", "$postMessage") => {
+                let editor_id = arg(0).as_str().map(str::to_owned);
+                let message = json!({ "__vscode_notebook_message": true, "type": "customRendererMessage", "rendererId": arg(1), "message": arg(2) });
+                Outcome::Ready(Ok(json!(self.post_to_notebook_webviews(message, |editor| editor_id.as_ref().is_none_or(|id| *id == editor.id)))))
+            }
             _ => Outcome::done(),
         }
     }
@@ -125,6 +128,10 @@ impl Workbench {
             }
             Outcome::Ready(workbench.apply_notebook_edits(&key, &edits, cx).map(|_| Value::Null))
         });
+        for (id, kind) in [("notebook.cell.insertCodeCellBelow", notebook::CODE), ("notebook.cell.insertCodeCellBelowAndFocusContainer", notebook::CODE), ("notebook.cell.insertMarkdownCellBelow", 1)] {
+            self.commands.register(id, move |workbench, _, window, cx| workbench.insert_cell_below(kind, window, cx));
+        }
+        self.commands.register("notebook.selectKernel", |workbench, _, window, cx| workbench.show_kernel_picker(window, cx));
         self.commands.register("notebook.cell.copyDown", |workbench, args, _, cx| {
             let Some((key, indices)) = workbench.cells_from_args(&args) else { return Outcome::done() };
             let Some(&index) = indices.first() else { return Outcome::done() };
@@ -252,7 +259,7 @@ impl Workbench {
     }
 
     /// A new notebook model: its cells' text models, then the host hears of the notebook and its cell documents.
-    fn add_notebook(&mut self, uri: Value, view_type: &str, data: &Value, dirty: bool, cx: &mut Context<Self>) {
+    pub(super) fn add_notebook(&mut self, uri: Value, view_type: &str, data: &Value, dirty: bool, cx: &mut Context<Self>) {
         let key = notebook::uri_string(&uri);
         if self.host.notebooks.model(&key).is_some() {
             return;
@@ -398,19 +405,38 @@ impl Workbench {
 
     /// `$tryShowNotebookDocument`: the notebook's editor in the group of `position`, opened when that group has none.
     fn try_show_notebook(&mut self, uri: Value, options: Value, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        match self.notebook_view_type(&uri) {
+            Ok(view_type) => self.open_notebook(uri, view_type, options, window, cx),
+            Err(error) => Outcome::Ready(Err(error)),
+        }
+    }
+
+    pub(super) fn is_notebook_type(&self, view_type: &str) -> bool {
+        self.notebook_types().iter().any(|kind| kind.view_type == view_type)
+    }
+
+    /// Shows the notebook of `uri` as `view_type`, resolving its model first when it is not open.
+    pub(super) fn open_notebook(&mut self, uri: Value, view_type: String, options: Value, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let key = notebook::uri_string(&uri);
         if self.host.notebooks.model(&key).is_some() {
             return Outcome::Ready(self.show_notebook(&key, &options, window, cx));
         }
         let (sender, receiver) = oneshot::channel();
-        let view_type = match self.notebook_view_type(&uri) {
-            Ok(view_type) => view_type,
-            Err(error) => return Outcome::Ready(Err(error)),
-        };
+        // The editor input's model reference: the resolved model stays until its editor shows it.
+        let opening = !self.host.notebooks.held.contains(&key);
+        if opening {
+            self.host.notebooks.held.push(key.clone());
+        }
         cx.spawn_in(window, async move |workbench, cx| {
             let result = resolve_notebook(&workbench, cx, uri.clone(), view_type, None).await;
-            let result = result.and_then(|_| workbench.update_in(cx, |workbench, window, cx| workbench.show_notebook(&key, &options, window, cx)).unwrap_or_else(|_| Err(serialized_error("Canceled"))));
-            let _ = sender.send(result);
+            let shown = workbench.update_in(cx, |workbench, window, cx| {
+                let shown = result.and_then(|_| workbench.show_notebook(&key, &options, window, cx));
+                if opening {
+                    workbench.host.notebooks.held.retain(|held| *held != key);
+                }
+                shown
+            });
+            let _ = sender.send(shown.unwrap_or_else(|_| Err(serialized_error("Canceled"))));
         })
         .detach();
         Outcome::Pending(receiver)
@@ -433,16 +459,19 @@ impl Workbench {
                 self.editors.open(document, !pinned);
             }
         }
-        let tab_model_id = self.editors.active().expect("just shown").model_id;
+        let tab_model_id = self.editors.active_tab().expect("just shown").model_id;
         self.sync_notebook_editors();
         if let Some(selections) = options["selections"].as_array().filter(|selections| !selections.is_empty()) {
             let selections = cell_ranges(&json!(selections));
             let editor = self.host.notebooks.editors.iter_mut().find(|editor| editor.tab_model_id == tab_model_id).expect("synced above");
             editor.focus = selections[0].0;
             editor.selections = selections;
+            self.sync_notebook_editors();
         }
+        // notebookEditorWidget.ts focuses the cell list, not a cell's editor: the editor takes the focus on a click
+        // into a cell. shortcut: the list itself takes no keyboard focus (no cell navigation by arrow keys yet).
         if options["preserveFocus"] != true {
-            window.focus(&self.editor_focus, cx);
+            window.blur(cx);
         }
         self.editors_changed(cx);
         Ok(json!(self.host.notebooks.editor(tab_model_id).expect("synced above").id))
@@ -462,6 +491,13 @@ impl Workbench {
                 notebooks.editors.push(NotebookEditor { tab_model_id, id: format!("$notebookEditor{tab_model_id}"), notebook, focus: 0, selections: vec![(0, 1)] });
             }
         }
+        self.editors.stacked_editors.clear();
+        for editor in &notebooks.editors {
+            let Some(model) = notebooks.model(&editor.notebook) else { continue };
+            let Some(cell) = model.cells.get(editor.focus).or(model.cells.last()) else { continue };
+            let (scheme, path) = uri_parts(&cell.uri).expect("cell URIs are built by notebook::cell_uri");
+            self.editors.stacked_editors.insert(editor.tab_model_id, crate::diff_editor::Side { scheme: scheme.to_owned(), path });
+        }
     }
 
     /// mainThreadNotebookDocumentsAndEditors.ts `_updateState`: the notebooks, the editors of visible notebook tabs and
@@ -474,9 +510,9 @@ impl Workbench {
             .groups_in_grid_order()
             .into_iter()
             .enumerate()
-            .filter_map(|(column, group)| self.editors.group_active(group).filter(|(editor, _)| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME).map(|(editor, _)| (Some(column), editor.model_id)))
+            .filter_map(|(column, group)| self.editors.group_active_tab(group).filter(|editor| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME).map(|editor| (Some(column), editor.model_id)))
             .collect();
-        let active = self.editors.active().filter(|editor| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME).map(|editor| editor.model_id);
+        let active = self.editors.active_tab().filter(|editor| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME).map(|editor| editor.model_id);
         let notebooks = &self.host.notebooks;
         let documents: Vec<String> = notebooks.models.iter().map(NotebookModel::uri_string).collect();
         let editor_ids: Vec<String> = visible.iter().filter_map(|(_, id)| notebooks.editor(*id)).map(|editor| editor.id.clone()).collect();
@@ -547,19 +583,91 @@ impl Workbench {
         }
     }
 
-    /// The text model of the focused cell of the notebook editor of tab `tab_model_id`: the code editor the host
-    /// sees as the active text editor (`INotebookEditor.activeCodeEditor`).
-    pub(crate) fn focused_cell_editor<'a>(&'a self, tab: &OpenEditor) -> Option<&'a OpenEditor> {
-        focused_cell(&self.host.notebooks, &self.editors, tab)
-    }
 
     fn active_notebook_editor_mut(&mut self) -> Option<&mut NotebookEditor> {
-        let tab_model_id = self.editors.active().filter(|editor| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME)?.model_id;
+        let tab_model_id = self.editors.active_tab().filter(|editor| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME)?.model_id;
         self.host.notebooks.editors.iter_mut().find(|editor| editor.tab_model_id == tab_model_id)
     }
 
-    fn active_notebook_editor(&self) -> Option<&NotebookEditor> {
-        let tab_model_id = self.editors.active().filter(|editor| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME)?.model_id;
+    /// insertCellActions.ts `insertCell` below the focused cell (at the end without one): a code cell in the
+    /// language of the code cell above it, else of the notebook's first code cell; the new cell is focused.
+    fn insert_cell_below(&mut self, kind: u64, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let Some(editor) = self.active_notebook_editor() else { return Outcome::done() };
+        let key = editor.notebook.clone();
+        let model = self.host.notebooks.model(&key).expect("an editor shows an open notebook");
+        let index = if model.cells.is_empty() { 0 } else { (editor.focus + 1).min(model.cells.len()) };
+        let code_above = model.cells[..index].iter().rev().chain(&model.cells).find(|cell| cell.kind == notebook::CODE);
+        let language = match kind == notebook::CODE {
+            true => code_above.map_or("plaintext".to_owned(), |cell| cell.language.clone()),
+            false => "markdown".to_owned(),
+        };
+        let cell = json!({ "cellKind": kind, "language": language, "source": "", "outputs": [], "metadata": {} });
+        let insert = json!({ "editType": 1, "index": index, "count": 0, "cells": [cell] });
+        if let Err(error) = self.apply_notebook_edits(&key, std::slice::from_ref(&insert), cx) {
+            return Outcome::Ready(Err(error));
+        }
+        self.push_cells_undo(&key, vec![json!({ "editType": 1, "index": index, "count": 1, "cells": [] })], vec![insert]);
+        let handle = self.host.notebooks.model(&key).expect("still open").cells[index].handle;
+        if let Some(editor) = self.active_notebook_editor_mut() {
+            editor.focus = index;
+            editor.selections = vec![(index, index + 1)];
+        }
+        if kind != notebook::CODE {
+            self.edit_markup_cell(handle);
+        }
+        self.editors_changed(cx);
+        window.focus(&self.editor_focus, cx);
+        Outcome::done()
+    }
+
+    /// notebookKernelQuickPickStrategy.ts `KernelPickerFlatStrategy`: the kernels for the active notebook, the
+    /// selected one first and described as such; the picked one is bound.
+    // shortcut: no "Install/Enable suggested extensions" and "Browse marketplace" items until the gallery (milestone 18).
+    fn show_kernel_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let Some(key) = self.active_notebook_editor().map(|editor| editor.notebook.clone()) else { return Outcome::done() };
+        let model = self.host.notebooks.model(&key).expect("an editor shows an open notebook");
+        let (view_type, uri) = (model.view_type.clone(), model.uri.clone());
+        let (all, selected) = self.host.notebooks.kernels.matching(&view_type, &key);
+        let selected_id = selected.map(|kernel| kernel.id.clone());
+        let mut kernels: Vec<(String, crate::quick_input::Item)> = Vec::new();
+        for kernel in all {
+            let current = selected_id.as_deref() == Some(kernel.id.as_str());
+            let description = match current {
+                true => Some(kernel.description.clone().map_or("Currently Selected".to_owned(), |description| format!("{description} - Currently Selected"))),
+                false => kernel.description.clone(),
+            };
+            let item = crate::quick_input::Item { handle: kernels.len() as i64, label: kernel.label.clone(), description, detail: kernel.detail.clone(), pickable: true, ..Default::default() };
+            kernels.push((kernel.id.clone(), item));
+        }
+        kernels.sort_by_key(|(id, _)| selected_id.as_deref() != Some(id.as_str()));
+        let mut input = crate::quick_input::QuickInput::new(0, crate::quick_input::Kind::QuickPick);
+        input.placeholder = Some("Select kernel".into());
+        input.set_items(kernels.iter().map(|(_, item)| crate::quick_input::Entry::Item(item.clone())).collect());
+        let ids: Vec<(i64, String)> = kernels.into_iter().map(|(id, item)| (item.handle, id)).collect();
+        let picked = self.choose(input, window, cx);
+        cx.spawn(async move |workbench, cx| {
+            let Ok(Ok(handle)) = picked.await else { return };
+            let Some((_, kernel_id)) = handle.as_i64().and_then(|handle| ids.iter().find(|(item, _)| *item == handle)) else { return };
+            let _ = workbench.update(cx, |workbench, cx| {
+                let associations = workbench.host.notebooks.kernels.select(Some(kernel_id.as_str()), &view_type, &uri);
+                for association in &associations {
+                    workbench.host.send("ExtHostNotebookKernels", "$acceptNotebookAssociation", association_args(association));
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+        Outcome::done()
+    }
+
+    /// The scheme and path of the active notebook editor's notebook.
+    pub(super) fn active_notebook_resource(&self) -> Option<(String, std::path::PathBuf)> {
+        let model = self.host.notebooks.model(&self.active_notebook_editor()?.notebook)?;
+        uri_parts(&model.uri).ok().map(|(scheme, path)| (scheme.to_owned(), path))
+    }
+
+    pub(super) fn active_notebook_editor(&self) -> Option<&NotebookEditor> {
+        let tab_model_id = self.editors.active_tab().filter(|editor| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME)?.model_id;
         self.host.notebooks.editor(tab_model_id)
     }
 
@@ -733,7 +841,13 @@ impl Workbench {
                 }
                 Outcome::done()
             }
-            "$postMessage" => Outcome::Ready(Ok(json!(false))),
+            "$postMessage" => {
+                let editor_id = arg(1).as_str().map(str::to_owned);
+                let message = json!({ "__vscode_notebook_message": true, "type": "customKernelMessage", "message": arg(2) });
+                let notebooks = &self.host.notebooks;
+                let bound: Vec<String> = notebooks.models.iter().filter(|model| notebooks.kernels.matching(&model.view_type, &model.uri_string()).1.is_some_and(|kernel| kernel.handle == handle)).map(NotebookModel::uri_string).collect();
+                Outcome::Ready(Ok(json!(self.post_to_notebook_webviews(message, |editor| bound.contains(&editor.notebook) && editor_id.as_ref().is_none_or(|id| *id == editor.id)))))
+            }
             _ => Outcome::done(),
         }
     }
@@ -792,19 +906,16 @@ impl Workbench {
             options["pinned"] = json!(true);
         }
         Some(self.show_notebook(&key, &options, window, cx).map(|_| {
-            let tab = self.editors.active().expect("just shown");
-            self.focused_cell_editor(tab).map_or(Value::Null, |cell| json!(crate::host_sync::snapshot_id(cell)))
+            // The focused cell's model is what the active code editor edits.
+            self.editors.active().filter(|cell| cell.document().scheme == CELL_SCHEME).map_or(Value::Null, |cell| json!(crate::host_sync::snapshot_id(cell)))
         }))
     }
 }
 
-/// The text model of the focused cell of a notebook tab.
-pub(crate) fn focused_cell<'a>(notebooks: &notebook::Notebooks, editors: &'a crate::editor::EditorGroup, tab: &OpenEditor) -> Option<&'a OpenEditor> {
-    let editor = notebooks.editor(tab.model_id)?;
-    let model = notebooks.model(&editor.notebook)?;
-    let cell = model.cells.get(editor.focus).or(model.cells.first())?;
-    let (scheme, path) = uri_parts(&cell.uri).ok()?;
-    editors.model(scheme, &path)
+/// The text models of the cells of a notebook tab, in order; none for another tab.
+pub(crate) fn notebook_cells<'a>(notebooks: &notebook::Notebooks, editors: &'a crate::editor::EditorGroup, tab: &OpenEditor) -> Vec<&'a OpenEditor> {
+    let Some(model) = notebooks.editor(tab.model_id).and_then(|editor| notebooks.model(&editor.notebook)) else { return Vec::new() };
+    model.cells.iter().filter_map(|cell| uri_parts(&cell.uri).ok()).filter_map(|(scheme, path)| editors.model(scheme, &path)).collect()
 }
 
 /// A contributed or registered notebook type (`NotebookProviderInfo`).

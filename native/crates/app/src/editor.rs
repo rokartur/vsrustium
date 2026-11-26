@@ -32,6 +32,7 @@ mod comment;
 pub(crate) mod cursor;
 pub mod drag_and_drop;
 mod edit;
+pub use edit::next_undo_stamp;
 pub mod find;
 pub mod folding;
 pub mod injected_text;
@@ -741,6 +742,10 @@ pub struct EditorGroup {
     pub multi_diffs: HashMap<u32, MultiDiffInput>,
     /// The merge editors among `editors`, by their entry's model id: each edits its result model.
     pub merges: HashMap<u32, crate::merge_editor::MergeInput>,
+    /// For an editor among `editors` that stacks several live code editors (a notebook's cells), by its entry's
+    /// model id: the model the group's code editor edits, the focused one (`INotebookEditor.activeCodeEditor`).
+    /// The others draw as `embedded_code_editor`s without the focus.
+    pub stacked_editors: HashMap<u32, crate::diff_editor::Side>,
     /// `$registerTextEditorDecorationType` render options by decoration type key.
     pub decoration_types: HashMap<String, serde_json::Value>,
     pub disposed: model_service::DisposedModels,
@@ -757,9 +762,19 @@ impl EditorGroup {
         }
     }
 
-    /// The side a diff editor (its modified one) or a merge editor (its result) edits in the code editor.
+    /// The side a diff editor (its modified one), a merge editor (its result) or a notebook editor (its focused cell)
+    /// edits in the code editor.
     fn edited_side(&self, id: u32) -> Option<crate::diff_editor::Side> {
-        self.diffs.get(&id).map(|diff| diff.modified.clone()).or_else(|| self.merges.get(&id).map(|merge| merge.result.clone()))
+        let stacked = || self.stacked_editors.get(&id).cloned();
+        self.diffs.get(&id).map(|diff| diff.modified.clone()).or_else(|| self.merges.get(&id).map(|merge| merge.result.clone())).or_else(stacked)
+    }
+
+    /// The tab of group `id` that shows, as `group_active` without resolving the model it edits.
+    pub fn group_active_tab(&self, id: u32) -> Option<&OpenEditor> {
+        match self.group(id) {
+            Some(group) => group.editors.get(group.active_index()?),
+            None => self.active_tab(),
+        }
     }
 
     pub fn active_mut(&mut self) -> Option<&mut OpenEditor> {
@@ -1083,6 +1098,7 @@ impl EditorGroup {
         self.diffs.remove(model_id);
         self.multi_diffs.remove(model_id);
         self.merges.remove(model_id);
+        self.stacked_editors.remove(model_id);
     }
 
     fn insert(&mut self, mut editor: OpenEditor, preview: bool) {

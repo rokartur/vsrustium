@@ -82,6 +82,8 @@ impl Workbench {
             .map(|part| match editor.document().scheme.as_str() {
                 // A webview editor has no breadcrumbs: its resource has no file system provider.
                 WEBVIEW_PANEL_SCHEME => part,
+                // shortcut: a notebook editor has no breadcrumbs yet (the notebook and its outline upstream).
+                crate::notebook::CELL_SCHEME | crate::notebook::NOTEBOOK_EDITOR_SCHEME => part,
                 super::extension_editor::EXTENSION_EDITOR_SCHEME => part.child(self.extension_editor_body(&editor.document().path, cx)),
                 super::welcome_page::WALKTHROUGH_SCHEME => part.child(self.walkthrough_editor_body(&editor.document().path, window, cx)),
                 // searchEditor.ts draws its query widget where a text editor has its breadcrumbs.
@@ -99,6 +101,7 @@ impl Workbench {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
                 None if matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME) => part,
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
+                None if self.editors.active_tab().is_some_and(|tab| tab.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME) => part.child(self.notebook_editor_body(window, cx)),
                 None if editor.document().scheme == MULTI_DIFF_EDITOR_SCHEME => part,
                 None => match self.editors.active_merge() {
                     Some(merge) => part.child(self.merge_editor_body(merge, editor, window, cx)),
@@ -246,7 +249,11 @@ impl Workbench {
                 let opacity = if self.theme.kind == ThemeKind::Light { 0.95 } else { 0.7 };
                 div().ml(px(6.5)).text_size(px(11.7)).opacity(opacity).child(description)
             }));
-        let file_icon = self.document_icon(self.editors.tab_model(index), 24., foreground);
+        let file_icon = match self.editors.editors[index].document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME {
+            // A notebook tab's icon is its notebook file's, not the focused cell's.
+            true => self.document_icon(&self.editors.editors[index], 24., foreground),
+            false => self.document_icon(self.editors.tab_model(index), 24., foreground),
+        };
         // textFileService.ts decorations: a read-only file's label ends in the lockSmall badge at 0.75 opacity. The
         // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
         let lock = readonly.then(|| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
@@ -380,11 +387,14 @@ impl Workbench {
             .when_some(title_border, |crumbs, color| crumbs.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
     }
 
-    fn editor_metrics(&self, editor: &OpenEditor, window: &mut Window) -> EditorMetrics {
+    pub(super) fn editor_metrics(&self, editor: &OpenEditor, window: &mut Window) -> EditorMetrics {
         let mut metrics = EditorMetrics::measure(window, editor.document().lines.len(), self.line_numbers(editor), self.editor_zoom.multiplier());
         // diffEditorEditors.ts `_adjustOptionsForSubEditor`: no folding and no minimap in either side.
         if self.editors.active_diff().is_some() {
             metrics.decorations_width = diff_editor_view::diff_decorations_width(metrics.char_width);
+        } else if editor.document().scheme == crate::notebook::CELL_SCHEME {
+            // cellEditorOptions.ts: lineDecorationsWidth 0, only the folding controls.
+            metrics.decorations_width = DECORATIONS_WIDTH - 10.;
         } else if self.editor_has_comment_threads(editor) {
             metrics.decorations_width += comment_glyph::RESERVED_WIDTH;
         }
@@ -411,6 +421,11 @@ impl Workbench {
         match setting.as_ref().and_then(|value| value.as_str()) {
             // outputView.ts `OutputEditor.getConfigurationOverrides`: output editors hide line numbers.
             _ if editor.document().scheme == crate::output::OUTPUT_SCHEME => LineNumbers::Off,
+            // notebookEditorWidget.ts: a cell editor's line numbers follow `notebook.lineNumbers`, off by default.
+            _ if editor.document().scheme == crate::notebook::CELL_SCHEME => match self.setting("notebook.lineNumbers") == "on" {
+                true => LineNumbers::On,
+                false => LineNumbers::Off,
+            },
             Some("off") => LineNumbers::Off,
             // gotoLineQuickAccess.ts: relative numbers switch to "on" while the picker previews in this editor.
             Some("relative") if self.quick_access.goto_line.as_ref().is_some_and(|state| state.previews(editor.model_id)) => LineNumbers::On,
@@ -418,6 +433,17 @@ impl Workbench {
             Some("interval") => LineNumbers::Interval,
             _ => LineNumbers::On,
         }
+    }
+
+    /// One of several live code editors stacked in one scrolling view (`EditorGroup::stacked_editors`, a notebook's
+    /// cells): the group's code editor for the model it edits, the lines of the others; sized by its caller.
+    pub(super) fn embedded_code_editor(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        if self.editors.active().is_some_and(|active| std::ptr::eq(active, editor)) {
+            return div().flex_1().flex().child(self.text_area(editor, window, cx));
+        }
+        let metrics = self.editor_metrics(editor, window);
+        let rows = self.editor_lines(editor, 0..editor.view_line_count(), metrics, window, cx);
+        div().flex_1().flex().flex_col().font_family(EDITOR_FONT).text_size(px(metrics.font_size)).line_height(px(metrics.line_height)).children(rows)
     }
 
     pub(super) fn text_area(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Stateful<Div> {
@@ -434,7 +460,9 @@ impl Workbench {
         let top_whitespace = self.editors.viewport.top_whitespace;
         let stop_rendering_line_after = self.stop_rendering_line_after;
         let minimap_settings = self.minimap_settings();
-        let minimap_enabled = !in_diff && minimap_settings.enabled;
+        let in_cell = editor.document().scheme == crate::notebook::CELL_SCHEME;
+        // cellEditorOptions.ts: no minimap and no overview ruler lanes in a cell editor.
+        let minimap_enabled = !in_diff && !in_cell && minimap_settings.enabled;
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
         let zones = editor.zones_between(lines.clone());
@@ -585,7 +613,7 @@ impl Workbench {
                             cx.notify();
                         })),
                     )
-                    .child(self.overview_ruler(editor).absolute().top_0().right_0().h_full())
+                    .when(!in_cell, |area| area.child(self.overview_ruler(editor).absolute().top_0().right_0().h_full()))
                     .child(self.scrollbars_canvas(editor, metrics, cx).absolute().inset_0())
                     // contextmenu.ts: a right press on the scrollbar (MouseTargetType.SCROLLBAR) shows the minimap menu.
                     .child(div().absolute().top_0().bottom_0().right_0().w(px(VERTICAL_SCROLLBAR_WIDTH)).on_mouse_down(
@@ -942,8 +970,10 @@ impl Workbench {
         )
     }
 
-    fn editor_lines(&self, editor: &OpenEditor, range: Range<usize>, metrics: EditorMetrics, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
-        let focused = self.editor_focus.is_focused(window);
+    pub(super) fn editor_lines(&self, editor: &OpenEditor, range: Range<usize>, metrics: EditorMetrics, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
+        // Of a notebook's cells only the focused one has the code editor's focus.
+        let in_cell = editor.document().scheme == crate::notebook::CELL_SCHEME;
+        let focused = self.editor_focus.is_focused(window) && (!in_cell || self.editors.active().is_some_and(|active| std::ptr::eq(active, editor)));
         let scroll_left = editor.scroll.left;
         let selections = &editor.selections;
         let tab_size = editor.document().indentation.tab_size;
@@ -978,7 +1008,8 @@ impl Workbench {
         let block_cursor = self.setting(if self.overtype { "editor.overtypeCursorStyle" } else { "editor.cursorStyle" }) == json!("block");
         let cursor_background = self.theme.color("editorCursor.background");
         // outputView.ts `OutputEditor.getConfigurationOverrides`: renderLineHighlight none.
-        let line_highlight = editor.document().scheme != crate::output::OUTPUT_SCHEME;
+        // cellEditorOptions.ts: renderLineHighlightOnlyWhenFocus.
+        let line_highlight = editor.document().scheme != crate::output::OUTPUT_SCHEME && (!in_cell || focused);
         let char_width = metrics.char_width;
         let fold_controls = self.fold_controls.opacity(Instant::now());
         let fold_control_color = self.color("editorGutter.foldingControlForeground");
@@ -1137,7 +1168,8 @@ impl Workbench {
                     }
                     content = content.child(highlight);
                 }
-                for (_, columns) in editor.highlights.iter().filter(|(line, _)| *line == index) {
+                // wordHighlighter.ts stops on blur: a notebook cell without the focus has none.
+                for (_, columns) in editor.highlights.iter().filter(|(line, _)| *line == index && (!in_cell || focused)) {
                     let (start, end) = layout.range(columns.start, columns.end);
                     let (start, end) = (start * char_width, end * char_width);
                     let mut highlight = div().absolute().top_0().h_full().left(px(start)).w(px(end - start));
@@ -1759,7 +1791,11 @@ impl Workbench {
         }
         let prominent_items = items.len();
         // A webview, extension, walkthrough or multi diff editor shows no editor status entries.
-        if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
+        // notebookIndicators.ts: a notebook editor whose cell editor has no focus shows its active cell instead.
+        let notebook_cell = self.active_notebook_editor().filter(|_| !self.editor_focus.is_focused(window)).and_then(|editor| Some((editor.focus, self.host.notebooks.model(&editor.notebook)?.cells.len())));
+        if let Some((index, count)) = notebook_cell {
+            items.push((format!("Cell {} of {count}", index + 1), "", "notebook.centerActiveCell"));
+        } else if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         items.extend(self.media_preview_status_entries());

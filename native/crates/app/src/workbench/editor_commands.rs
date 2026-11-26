@@ -105,7 +105,10 @@ impl Workbench {
             let edit = id != "editor.action.selectAll";
             self.commands.register(id, move |workbench, _, window, cx| match workbench.editor_focus.is_focused(window) {
                 true if edit && workbench.edit_blocked(false, cx) => Outcome::done(),
-                true => workbench.run_on_active_editor(command, cx),
+                true => match edit.then(|| workbench.notebook_undo(id == "redo", cx)).flatten() {
+                    Some(outcome) => outcome,
+                    None => workbench.run_on_active_editor(command, cx),
+                },
                 // The implementations' priorities: DOM input 1000, explorer 110, custom editor 105.
                 false => workbench
                     .input_text_command(id, window, cx)

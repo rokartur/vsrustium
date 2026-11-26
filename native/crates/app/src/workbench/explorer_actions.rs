@@ -374,7 +374,7 @@ impl Workbench {
     /// explorerView.ts `selectActiveFile` with `explorer.autoReveal`: selects the active file unless
     /// `explorer.autoRevealExclude` matches it, and with `true` scrolls a row out of view to the middle (`reveal(item, 0.5)`).
     pub(super) fn reveal_active_file(&mut self) {
-        let Some(path) = self.editors.active().map(|editor| editor.document().path.clone()) else { return };
+        let Some(path) = self.active_notebook_resource().map(|(_, path)| path).or_else(|| self.editors.active().map(|editor| editor.document().path.clone())) else { return };
         let auto_reveal = self.setting("explorer.autoReveal");
         if auto_reveal == json!(false) || self.auto_reveal_excluded(&path) {
             return;
