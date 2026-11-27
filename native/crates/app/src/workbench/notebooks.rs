@@ -610,7 +610,7 @@ impl Workbench {
             return;
         }
         let index = self.editors.editors.len();
-        self.notebook_views.restores.push(NotebookRestore { group: self.editors.id, index, preview: false, active: false, input: NotebookInput::Repl { resource: uri, label: None } });
+        self.notebook_views.restores.push(NotebookRestore { group: self.editors.id, index, preview: false, sticky: false, active: false, input: NotebookInput::Repl { resource: uri, label: None } });
         if self.notebook_views.restores.len() == 1 {
             self.restore_notebook_editors(window, cx);
         }
