@@ -1,0 +1,64 @@
+[
+  {
+    "wait": 4000
+  },
+  {
+    "click": [
+      540,
+      300
+    ],
+    "foreground": true
+  },
+  {
+    "wait": 800
+  },
+  {
+    "hotkey": [
+      "cmd",
+      "shift",
+      "m"
+    ],
+    "foreground": true
+  },
+  {
+    "wait": 2000
+  },
+  {
+    "click": [
+      540,
+      200
+    ],
+    "foreground": true
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "shot": "parts"
+  },
+  {
+    "click": [
+      22,
+      718
+    ],
+    "foreground": true
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "shot": "manage-menu"
+  },
+  {
+    "hover": [
+      120,
+      723
+    ]
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "shot": "density-submenu"
+  }
+]
