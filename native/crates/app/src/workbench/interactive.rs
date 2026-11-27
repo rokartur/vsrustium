@@ -40,12 +40,12 @@ impl Workbench {
             workbench.navigate_interactive_history(true, cx);
             Outcome::done()
         });
-        self.commands.register("interactive.scrollToTop", |workbench, _, _, _| {
-            workbench.reveal_interactive_cell(false);
+        self.commands.register("interactive.scrollToTop", |workbench, _, _, cx| {
+            workbench.reveal_interactive_cell(false, cx);
             Outcome::done()
         });
-        self.commands.register("interactive.scrollToBottom", |workbench, _, _, _| {
-            workbench.reveal_interactive_cell(true);
+        self.commands.register("interactive.scrollToBottom", |workbench, _, _, cx| {
+            workbench.reveal_interactive_cell(true, cx);
             Outcome::done()
         });
         self.commands.register("interactive.input.focus", |workbench, _, window, cx| {
@@ -66,7 +66,7 @@ impl Workbench {
             let (Some(&handle), Some(tab)) = (running.first(), workbench.active_notebook_editor().map(|editor| editor.tab_model_id)) else { return Outcome::done() };
             let index = workbench.host.notebooks.model(&key).and_then(|model| model.index_of_handle(handle)).expect("a running cell is in its notebook");
             workbench.focus_notebook_cell(tab, handle, false, window, cx);
-            workbench.reveal_notebook_cells(tab, index, index + 1, CellReveal::CenterIfOutside);
+            workbench.reveal_notebook_cells(tab, index, index + 1, CellReveal::CenterIfOutside, cx);
             Outcome::done()
         });
         // `interactive.history.focus`: the cell list takes the focus.
@@ -194,7 +194,7 @@ impl Workbench {
         }
         let handle = self.host.notebooks.model(&key).expect("still open").cells[index].handle;
         if let Some(tab) = self.interactive_tab(&key) {
-            self.reveal_notebook_cells(tab, index, index + 1, CellReveal::InView);
+            self.reveal_notebook_cells(tab, index, index + 1, CellReveal::InView, cx);
         }
         let outcome = self.execute_notebook_cells(&key, vec![handle], window, cx);
         if let Some(editor) = self.host.notebooks.editors.iter_mut().find(|editor| editor.notebook == key) {
@@ -246,7 +246,7 @@ impl Workbench {
         }
     }
 
-    fn reveal_interactive_cell(&mut self, last: bool) {
+    fn reveal_interactive_cell(&mut self, last: bool, cx: &mut Context<Self>) {
         let Some(key) = self.active_interactive().map(|interactive| interactive.notebook.clone()) else { return };
         let (Some(tab), Some(model)) = (self.interactive_tab(&key), self.host.notebooks.model(&key)) else { return };
         let count = model.cells.len();
@@ -254,12 +254,12 @@ impl Workbench {
             return;
         }
         let index = if last { count - 1 } else { 0 };
-        self.reveal_notebook_cells(tab, index, index + 1, CellReveal::InView);
+        self.reveal_notebook_cells(tab, index, index + 1, CellReveal::InView, cx);
     }
 
     /// interactiveEditor.ts and replEditor.ts `_scrollIfNecessary` on a cell's execution state change: the last list
     /// cell scrolls into view with `interactiveWindow.alwaysScrollOnNewCell`, else only when it is the last visible.
-    pub(super) fn scroll_interactive_to_executed(&mut self, key: &str, cell_handle: u64) {
+    pub(super) fn scroll_interactive_to_executed(&mut self, key: &str, cell_handle: u64, cx: &mut Context<Self>) {
         let Some(interactive) = self.host.notebooks.interactives.iter().find(|interactive| interactive.notebook == key) else { return };
         let Some(model) = self.host.notebooks.model(key) else { return };
         let list_cells = model.cells.len() - usize::from(interactive.repl);
@@ -272,7 +272,7 @@ impl Workbench {
             return;
         }
         if let Some(tab) = self.interactive_tab(key) {
-            self.reveal_notebook_cells(tab, index, index + 1, CellReveal::InView);
+            self.reveal_notebook_cells(tab, index, index + 1, CellReveal::InView, cx);
         }
     }
 

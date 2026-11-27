@@ -252,6 +252,25 @@ fn a_cell_dragged_by_its_left_column_moves_or_copies_to_the_drop_place(cx: &mut 
     assert_eq!(sources(&workbench, cx), ["a", "b", "c", "a"]);
 }
 
+/// notebookEditorWidget.ts `paddingBottom`: with `editor.scrollBeyondLastLine` the list scrolls until 50px of it
+/// are left; the wheel scrolls it as a workbench list, 50px a notch.
+#[gpui::test]
+fn the_notebook_list_scrolls_beyond_its_last_cell_with_the_wheel(cx: &mut TestAppContext) {
+    use crate::workbench::list_scroll::ListId;
+    let (workbench, cx) = notebook_workbench(cx);
+    let tab = workbench.read_with(cx, |workbench, _| workbench.active_notebook_tab().unwrap().0);
+    let scroller = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.list_scroller(ListId::Notebook(tab)));
+    let (bounds, content) = workbench.read_with(cx, |workbench, _| {
+        let model = &workbench.host.notebooks.models[0];
+        (workbench.list_scroller(ListId::Notebook(tab)).bounds(), workbench.notebook_rows(tab, model).last().map(|row| row.layout.top + row.layout.height).unwrap())
+    });
+    assert!(content < f32::from(bounds.size.height), "one cell fits the list: {content} in {bounds:?}");
+    assert_eq!(scroller(cx).max_position().y, content - 50.);
+    cx.simulate_event(gpui::ScrollWheelEvent { position: bounds.center(), delta: gpui::ScrollDelta::Lines(gpui::point(0., -1.)), ..Default::default() });
+    cx.run_until_parked();
+    assert_eq!(scroller(cx).position().y, 50.);
+}
+
 #[gpui::test]
 fn the_cell_list_takes_the_keyboard_and_enter_and_escape_move_into_and_out_of_a_cell(cx: &mut TestAppContext) {
     let cells = json!([

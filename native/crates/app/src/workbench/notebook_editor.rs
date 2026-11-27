@@ -8,13 +8,14 @@
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use gpui::{Bounds, ClickEvent, Context, Div, FocusHandle, MouseButton, MouseDownEvent, Pixels, ScrollWheelEvent, Window, canvas, div, point, prelude::*, px, size};
+use gpui::{Bounds, ClickEvent, Context, Div, FocusHandle, Modifiers, MouseButton, MouseDownEvent, Pixels, ScrollDelta, ScrollWheelEvent, Window, canvas, div, point, prelude::*, px, size};
 use objc2::rc::Retained;
 use serde_json::{Value, json};
 
 use super::Workbench;
 use super::hover::{HoverContent, HoverOptions};
 use super::host_requests::uri_parts;
+use super::list_scroll::{ListId, ListScroller};
 use crate::editor::{LINE_HEIGHT, OpenEditor};
 use crate::notebook::kernels::ExecutionState;
 use crate::notebook::layout::{self, CellInput, CellLayout};
@@ -205,7 +206,7 @@ pub(super) struct CellRow {
 
 impl Workbench {
     /// The tab model id and notebook of the active notebook editor.
-    fn active_notebook_tab(&self) -> Option<(u32, String)> {
+    pub(super) fn active_notebook_tab(&self) -> Option<(u32, String)> {
         let tab = self.editors.active_tab().filter(|tab| tab.document().scheme == NOTEBOOK_EDITOR_SCHEME)?;
         Some((tab.model_id, tab.document().path.to_string_lossy().into_owned()))
     }
@@ -222,6 +223,10 @@ impl Workbench {
         }
         let active = self.active_notebook_tab().filter(|(_, notebook)| self.host.notebooks.model(notebook).is_some());
         let covered = self.quick_inputs.current().is_some() || self.keybindings_editor.open || self.context_menu.is_some();
+        // The list records its bounds in the view, webview or not.
+        if let Some((tab, _)) = &active {
+            self.notebook_views.views.entry(*tab).or_default();
+        }
         for (tab, view) in &mut self.notebook_views.views {
             if active.as_ref().is_none_or(|(active, _)| active != tab) {
                 view.webview = None;
@@ -466,10 +471,17 @@ impl Workbench {
                 }
                 cx.notify();
             }
+            // backLayerWebView.ts `triggerScroll`: the list scrolls as for its own wheel. DOM deltas point the other way.
             "did-scroll-wheel" => {
-                let delta = message["payload"]["deltaY"].as_f64().unwrap_or_default() as f32;
-                view.scroll_top += delta;
-                cx.notify();
+                let payload = &message["payload"];
+                let delta = point(-payload["deltaX"].as_f64().unwrap_or_default() as f32, -payload["deltaY"].as_f64().unwrap_or_default() as f32);
+                let delta = match payload["deltaMode"].as_u64() {
+                    Some(1) => ScrollDelta::Lines(delta),
+                    _ => ScrollDelta::Pixels(point(px(delta.x), px(delta.y))),
+                };
+                let modifiers = Modifiers { shift: payload["shiftKey"] == true, ..Default::default() };
+                let event = ScrollWheelEvent { position: window.mouse_position(), delta, modifiers, ..Default::default() };
+                self.list_wheel(ListId::Notebook(tab), &event, window, cx);
             }
             "mouseLeaveMarkupCell" => {
                 if message["cellId"].as_str().and_then(parse_cell_id).is_some_and(|handle| view.hovered == Some(handle)) {
@@ -704,7 +716,7 @@ impl Workbench {
         let (handle, kind, uri) = (cell.handle, cell.kind, cell.uri.clone());
         let preview = kind == MARKUP && !self.notebook_views.views.get(&tab).is_some_and(|view| view.editing.contains(&handle));
         self.focus_notebook_cell(tab, handle, editor && !preview, window, cx);
-        self.reveal_notebook_cells(tab, target, target + 1, CellReveal::InView);
+        self.reveal_notebook_cells(tab, target, target + 1, CellReveal::InView, cx);
         if editor && !preview && let Some((scheme, path)) = uri_parts(&uri).ok().map(|(scheme, path)| (scheme.to_owned(), path)) {
             let line = if delta > 0 { 0 } else { self.editors.model(&scheme, &path).map_or(0, |model| model.document().lines.len() - 1) };
             if let Some(model) = self.editors.model_mut(&scheme, &path) {
@@ -939,11 +951,10 @@ impl Workbench {
 
     /// Scrolls the list of the notebook editor of `tab` to cells `start..end` (notebookEditorWidget.ts
     /// `revealCellRangeInView`, `revealInCenter`, `revealInCenterIfOutsideViewport`, `revealInViewAtTop`).
-    pub(super) fn reveal_notebook_cells(&mut self, tab: u32, start: usize, end: usize, reveal: CellReveal) {
+    pub(super) fn reveal_notebook_cells(&mut self, tab: u32, start: usize, end: usize, reveal: CellReveal, cx: &mut Context<Self>) {
         let Some(model) = self.host.notebooks.editor(tab).and_then(|editor| self.host.notebooks.model(&editor.notebook)) else { return };
         let rows = self.notebook_rows(tab, model);
         let (Some(first), Some(last)) = (rows.get(start), rows.get(end.max(start + 1) - 1)) else { return };
-        let content_height = rows.last().map_or(0., |row| row.layout.top + row.layout.height);
         let (top, bottom) = (first.layout.top, last.layout.top + last.layout.height);
         let view = self.notebook_views.views.entry(tab).or_default();
         let height = f32::from(view.bounds.get().size.height);
@@ -957,7 +968,31 @@ impl Workbench {
             CellReveal::CenterIfOutside => view.scroll_top,
             CellReveal::Top => top,
         };
-        view.scroll_top = scroll_top.clamp(0., (content_height - height).max(0.));
+        self.set_list_scroll(ListId::Notebook(tab), point(0., scroll_top), cx);
+    }
+
+    /// notebookEditorWidget.ts `layout`: the list's content and its `paddingBottom`, the list height less 50 with
+    /// `editor.scrollBeyondLastLine` outside the interactive and REPL history lists.
+    fn notebook_scroll_height(&self, tab: u32) -> f32 {
+        let Some(model) = self.host.notebooks.editor(tab).and_then(|editor| self.host.notebooks.model(&editor.notebook)) else { return 0. };
+        let content_height = self.notebook_rows(tab, model).last().map_or(layout::LIST_PADDING_TOP, |row| row.layout.top + row.layout.height);
+        let history = self.host.notebooks.interactives.iter().any(|interactive| interactive.notebook == model.uri_string());
+        if history || self.setting("editor.scrollBeyondLastLine") == json!(false) {
+            return content_height;
+        }
+        let height = self.notebook_views.views.get(&tab).map_or(0., |view| f32::from(view.bounds.get().size.height));
+        content_height + (height - 50.).max(0.)
+    }
+
+    pub(super) fn notebook_list_scroller(&self, tab: u32) -> ListScroller {
+        let view = self.notebook_views.views.get(&tab);
+        let bounds = view.map(|view| view.bounds.get()).unwrap_or_default();
+        let top = view.map_or(0., |view| view.scroll_top);
+        ListScroller::Notebook { bounds, top, max: self.notebook_scroll_height(tab) - f32::from(bounds.size.height) }
+    }
+
+    pub(super) fn set_notebook_scroll_top(&mut self, tab: u32, top: f32) {
+        self.notebook_views.views.entry(tab).or_default().scroll_top = top;
     }
 
     /// mainThreadNotebookEditors.ts `onDidChangeVisibleRanges`: each shown notebook editor's cells overlapping its
@@ -1152,14 +1187,6 @@ impl Workbench {
             .min_h_0()
             .relative()
             .overflow_hidden()
-            .on_scroll_wheel(cx.listener(move |workbench, event: &ScrollWheelEvent, _, cx| {
-                let delta = f32::from(event.delta.pixel_delta(px(LINE_HEIGHT)).y);
-                let height = workbench.notebook_views.views.get(&tab).map_or(0., |view| f32::from(view.bounds.get().size.height));
-                if let Some(view) = workbench.notebook_views.views.get_mut(&tab) {
-                    view.scroll_top = (view.scroll_top - delta).clamp(0., (content_height - height).max(0.));
-                }
-                cx.notify();
-            }))
             .child(
                 canvas(
                     move |bounds, window, _| {
@@ -1170,7 +1197,9 @@ impl Workbench {
                             return;
                         }
                         let frame = Bounds::new(point(px(0.), px(-scroll_top)), size(bounds.size.width, px(content_height.max(f32::from(bounds.size.height) + scroll_top))));
-                        clip.place(view, window, bounds, frame, hit_rects.clone(), find_hole);
+                        // The cells end 16px left of the list's right edge: the 10px ruler and scrollbar there stay uncovered.
+                        let clip_bounds = Bounds::new(bounds.origin, size(bounds.size.width - px(overview_ruler::RULER_WIDTH), bounds.size.height));
+                        clip.place(view, window, clip_bounds, frame, hit_rects.clone(), find_hole);
                     },
                     |_, _, _, _| {},
                 )
@@ -1181,7 +1210,11 @@ impl Workbench {
             let focused = focused_index == Some(row.index);
             list = list.child(self.notebook_cell(tab, model, row, focused, scroll_top, window, cx));
         }
-        let list = list.children(self.cell_drop_indicator(tab, &rows, scroll_top)).children(self.notebook_find_widget(tab, list_width, window, cx));
+        let list = list
+            .children(self.cell_drop_indicator(tab, &rows, scroll_top))
+            .child(self.notebook_overview_ruler(tab, &rows, window))
+            .child(self.list_scroll_layer(ListId::Notebook(tab), cx))
+            .children(self.notebook_find_widget(tab, list_width, window, cx));
         div().flex_1().min_h_0().flex().flex_col().child(list)
     }
 
@@ -1562,6 +1595,7 @@ mod dnd;
 mod find;
 mod folding;
 mod outputs;
+mod overview_ruler;
 #[cfg(test)]
 mod tests;
 

@@ -83,8 +83,7 @@ impl Workbench {
                     _ => CellReveal::InView,
                 };
                 let (start, end) = (arg(1)["start"].as_u64().unwrap_or_default() as usize, arg(1)["end"].as_u64().unwrap_or_default() as usize);
-                self.reveal_notebook_cells(tab, start, end, reveal);
-                cx.notify();
+                self.reveal_notebook_cells(tab, start, end, reveal, cx);
                 Outcome::done()
             }
             ("MainThreadNotebookEditors", "$trySetSelections") => {
@@ -1138,7 +1137,7 @@ impl Workbench {
             "$completeExecution" => {
                 if let Some(execution) = self.host.notebooks.kernels.executions.remove(&handle) {
                     self.complete_cell_execution(&execution.notebook, execution.cell_handle, arg(1), cx);
-                    self.scroll_interactive_to_executed(&execution.notebook, execution.cell_handle);
+                    self.scroll_interactive_to_executed(&execution.notebook, execution.cell_handle, cx);
                 }
                 Outcome::done()
             }
@@ -1167,7 +1166,7 @@ impl Workbench {
         }
         let execution = notebook::kernels::Execution { notebook: key.clone(), cell_handle, state: ExecutionState::Pending };
         self.host.notebooks.kernels.executions.insert(handle, execution);
-        self.scroll_interactive_to_executed(&key, cell_handle);
+        self.scroll_interactive_to_executed(&key, cell_handle, cx);
         Ok(Value::Null)
     }
 
