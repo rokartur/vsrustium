@@ -3,6 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 mkdir -p port/results/raw
+source port/tools/gui-lock.sh
 data_dir=$(mktemp -d)
 VSCODE_GPUI_EXTENSIONS=${VSCODE_GPUI_EXTENSIONS:-extensions} native/target/release/vsrustium --user-data-dir "$data_dir" "$@" &
 pid=$!

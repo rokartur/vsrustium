@@ -1,5 +1,7 @@
 # Sourced by the Studio tools that put windows on screen or measure memory, so parallel sessions take turns.
 # Takes /tmp/port-gui.lock (a directory holding the owner pid); a lock whose owner died is taken over.
+# Every launch takes focus (port main.rs cx.activate, Electron's window focus), so tools that open a window cannot run
+# beside each other: api-tests skips a window test without focus, settings-check and dump-settings changed results.
 port_gui_lock=/tmp/port-gui.lock
 port_gui_waiting=
 until mkdir "$port_gui_lock" 2>/dev/null; do
