@@ -91,6 +91,8 @@ impl Workbench {
             .flex_col()
             .child(self.tab_strip(window, cx))
             .map(|part| match editor.document().scheme.as_str() {
+                // The playground's focused snippet is the active editor; the page draws it with the others.
+                _ if self.playground_active() => part.child(self.playground_body(window, cx)),
                 // A webview panel's resource has no file system provider, a custom editor's has.
                 WEBVIEW_PANEL_SCHEME if self.webview_resource(&editor.document().path).is_none() => part,
                 _ if self.active_notebook_resource().is_some_and(|(scheme, _)| scheme == "untitled") => part,
@@ -109,6 +111,7 @@ impl Workbench {
             })
             .map(|part| match self.editors.active_diff() {
                 Some(diff) => part.child(self.diff_editor_body(diff, editor, window, cx)),
+                None if self.playground_active() => part,
                 None if matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME) => part,
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
                 None if self.editors.active_tab().is_some_and(|tab| tab.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME) => part.child(self.notebook_editor_body(window, cx)),
@@ -358,8 +361,9 @@ impl Workbench {
                 let opacity = if self.theme.kind == ThemeKind::Light { 0.95 } else { 0.7 };
                 div().ml(px(6.5)).text_size(px(11.7)).opacity(opacity).child(description)
             }));
-        let file_icon = match self.editors.editors[index].document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME {
-            // A notebook tab's icon is its notebook file's, not the focused cell's.
+        let tab_scheme = self.editors.editors[index].document().scheme.clone();
+        let file_icon = match matches!(tab_scheme.as_str(), crate::notebook::NOTEBOOK_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME) {
+            // A notebook tab's icon is its notebook file's, not the focused cell's; the playground's is its page's.
             true => self.document_icon(&self.editors.editors[index], 24., foreground),
             false => self.document_icon(self.editors.tab_model(index), 24., foreground),
         };
@@ -474,6 +478,11 @@ impl Workbench {
         // `ReplEditorInput.getIcon`.
         if document.scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME && self.host.notebooks.interactives.iter().any(|interactive| interactive.repl && interactive.notebook == document.path.to_string_lossy()) {
             return Some(self.icon("debug-line-by-line", 16., 16., foreground).h(px(line_height)));
+        }
+        // walkThroughPart.css: the playground's `vs_code_editor_walkthrough.md` file icon is code-icon.svg.
+        if document.scheme == super::welcome_page::WALKTHROUGH_SCHEME && self.is_playground(editor) {
+            let icon = self.app_root.join("src/vs/workbench/browser/media/code-icon.svg");
+            return Some(div().flex().items_center().h(px(line_height)).child(gpui::img(icon).size(px(16.))));
         }
         // `ExtensionsInput.getIcon`.
         if document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME {
@@ -591,6 +600,11 @@ impl Workbench {
         } else if self.editor_has_comment_threads(editor) {
             metrics.decorations_width += comment_glyph::RESERVED_WIDTH;
         }
+        // walkThroughPart.ts `getEditorOptions`: lineNumbersMinChars 1.
+        if editor.document().scheme == super::walkthrough_part::SNIPPET_SCHEME && metrics.line_numbers != LineNumbers::Off {
+            let digits = editor.document().lines.len().to_string().len();
+            metrics.line_numbers_width = (metrics.line_numbers_width / LINE_NUMBERS_MIN_CHARS.max(digits) as f32 * digits as f32).round();
+        }
         metrics
     }
 
@@ -658,7 +672,9 @@ impl Workbench {
         let minimap_settings = self.minimap_settings();
         let in_cell = editor.document().scheme == crate::notebook::CELL_SCHEME || self.is_interactive_input(editor);
         // cellEditorOptions.ts and simpleEditorOptions.ts: no minimap and no overview ruler lanes in a cell or input editor.
-        let minimap_enabled = !in_diff && !in_cell && minimap_settings.enabled;
+        // walkThroughPart.ts `getEditorOptions`: no minimap in the playground's editors either.
+        let in_snippet = editor.document().scheme == super::walkthrough_part::SNIPPET_SCHEME;
+        let minimap_enabled = !in_diff && !in_cell && !in_snippet && minimap_settings.enabled;
         let viewport = self.editors.viewport;
         let lines = editor.visible_lines(viewport);
         let zones = editor.zones_between(lines.clone());
@@ -1179,9 +1195,10 @@ impl Workbench {
     }
 
     pub(super) fn editor_lines(&self, editor: &OpenEditor, range: Range<usize>, metrics: EditorMetrics, window: &mut Window, cx: &mut Context<Self>) -> Vec<Div> {
-        // Of a notebook's cells only the focused one has the code editor's focus.
+        // Of a notebook's cells or the playground's snippets only the focused one has the code editor's focus.
         let in_cell = editor.document().scheme == crate::notebook::CELL_SCHEME;
-        let focused = self.editor_focus.is_focused(window) && (!in_cell || self.editors.active().is_some_and(|active| std::ptr::eq(active, editor)));
+        let stacked = in_cell || editor.document().scheme == super::walkthrough_part::SNIPPET_SCHEME;
+        let focused = self.editor_focus.is_focused(window) && (!stacked || self.editors.active().is_some_and(|active| std::ptr::eq(active, editor)));
         let scroll_left = editor.scroll.left;
         let selections = &editor.selections;
         let tab_size = editor.document().indentation.tab_size;
@@ -1736,7 +1753,7 @@ impl Workbench {
         }
     }
 
-    fn click_text(&mut self, line: usize, visible: f32, modifiers: gpui::Modifiers, select: bool, click_count: usize, cx: &mut Context<Self>) {
+    pub(super) fn click_text(&mut self, line: usize, visible: f32, modifiers: gpui::Modifiers, select: bool, click_count: usize, cx: &mut Context<Self>) {
         let column_selection = self.setting("editor.columnSelection") == json!(true);
         // viewController.ts `_hasMulticursorModifier` and `_hasNonMulticursorModifier`; `ctrlCmd` is Cmd on macOS.
         let (multi_cursor, non_multi_cursor) = match self.multi_cursor_modifier_is_cmd() {
@@ -2078,7 +2095,8 @@ impl Workbench {
             if let Some(crate::editor::OpenError::Binary(size)) = editor.document().open_error {
                 items.push((super::media_preview::format_size(size), "", ""));
             }
-        } else if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
+        } else if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !self.playground_active() && !matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
+            // WalkThroughPart has no `getControl`: its focused snippet gives the status bar no editor entries.
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
         items.extend(self.media_preview_status_entries());
@@ -2169,7 +2187,7 @@ impl Workbench {
 pub(super) struct EditorMetrics {
     pub(super) font_size: f32,
     pub(super) line_height: f32,
-    char_width: f32,
+    pub(super) char_width: f32,
     line_numbers: LineNumbers,
     line_numbers_width: f32,
     /// The line decorations lane: lineDecorationsWidth plus the folding controls, without them in a diff editor.

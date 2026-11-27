@@ -334,6 +334,10 @@ impl Workbench {
         context.insert("editorFocus".into(), json!(editor_focused || self.sticky_scroll.is_focused(window) || find_focused || replace_focused || button_focused || self.rename_input_focused(window)));
         context.insert("editorTextFocus".into(), json!(editor_focused));
         context.insert("textInputFocus".into(), json!(editor_focused));
+        // walkThroughPart.ts WALK_THROUGH_FOCUS: the page's content element, not one of its editors, has the focus.
+        if self.playground_focused(window) {
+            context.insert("interactivePlaygroundFocus".into(), json!(true));
+        }
         if editor_focused {
             // contextkeys.ts `InputFocusedContext`: the editor's textarea is an editable element.
             context.insert("inputFocus".into(), json!(true));
@@ -393,6 +397,7 @@ impl Workbench {
             context.insert("breadcrumbsVisible".into(), json!(breadcrumbs_possible && self.setting("breadcrumbs.enabled") != json!(false)));
             context.insert("breadcrumbsHasSymbols".into(), json!(breadcrumbs_possible && !self.breadcrumb_symbols(editor).is_empty()));
             let pane = match editor.document().scheme.as_str() {
+                _ if self.playground_active() => "workbench.editor.walkThroughPart",
                 super::welcome_page::WALKTHROUGH_SCHEME => "gettingStartedPage",
                 _ if self.active_notebook_editor().is_some() => "workbench.editor.notebook",
                 _ => "workbench.editor.files",

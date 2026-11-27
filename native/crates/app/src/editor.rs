@@ -210,13 +210,19 @@ pub fn split_query<'a>(scheme: &str, path: &'a Path) -> (&'a Path, &'a str) {
     }
 }
 
-/// A notebook cell's URI differs from its notebook's only in the fragment, kept after a `#` in its model's path.
+/// A notebook cell's or Editor Playground snippet's URI differs from its notebook's or page's only in the fragment,
+/// kept after a `#` in its model's path.
 pub fn split_fragment<'a>(scheme: &str, path: &'a Path) -> (&'a Path, &'a str) {
     let text = path.to_str().unwrap_or_default();
-    match text.rsplit_once('#').filter(|_| scheme == crate::notebook::CELL_SCHEME) {
+    match text.rsplit_once('#').filter(|_| has_fragment(scheme)) {
         Some((path, fragment)) => (Path::new(path), fragment),
         None => (path, ""),
     }
+}
+
+/// Whether models of `scheme` keep their URI's fragment in their path (`split_fragment`).
+pub fn has_fragment(scheme: &str) -> bool {
+    matches!(scheme, crate::notebook::CELL_SCHEME | crate::workbench::walkthrough_part::SNIPPET_SCHEME)
 }
 
 /// The indentation a model starts with (`TextModel.resolveOptions` from `getCreationOptions`): the language's
