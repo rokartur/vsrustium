@@ -8,9 +8,6 @@ import { Emitter, Event } from '../../../common/event.js';
 import { Disposable, DisposableStore, IDisposable } from '../../../common/lifecycle.js';
 import { IIPCLogger, IMessagePassingProtocol, IPCClient } from './ipc.js';
 
-// Taken at load: extension tests that fake `setTimeout` (sinon) must not hold the socket extension host's writes.
-const scheduleWrite = setTimeout;
-
 export const enum SocketDiagnosticsEventType {
 	Created = 'created',
 	Read = 'read',
@@ -511,7 +508,7 @@ class ProtocolWriter {
 		if (this._writeNowTimeout) {
 			return;
 		}
-		this._writeNowTimeout = scheduleWrite(() => {
+		this._writeNowTimeout = setTimeout(() => {
 			this._writeNowTimeout = null;
 			this._writeNow();
 		});

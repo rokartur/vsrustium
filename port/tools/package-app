@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // Packages VSRustium.app (roadmap section 19): the release binary and bun in Contents/MacOS; product.json,
-// package.json, the extension host bundle, the shipped built-in extensions (port/tools/shipped-files.ts) with the
+// package.json, the extension host bundle, the shipped built-in extensions (port/tools/shipped-files.ts, with
+// port/patches/extensions-*.patch applied) with the
 // packages they and the host resolve, and the upstream media the workbench reads, in Contents/Resources/app;
 // Info.plist with the reference's document types and the vsrustium URL protocol; then codesign with the hardened
 // runtime and `spctl -a`. Run on the Studio after a release build and port/tools/build-exthost:
@@ -16,7 +17,7 @@ const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
 const extensionsDir = process.env.VSCODE_GPUI_EXTENSIONS ?? join(ref, 'extensions');
 const out = process.env.OUT ?? join(root, 'native/target/VSRustium.app');
 const identity = process.env.IDENTITY ?? '-';
-const product = JSON.parse(readFileSync(join(vscodeSrc, 'product.json'), 'utf8'));
+const product = { ...JSON.parse(readFileSync(join(vscodeSrc, 'product.json'), 'utf8')), ...JSON.parse(readFileSync('port/product.json', 'utf8')) };
 const version = JSON.parse(readFileSync(join(vscodeSrc, 'package.json'), 'utf8')).version;
 
 rmSync(out, { recursive: true, force: true });
@@ -27,9 +28,8 @@ mkdirSync(app, { recursive: true });
 
 cpSync('native/target/release/vsrustium', join(contents, 'MacOS/vsrustium'));
 cpSync(realpathSync(Bun.which('bun')!), join(contents, 'MacOS/bun'));
-for (const file of ['product.json', 'package.json']) {
-	cpSync(join(vscodeSrc, file), join(app, file));
-}
+writeFileSync(join(app, 'product.json'), JSON.stringify(product, null, '\t'));
+cpSync(join(vscodeSrc, 'package.json'), join(app, 'package.json'));
 cpSync('out-exthost/bootstrap-exthost.js', join(app, 'out-exthost/bootstrap-exthost.js'));
 // The upstream files the workbench reads at runtime (accessibility_signals.rs, workbench.rs, webview_panels.rs).
 for (const dir of ['src/vs/platform/accessibilitySignal/browser/media', 'src/vs/workbench/browser/parts/editor/media', 'src/vs/workbench/contrib/webview/browser/pre']) {
@@ -97,6 +97,9 @@ for (const extension of shippedBuiltins(extensionsDir)) {
 	for (const [name, path] of copyDependencies(extension, Object.keys({ ...manifest.dependencies, ...manifest.optionalDependencies }))) {
 		link(path, join(target, 'node_modules', name));
 	}
+}
+for (const patch of new Bun.Glob('port/patches/extensions-*.patch').scanSync()) {
+	await Bun.$`patch -s -p1 -d ${app} -i ${join(root, patch)}`;
 }
 // typescript-language-features runs the TypeScript the build puts in extensions/node_modules (typescript.tsdk default).
 for (const [name, path] of copyDependencies(extensionsDir, ['typescript'])) {

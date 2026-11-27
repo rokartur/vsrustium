@@ -197,6 +197,8 @@ Steps: 1) route every upstream path through one setting (`VSCODE_SRC`, default `
 
 Decision (Artur): the new `main` starts from one commit with today's port tree, without `git filter-repo`; the port's history stays readable on the old branch.
 
+Done: steps 1 and 2 (branch `port-m22-split`). `VSCODE_SRC` is resolved by `native/vscode_src.rs` (build scripts of app, diff, files; `env!("VSCODE_SRC")`), `port/tools/vscode-src.sh` and `port/tools/vscode-src.ts`; the dev app root is `VSCODE_SRC` (runtime env over the build's value), the host bundle stays in the checkout's `out-exthost/`. The edits are `port/patches/src-*.patch` (build-exthost, on a copy in `out-exthost/build`, product and package inlined) and `extensions-*.patch` (package-app), `port/product.json` is the overlay; the VS Code files in the tree equal the 1.147.0 tag except `.gitignore` (the port's two lines, gone with step 3).
+
 Port version after the split: the followed VS Code version is `package.json`'s `version` in `VSCODE_SRC` (upstream's, at the checked-out tag), which `uplift-diff.ts` reads as its default `from`; no port-side version file.
 
 Done when: `main` holds no upstream file; checking out `upstream/` at the tag plus the documented build gives the same app, unit tests, api-tests and pixel-check as before the split.

@@ -6,6 +6,7 @@ Decisions, traps and findings that the ledger rows point to. Newest at the end o
 
 - `native/`: Cargo workspace. `crates/exthost` (framing, RPC, handshake, init data, session dispatcher, `exthost-probe` binary), `crates/app` (`code-gpui`, the GPUI app).
 - `src/bootstrap-exthost.ts`: entry of the extension host bundle (`port/tools/build-exthost` writes `out-exthost/bootstrap-exthost.js`). Same bundle on Bun and Node.
+- Upstream edits (roadmap milestone 22) are `port/patches/*.patch` against the 1.147.0 tag, never committed to the VS Code tree: `build-exthost` applies `src-*.patch` to a copy of `src/` in `out-exthost/build` and inlines product.json with `port/product.json` (the port's name, data folder, bundle id, URL protocol) over it; `package-app` applies `extensions-*.patch` to the bundled extensions and writes the merged product.json; `product.rs` merges `port/product.json` at startup. A patch is regenerated with `git diff 1.147.0 <commit> -- <file>`.
 - `port/tools/studio <cmd>`: syncs the tree to the Mac Studio (`~/Developer/vscode-gpui-work/port-src`) and runs `<cmd>` there. All builds and runs go through it.
 - Reference: untouched 1.147.0 checkout at `~/Developer/vscode-ref` on the Studio (compiled, extensions compiled). Wu `a3ced28` at `~/Developer/wu`.
 

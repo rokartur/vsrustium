@@ -1,0 +1,50 @@
+diff --git a/extensions/configuration-editing/package.json b/extensions/configuration-editing/package.json
+index 1b1326f4f4c..aac26eeaba1 100644
+--- a/extensions/configuration-editing/package.json
++++ b/extensions/configuration-editing/package.json
+@@ -114,18 +114,34 @@
+         "fileMatch": "/.vscode/settings.json",
+         "url": "vscode://schemas/settings/folder"
+       },
++      {
++        "fileMatch": "/.vsrustium/settings.json",
++        "url": "vscode://schemas/settings/folder"
++      },
+       {
+         "fileMatch": "/.vscode/launch.json",
+         "url": "vscode://schemas/launch"
+       },
++      {
++        "fileMatch": "/.vsrustium/launch.json",
++        "url": "vscode://schemas/launch"
++      },
+       {
+         "fileMatch": "/.vscode/tasks.json",
+         "url": "vscode://schemas/tasks"
+       },
++      {
++        "fileMatch": "/.vsrustium/tasks.json",
++        "url": "vscode://schemas/tasks"
++      },
+       {
+         "fileMatch": "/.vscode/mcp.json",
+         "url": "vscode://schemas/mcp"
+       },
++      {
++        "fileMatch": "/.vsrustium/mcp.json",
++        "url": "vscode://schemas/mcp"
++      },
+       {
+         "fileMatch": "%APP_SETTINGS_HOME%/mcp.json",
+         "url": "vscode://schemas/mcp"
+@@ -170,6 +186,10 @@
+         "fileMatch": "/.vscode/extensions.json",
+         "url": "vscode://schemas/extensions"
+       },
++      {
++        "fileMatch": "/.vsrustium/extensions.json",
++        "url": "vscode://schemas/extensions"
++      },
+       {
+         "fileMatch": "devcontainer.json",
+         "url": "https://raw.githubusercontent.com/devcontainers/spec/main/schemas/devContainer.schema.json"

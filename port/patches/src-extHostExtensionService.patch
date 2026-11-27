@@ -1,0 +1,140 @@
+diff --git a/src/vs/workbench/api/node/extHostExtensionService.ts b/src/vs/workbench/api/node/extHostExtensionService.ts
+index bda11041450..06690bd0850 100644
+--- a/src/vs/workbench/api/node/extHostExtensionService.ts
++++ b/src/vs/workbench/api/node/extHostExtensionService.ts
+@@ -20,11 +20,15 @@ import { realpathSync } from '../../../base/node/pfs.js';
+ import { ExtHostConsoleForwarder } from './extHostConsoleForwarder.js';
+ import { ExtHostDiskFileSystemProvider } from './extHostDiskFileSystemProvider.js';
+ import nodeModule from 'node:module';
++import { readFileSync } from 'node:fs';
++import { escapeRegExpCharacters } from '../../../base/common/strings.js';
+ import { assertType } from '../../../base/common/types.js';
+ import { generateUuid } from '../../../base/common/uuid.js';
+ import { BidirectionalMap } from '../../../base/common/map.js';
+-import { DisposableStore, toDisposable } from '../../../base/common/lifecycle.js';
++import { DisposableStore, IDisposable, toDisposable } from '../../../base/common/lifecycle.js';
++import { ExtensionDescriptionRegistry } from '../../services/extensions/common/extensionDescriptionRegistry.js';
+ import { markNodeCompileCacheReady } from '../../../base/node/nodeCompileCache.js';
++import { inertModuleExports, inertModuleNames, inertModuleSource } from '../common/extHostInertModules.js';
+ const require = nodeModule.createRequire(import.meta.url);
+ 
+ class NodeModuleRequireInterceptor extends RequireInterceptor {
+@@ -34,6 +38,7 @@ class NodeModuleRequireInterceptor extends RequireInterceptor {
+ 	}
+ 
+ 	private static _vscodeImportFnName = `_VSCODE_IMPORT_VSCODE_API`;
++	private static _inertImportFnName = `_VSCODE_IMPORT_INERT_MODULE`;
+ 
+ 	private readonly _store = new DisposableStore();
+ 
+@@ -62,8 +67,24 @@ class NodeModuleRequireInterceptor extends RequireInterceptor {
+ 			return originalLookup.call(this, applyAlternatives(request), parent);
+ 		};
+ 
++		// Bun's require() skips Module._load, so on Bun the factories are served from here through require.cache.
++		const bunModuleKeys = new Map<unknown, string>();
+ 		const originalResolveFilename = node_module._resolveFilename;
+-		node_module._resolveFilename = function resolveFilename(request: string, parent: unknown, isMain: boolean, options?: { paths?: string[] }) {
++		node_module._resolveFilename = function resolveFilename(request: string, parent: { filename: string } | undefined, isMain: boolean, options?: { paths?: string[] }) {
++			if (process.versions.bun) {
++				request = applyAlternatives(request);
++				const factory = that._factories.get(request);
++				if (factory && parent?.filename) {
++					const exports = factory.load(request, URI.file(realpathSync(parent.filename)), request => originalLoad.apply(this, [request, parent, isMain]));
++					let key = bunModuleKeys.get(exports);
++					if (!key) {
++						key = `/__vscode_module__/${generateUuid()}/${request}`;
++						bunModuleKeys.set(exports, key);
++						node_module._cache[key] = { id: key, filename: key, loaded: true, exports };
++					}
++					return key;
++				}
++			}
+ 			if (request === 'vsda' && Array.isArray(options?.paths) && options.paths.length === 0) {
+ 				// ESM: ever since we moved to ESM, `require.main` will be `undefined` for extensions
+ 				// Some extensions have been using `require.resolve('vsda', { paths: require.main.paths })`
+@@ -128,12 +149,26 @@ class NodeModuleRequireInterceptor extends RequireInterceptor {
+ 			}
+ 			return scriptDataUrlSrc;
+ 		};
++
++		Object.defineProperty(globalThis, NodeModuleRequireInterceptor._inertImportFnName, {
++			enumerable: false,
++			configurable: false,
++			writable: false,
++			value: inertModuleExports
++		});
++		const inertDataUrls = new Map(inertModuleNames.map(name => [name, NodeModuleRequireInterceptor._createDataUri(inertModuleSource(name, NodeModuleRequireInterceptor._inertImportFnName))]));
++		const resolveImport = (specifier: string, parentUrl: string) => specifier === 'vscode' ? lookup(parentUrl) : inertDataUrls.get(specifier);
++
++		if (process.versions.bun) {
++			this._store.add(installBunESMInterceptor(this._extensionRegistry.all, resolveImport));
++			return;
++		}
+ 		const hooks = nodeModule.registerHooks({
+ 			resolve: (specifier, context, nextResolve) => {
+-				if (specifier !== 'vscode' || !context.parentURL) {
++				const otherUrl = context.parentURL && resolveImport(specifier, context.parentURL);
++				if (!otherUrl) {
+ 					return nextResolve(specifier, context);
+ 				}
+-				const otherUrl = lookup(context.parentURL);
+ 				return {
+ 					url: otherUrl,
+ 					shortCircuit: true,
+@@ -144,6 +179,55 @@ class NodeModuleRequireInterceptor extends RequireInterceptor {
+ 	}
+ }
+ 
++declare const Bun: {
++	plugin(plugin: { name: string; setup(build: { onLoad(options: { filter: RegExp }, load: (args: { path: string }) => { contents: string; loader: 'js' }): void }): void }): void;
++};
++
++/**
++ * Bun 1.4.5 has no `module.registerHooks` and its runtime `onResolve` does not see bare specifiers,
++ * so ESM extensions get their `vscode` (and inert module) imports rewritten to the same data: URL the Node hook resolves to.
++ */
++function installBunESMInterceptor(registry: ExtensionDescriptionRegistry, lookup: ImportResolver): IDisposable {
++	const coveredRoots = new Set<string>();
++	const newESMRoots = () => {
++		// Bun matches the resolved path: /var/folders is /private/var/folders on macOS.
++		const roots = registry.getAllExtensionDescriptions().filter(extension => extension.type === 'module').map(extension => realpathSync(extension.extensionLocation.fsPath)).filter(root => !coveredRoots.has(root));
++		roots.forEach(root => coveredRoots.add(root));
++		return roots.map(escapeRegExpCharacters);
++	};
++	const esmRoots = newESMRoots();
++	addVSCodeImportPlugin(esmRoots.length ? new RegExp(`\\.mjs$|${esmRootsPattern(esmRoots)}`) : /\.mjs$/, lookup);
++	// Bun.plugin filters are fixed once registered: ESM extensions added through $deltaExtensions get a plugin of their own.
++	return registry.onDidChange(() => {
++		const added = newESMRoots();
++		if (added.length) {
++			addVSCodeImportPlugin(new RegExp(esmRootsPattern(added)), lookup);
++		}
++	});
++}
++
++function esmRootsPattern(escapedRoots: string[]): string {
++	return `^(?:${escapedRoots.join('|')})/(?!.*/node_modules/).*\\.js$`;
++}
++
++type ImportResolver = (specifier: string, parentUrl: string) => string | undefined;
++
++function addVSCodeImportPlugin(filter: RegExp, lookup: ImportResolver): void {
++	const specifiers = ['vscode', ...inertModuleNames].map(escapeRegExpCharacters).join('|');
++	const vscodeImport = new RegExp(`(\\bfrom\\s*|\\bimport\\s*\\(\\s*|\\bimport\\s+)(['"])(${specifiers})\\2`, 'g');
++	Bun.plugin({
++		name: 'vscode-api',
++		setup(build) {
++			// onLoad must stay synchronous: an async onLoad turns every require() of a matched file into an error.
++			build.onLoad({ filter }, ({ path }) => {
++				const source = readFileSync(path, 'utf8');
++				const contents = source.includes('vscode') ? source.replace(vscodeImport, (_match, prefix: string, _quote: string, specifier: string) => `${prefix}'${lookup(specifier, URI.file(path).toString(true))}'`) : source;
++				return { contents, loader: 'js' };
++			});
++		}
++	});
++}
++
+ export class ExtHostExtensionService extends AbstractExtHostExtensionService {
+ 
+ 	readonly extensionRuntime = ExtensionRuntime.Node;
