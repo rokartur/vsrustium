@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use super::Workbench;
 use super::comment_node::{REACTIONS_ROW, comment_text};
+use super::comment_thread_floating::Floating;
 use super::comments::Thread;
 use super::hover::{HoverContent, HoverOptions};
 use super::input_box_view::{InputId, InputLook};
@@ -26,23 +27,29 @@ mod tests;
 /// `CommentThreadCollapsibleState.Expanded`.
 const EXPANDED: u64 = 1;
 /// review.css `.review-comment`: 8px above and below, the 22px author line and the body's 4px top padding.
-const COMMENT_CHROME: f32 = 8. + 22. + 4. + 8.;
+pub(super) const COMMENT_CHROME: f32 = 8. + 22. + 4. + 8.;
 /// shortcut: a body line is taken as the 18px the reference draws; measure it to size a wrapped body exactly.
 pub(super) const BODY_LINE: f32 = 18.;
 /// `.comment-form-container` 8px margins around the 32px "Reply..." button.
-const REPLY_BUTTON_FORM: f32 = 8. + 32. + 8.;
+pub(super) const REPLY_BUTTON_FORM: f32 = 8. + 32. + 8.;
 /// The expanded form: the 90px input with its 12px padding, then the 26px buttons in 10px margins.
-const REPLY_EDITOR_FORM: f32 = 8. + 102. + 10. + 26. + 10. + 8.;
+pub(super) const REPLY_EDITOR_FORM: f32 = 8. + 102. + 10. + 26. + 10. + 8.;
 /// `.edit-container`: 5px above the 102px input, then the buttons in 10px margins and 10px padding; it replaces the
 /// body and its 4px padding.
-const EDIT_FORM: f32 = 5. + 102. + 10. + 10. + 26. + 10. - 4.;
+pub(super) const EDIT_FORM: f32 = 5. + 102. + 10. + 10. + 26. + 10. - 4.;
 
-/// An expanded thread shown in an editor: its zone.
+/// An expanded thread shown in an editor.
 pub(super) struct ThreadWidget {
     pub controller: u64,
     pub thread: u64,
     pub model_id: u32,
-    pub zone_id: u32,
+    pub place: Place,
+}
+
+/// `comments.thread.experimental.style`: a zone between the lines (`inline`), or a window over them (`floating`).
+pub(super) enum Place {
+    Zone(u32),
+    Floating(Box<Floating>),
 }
 
 /// The reply being written in a thread (`.comment-form-container.expand`), or the text of the comment being edited.
@@ -55,10 +62,11 @@ pub(super) struct Reply {
 }
 
 impl Workbench {
-    /// Every expanded thread gets a zone in each open editor of its resource, sized to its comments; a collapsed or
-    /// gone thread loses its zones.
+    /// Every expanded thread gets a zone in each open editor of its resource, sized to its comments, or a floating
+    /// widget; a collapsed or gone thread loses them, and a style change replaces them.
     pub(super) fn sync_comment_widgets(&mut self) {
         let line_height = self.editors.viewport.line_height;
+        let floating = self.floating_comment_threads();
         let mut wanted = Vec::new();
         // `removeCommentWidgetsAndStoreCache` while commenting is off.
         let controllers = if self.comments.commenting_disabled { &[][..] } else { &self.comments.controllers[..] };
@@ -76,12 +84,23 @@ impl Workbench {
         for widget in std::mem::take(&mut self.comments.widgets) {
             let Some(editor) = self.editors.editors.iter_mut().find(|editor| editor.model_id == widget.model_id) else { continue };
             let want = wanted.iter().position(|(controller, thread, model_id, ..)| (*controller, *thread, *model_id) == (widget.controller, widget.thread, widget.model_id));
-            let Some(index) = want else {
-                editor.remove_view_zone(widget.zone_id);
+            let zone_id = match widget.place {
+                Place::Zone(zone_id) => Some(zone_id),
+                Place::Floating(_) => None,
+            };
+            let (Some(index), true) = (want, zone_id.is_none() == floating) else {
+                if let Some(zone_id) = zone_id {
+                    editor.remove_view_zone(zone_id);
+                }
+                continue;
+            };
+            let Some(zone_id) = zone_id else {
+                wanted.remove(index);
+                kept.push(widget);
                 continue;
             };
             let (.., anchor, height) = wanted.remove(index);
-            match editor.view_zones.iter_mut().find(|zone| zone.id == widget.zone_id) {
+            match editor.view_zones.iter_mut().find(|zone| zone.id == zone_id) {
                 Some(zone) => {
                     zone.anchor = Some(anchor);
                     zone.height = height;
@@ -91,9 +110,15 @@ impl Workbench {
             }
         }
         for (controller, thread, model_id, anchor, height) in wanted {
+            if floating {
+                // `display(range, shouldReveal)`: a new template is revealed.
+                let reveal = self.comment_thread(controller, thread).is_some_and(|thread| thread.revealed);
+                kept.push(ThreadWidget { controller, thread, model_id, place: Place::Floating(Box::new(Floating::new(reveal))) });
+                continue;
+            }
             let Some(editor) = self.editors.editors.iter_mut().find(|editor| editor.model_id == model_id) else { continue };
             let zone_id = editor.add_view_zone(Some(anchor), height);
-            kept.push(ThreadWidget { controller, thread, model_id, zone_id });
+            kept.push(ThreadWidget { controller, thread, model_id, place: Place::Zone(zone_id) });
         }
         self.comments.widgets = kept;
     }
@@ -187,14 +212,17 @@ impl Workbench {
 
     pub(super) fn comment_thread_widgets(&self, editor: &OpenEditor, content_left: f32, char_width: f32, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let widgets = self.comments.widgets.iter().filter(|widget| widget.model_id == editor.model_id);
-        widgets.filter_map(|widget| self.comment_thread_widget(widget, editor, content_left, char_width, window, cx)).collect()
+        let mut elements: Vec<AnyElement> = widgets.filter_map(|widget| self.comment_thread_widget(widget, editor, content_left, char_width, window, cx)).collect();
+        elements.extend(self.floating_comment_widgets(editor, content_left, window, cx));
+        elements
     }
 
     fn comment_thread_widget(&self, widget: &ThreadWidget, editor: &OpenEditor, content_left: f32, char_width: f32, window: &Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let Place::Zone(zone_id) = widget.place else { return None };
         let thread = self.comment_thread(widget.controller, widget.thread)?;
         let viewport = self.editors.viewport;
-        let zone = editor.view_zone(widget.zone_id)?;
-        let top = editor.view_zone_top(widget.zone_id, viewport)? - editor.scroll.top;
+        let zone = editor.view_zone(zone_id)?;
+        let top = editor.view_zone_top(zone_id, viewport)? - editor.scroll.top;
         let line_height = viewport.line_height;
         let arrow_height = (line_height / 3.).round();
         let frame_width = (line_height / 9.).round();
@@ -234,7 +262,7 @@ impl Workbench {
             .border_b(px(frame_width))
             .border_color(state_color)
             .bg(self.color("peekViewResult.background"))
-            .child(self.comment_thread_head(widget, thread, head_height, state_color, window, cx))
+            .child(self.comment_thread_head(widget, thread, head_height, state_color, false, window, cx))
             .child(div().border_t_1().border_color(state_color).child(body));
         let width = content_left + viewport.width - VERTICAL_SCROLLBAR_WIDTH;
         let element = div()
@@ -255,7 +283,7 @@ impl Workbench {
     }
 
     /// commentColors.ts `getCommentThreadWidgetStateColor`.
-    fn comment_thread_state_color(&self, thread: &Thread) -> Rgba {
+    pub(super) fn comment_thread_state_color(&self, thread: &Thread) -> Rgba {
         match thread.state {
             Some(0) => self.color("editorCommentsWidget.unresolvedBorder"),
             Some(1) => self.color("editorCommentsWidget.resolvedBorder"),
@@ -264,8 +292,9 @@ impl Workbench {
     }
 
     /// `CommentThreadHeader`: the label ("Start discussion" for a thread without comments), the title actions and
-    /// Collapse (Delete for a thread without comments), on the state color at 10%.
-    fn comment_thread_head(&self, widget: &ThreadWidget, thread: &Thread, height: f32, state_color: Rgba, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    /// Collapse (Delete for a thread without comments; a floating widget's `collapseAction` is Close), on the state
+    /// color at 10%.
+    pub(super) fn comment_thread_head(&self, widget: &ThreadWidget, thread: &Thread, height: f32, state_color: Rgba, floating: bool, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let label = match (&thread.label, thread.comments.is_empty()) {
             (Some(label), _) => label.clone(),
             (None, true) => "Start discussion".to_owned(),
@@ -281,7 +310,12 @@ impl Workbench {
             actions.push(self.command_button(&id, title, vec![marshalled], icon_color, cx).ml(px(4.)).into_any_element());
         }
         let empty = thread.comments.is_empty();
-        let (collapse_icon, collapse_title) = if empty { ("trash", "Delete") } else { ("chevron-up", "Collapse") };
+        let (collapse_icon, collapse_title) = match (empty, floating) {
+            (true, false) => ("trash", "Delete"),
+            (true, true) => ("trash", "Close"),
+            (false, false) => ("chevron-up", "Collapse"),
+            (false, true) => ("close", "Close"),
+        };
         let collapse = self
             .icon(collapse_icon, 22., 16., icon_color)
             .id("comment-thread-collapse")
@@ -303,7 +337,8 @@ impl Workbench {
             .items_center()
             .bg(background)
             .child(div().ml(px(20.)).min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(label))
-            .child(div().flex_1().flex().justify_end().items_center().pr(px(2.)).children(actions))
+            // The actions take their own clicks: a floating widget's title drags from everywhere else.
+            .child(div().flex_1().flex().justify_end().items_center().pr(px(2.)).children(actions).on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()))
             .into_any_element()
     }
 
@@ -321,7 +356,7 @@ impl Workbench {
 
     /// `CommentReply`: the "Reply..." button, or the input with the `comments/commentThread/context` buttons, the
     /// first one primary.
-    fn comment_reply_form(&self, widget: &ThreadWidget, thread: &Thread, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    pub(super) fn comment_reply_form(&self, widget: &ThreadWidget, thread: &Thread, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let (controller, thread_handle) = (widget.controller, widget.thread);
         let replying = self.comments.reply.as_ref().is_some_and(|reply| reply.controller == controller && reply.thread == thread_handle && reply.comment.is_none());
         let prompt = if thread.comments.is_empty() { "Type a new comment" } else { "Reply..." };

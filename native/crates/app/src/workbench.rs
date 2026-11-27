@@ -178,6 +178,8 @@ mod outline_actions;
 mod inlay_hints_accessibility;
 mod comment_navigation;
 mod comment_node;
+mod comment_thread_floating;
+mod comment_thread_floating_layout;
 mod comment_thread_widget;
 mod comments;
 mod comments_view;
@@ -501,6 +503,7 @@ impl Render for Workbench {
         self.follow_marker_navigation_cursor();
         self.follow_references_peek_editor();
         self.follow_hierarchy_peek_editor(window, cx);
+        self.lay_out_floating_comment_widgets(window);
         self.follow_symbol_navigation();
         self.follow_definition_link(cx);
         self.refresh_selection_highlights(window);
