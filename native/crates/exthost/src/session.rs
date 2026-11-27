@@ -218,6 +218,8 @@ struct Forward {
     replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>,
     /// The ids of `ask_workbench` requests, counted down from `u32::MAX`, below which the host's ids never reach.
     asks: Vec<u32>,
+    /// Answers that came while the workbench's queue was being sent: they wait for the rest of it.
+    held: Vec<(u32, Result<Value, Value>)>,
 }
 
 impl Session {
@@ -367,7 +369,7 @@ impl Session {
     /// Hands requests to `proxies` (a proxy, or `Proxy.$method` for one method) to `send` instead of answering them here;
     /// `pump` sends the answers that arrive on `replies`.
     pub fn forward(&mut self, proxies: &'static [&'static str], send: impl FnMut(ForwardedRequest) + Send + 'static, replies: std::sync::mpsc::Receiver<(u32, Result<Value, Value>)>) {
-        self.forward = Some(Forward { proxies, send: Box::new(send), replies, asks: Vec::new() });
+        self.forward = Some(Forward { proxies, send: Box::new(send), replies, asks: Vec::new(), held: Vec::new() });
     }
 
     /// Asks the workbench from this side (`send` with a request no host sent) and waits for the answer while
@@ -516,11 +518,17 @@ impl Session {
                 Outgoing::Reply(reply) => self.host.send(rpc::encode(&reply)),
             }
         }
-        if let Some(forward) = &self.forward {
-            let answered: Vec<_> = forward.replies.try_iter().collect();
+        if let Some(forward) = &mut self.forward {
+            let mut answered = std::mem::take(&mut forward.held);
+            answered.extend(forward.replies.try_iter());
             let asks = forward.asks.clone();
-            // What the workbench queued before answering reaches the host first (a notebook editor before its id).
-            if !answered.is_empty() {
+            // What the workbench queued before answering reaches the host first (a notebook editor before its id). Inside
+            // a flush (a file system call of a queued message pumps) the rest of the queue is not sent yet: the answers wait.
+            if self.waiting.busy {
+                let (asked, held) = answered.into_iter().partition(|(req, _)| asks.contains(req));
+                answered = asked;
+                self.forward.as_mut().expect("matched above").held = held;
+            } else if !answered.is_empty() {
                 self.flush_main_thread();
             }
             for (req, result) in answered {
