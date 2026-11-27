@@ -25,13 +25,14 @@ pub(super) struct Comments {
     pub(super) commenting_disabled: bool,
     /// The `reaction.command.<label>` commands of the last reaction picker.
     pub(super) reaction_commands: Vec<(String, crate::commands::Registration)>,
+    pub(super) floating: super::comment_thread_floating::FloatingWidgets,
 }
 
 impl Comments {
     pub(super) fn new(cx: &mut Context<Workbench>) -> Comments {
         let reply_focus = cx.focus_handle();
         let view = super::comments_view::ViewState::new(cx);
-        Comments { controllers: Vec::new(), collapsed: Default::default(), widgets: Vec::new(), reply: None, reply_view: InputView::default(), reply_focus, view, commenting: Default::default(), commenting_disabled: false, reaction_commands: Vec::new() }
+        Comments { controllers: Vec::new(), collapsed: Default::default(), widgets: Vec::new(), reply: None, reply_view: InputView::default(), reply_focus, view, commenting: Default::default(), commenting_disabled: false, reaction_commands: Vec::new(), floating: Default::default() }
     }
 }
 
