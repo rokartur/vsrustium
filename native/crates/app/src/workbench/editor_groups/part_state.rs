@@ -12,11 +12,13 @@ use serde_json::{Value, json};
 use super::super::Workbench;
 use super::super::notebooks::{NotebookInput, NotebookRestore};
 use super::super::webview_panels::WEBVIEW_INPUT;
-use crate::editor::MODAL_GROUP;
+use super::MAIN_PART;
 use crate::editor_grid::{EditorGrid, Orientation, SerializedNode};
 
 const MEMENTO_KEY: &str = "memento/workbench.parts.editor";
 const STATE_KEY: &str = "editorpart.state";
+/// editorParts.ts `EDITOR_PARTS_UI_STATE_STORAGE_KEY`.
+const PARTS_STATE_KEY: &str = "editorparts.state";
 const FILE_EDITOR_INPUT: &str = "workbench.editors.files.fileEditorInput";
 /// untitledTextEditorInput.ts `UntitledTextEditorInput.ID`.
 const UNTITLED_EDITOR_INPUT: &str = "workbench.editors.untitledEditorInput";
@@ -24,19 +26,32 @@ const UNTITLED_EDITOR_INPUT: &str = "workbench.editors.untitledEditorInput";
 const PLAYGROUND_INPUT: &str = "workbench.editors.walkThroughInput";
 
 impl Workbench {
+    /// The main part's state, and the editor windows' (editorParts.ts `saveState`: none without editor windows).
     pub(in crate::workbench) fn save_editor_part_state(&mut self) {
-        let state = self.editor_part_state();
+        let state = self.in_part(MAIN_PART, |workbench| workbench.part_state(MAIN_PART));
+        let parts = self.auxiliary_parts_state();
         let mut storage = self.workspace_storage.lock().unwrap();
         let mut memento: Value = storage.get(MEMENTO_KEY).and_then(|stored| serde_json::from_str(stored).ok()).unwrap_or_else(|| json!({}));
-        if memento[STATE_KEY] == state {
+        if memento[STATE_KEY] == state && memento.get(PARTS_STATE_KEY) == parts.as_ref() {
             return;
         }
         memento[STATE_KEY] = state;
+        match parts {
+            Some(parts) => memento[PARTS_STATE_KEY] = parts,
+            None => drop(memento.as_object_mut().and_then(|memento| memento.remove(PARTS_STATE_KEY))),
+        }
         storage.set(MEMENTO_KEY, memento.to_string());
     }
 
-    fn editor_part_state(&self) -> Value {
-        let groups: Vec<u32> = self.groups_in_grid_order();
+    /// The stored editor windows' state.
+    pub(in crate::workbench) fn stored_editor_parts_state(&self) -> Option<Value> {
+        let stored = self.workspace_storage.lock().unwrap().get(MEMENTO_KEY).and_then(|stored| serde_json::from_str::<Value>(stored).ok())?;
+        stored.get(PARTS_STATE_KEY).cloned()
+    }
+
+    /// `EditorPart.createState` of `part`, whose layout is in the fields.
+    pub(in crate::workbench) fn part_state(&self, part: u32) -> Value {
+        let groups: Vec<u32> = self.part_groups(part);
         let (root, orientation, width, height) = match &self.editor_groups.grid {
             Some(grid) => grid.serialize(),
             None => {
@@ -44,7 +59,7 @@ impl Workbench {
                 (SerializedNode::Branch { children: vec![SerializedNode::Leaf { group: groups[0], size: size.height }], size: size.width }, Orientation::Vertical, size.width, size.height)
             }
         };
-        let mru: Vec<u32> = self.editors.group_ids_mru().into_iter().filter(|group| *group != MODAL_GROUP).collect();
+        let mru: Vec<u32> = self.editors.group_ids_mru().into_iter().filter(|group| self.part_of_group(*group) == Some(part)).collect();
         json!({
             "serializedGrid": { "root": self.serialized_node(&root), "orientation": orientation_number(orientation), "width": width, "height": height },
             "activeGroup": mru[0],
@@ -92,7 +107,8 @@ impl Workbench {
         let mru: Vec<usize> = by_recency.iter().filter_map(|recent| editors.iter().position(|editor| editor.model_id == recent.model_id)).collect();
         let preview = editors.iter().position(|editor| editor.preview);
         let sticky = editors.iter().filter(|editor| editor.sticky).count().checked_sub(1);
-        json!({ "id": group, "editors": serialized, "mru": mru, "preview": preview, "sticky": sticky })
+        let locked = self.editors.locked.contains(&group).then_some(true);
+        json!({ "id": group, "editors": serialized, "mru": mru, "preview": preview, "sticky": sticky, "locked": locked })
     }
 
     /// The stored grid and its groups' file editors, in place of the one empty group a window starts with.
@@ -102,23 +118,31 @@ impl Workbench {
         if self.editors.has_several_groups() || !self.editors.editors.is_empty() {
             return;
         }
+        self.restore_part_state(MAIN_PART, &state);
+        self.editors.columns = if self.part_groups(MAIN_PART).len() > 1 { self.groups_in_grid_order() } else { Vec::new() };
+        self.host.send_changes(&self.editors);
+    }
+
+    /// `doCreateGridControlWithPreviousState` of `part`, whose one empty group is the active one.
+    pub(in crate::workbench) fn restore_part_state(&mut self, part: u32, state: &Value) {
         let grid = &state["serializedGrid"];
         let mut leaves = Vec::new();
         let root = parse_node(&grid["root"], &mut leaves);
-        // Group ids are the port's: the first leaf takes the window's group, the others new ones.
+        // Group ids are the port's: the first leaf takes the part's group, the others new ones.
         let mut ids = Vec::new();
         for (index, _) in leaves.iter().enumerate() {
             ids.push(if index == 0 { self.editors.id } else { self.editors.add_group(false) });
         }
         let root = remap(root, &ids);
+        // The grid goes in first: it tells the groups' part as they activate.
+        if ids.len() > 1 || part != MAIN_PART {
+            let orientation = if grid["orientation"] == 1 { Orientation::Horizontal } else { Orientation::Vertical };
+            let (width, height) = (grid["width"].as_f64().unwrap_or(0.) as f32, grid["height"].as_f64().unwrap_or(0.) as f32);
+            self.in_part(part, |workbench| workbench.editor_groups.grid = Some(EditorGrid::deserialize(root, orientation, width, height)));
+        }
         for (leaf, id) in leaves.iter().zip(&ids) {
             self.activate_group(*id);
             self.restore_group(leaf);
-        }
-        if ids.len() > 1 {
-            let orientation = if grid["orientation"] == 1 { Orientation::Horizontal } else { Orientation::Vertical };
-            let (width, height) = (grid["width"].as_f64().unwrap_or(0.) as f32, grid["height"].as_f64().unwrap_or(0.) as f32);
-            self.editor_groups.grid = Some(EditorGrid::deserialize(root, orientation, width, height));
         }
         let stored_mru: Vec<u32> = state["mostRecentActiveGroups"].as_array().into_iter().flatten().filter_map(|group| group.as_u64()).map(|group| group as u32).collect();
         for stored in stored_mru.iter().rev() {
@@ -126,8 +150,6 @@ impl Workbench {
                 self.activate_group(ids[index]);
             }
         }
-        self.editors.columns = if ids.len() > 1 { self.groups_in_grid_order() } else { Vec::new() };
-        self.host.send_changes(&self.editors);
     }
 
     fn restore_group(&mut self, group: &Value) {
@@ -170,6 +192,11 @@ impl Workbench {
         let mru: Vec<usize> = mru.filter_map(|index| opened.iter().position(|opened| *opened as u64 == index)).collect();
         for index in mru.into_iter().rev() {
             self.editors.activate(index);
+        }
+        // A restored group locks as stored, not by `workbench.editor.autoLockGroups`.
+        self.editors.opened_first_editor = None;
+        if group["locked"] == true {
+            self.editors.locked.insert(self.editors.id);
         }
     }
 }

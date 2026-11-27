@@ -13,7 +13,6 @@ use objc2_app_kit::{NSAlert, NSAlertStyle, NSControlStateValueOn, NSModalRespons
 use objc2_foundation::NSString;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 
-use crate::workbench::Workbench;
 
 /// The pressed button's index (buttons in `massageMessageBoxOptions` order: primary first, cancel last) and
 /// whether the checkbox, if any, was checked.
@@ -58,7 +57,7 @@ pub fn show_message_box(window: &Window, level: PromptLevel, message: &str, deta
         }
     });
     let ns_window = ns_window(window);
-    let workbench = window.root::<Workbench>().flatten();
+    let workbench = crate::workbench::auxiliary_windows::window_workbench(window, cx);
     // Begun after this update returns: the sheet takes the key window and GPUI's handlers must not run re-entrantly,
     // and the workbench the caller updates can be read for its dialog style only then.
     cx.spawn(async move |cx| {

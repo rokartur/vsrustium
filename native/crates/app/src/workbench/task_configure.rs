@@ -331,8 +331,13 @@ pub(super) fn new_tasks_json(task: &Value, insert_spaces: bool, tab_size: usize)
     if !insert_spaces {
         return content;
     }
+    tabs_to_spaces(&content, tab_size)
+}
+
+/// abstractTaskService.ts with `editor.insertSpaces`: each line's leading tabs become `tab_size` spaces.
+pub(super) fn tabs_to_spaces(content: &str, tab_size: usize) -> String {
     let indent = regex::Regex::new(r"(\n)(\t+)").unwrap();
-    indent.replace_all(&content, |captures: &regex::Captures| format!("\n{}", " ".repeat(captures[2].len() * tab_size))).into_owned()
+    indent.replace_all(content, |captures: &regex::Captures| format!("\n{}", " ".repeat(captures[2].len() * tab_size))).into_owned()
 }
 
 /// `JSON.stringify(value, null, '\t')`.

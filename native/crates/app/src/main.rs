@@ -538,12 +538,17 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 perf::mark("code/willRestoreEditors");
                 let resolver_cache = workbench.take_editor_resolver_cache();
                 workbench.set_restored_editor_type_controls();
+                let restores_parts = file.is_none();
                 if let Some(file) = file {
                     workbench.open_startup_file(file, &resolver_cache, window, cx);
                 } else if workbench.editors.active().is_some() && window.focused(cx).is_none() {
                     // editorGroupView.ts `restoreEditors`: the active group's restored editor takes the focus unless
                     // something else took it meanwhile.
                     window.focus(&workbench.editor_focus, cx);
+                }
+                // editorParts.ts `restoreParts`: the editor windows come back when the main part restored its state.
+                if restores_parts {
+                    workbench.restore_auxiliary_windows(cx);
                 }
                 workbench.run_startup_page(args.iter().any(|arg| arg == "--skip-welcome"), window, cx);
                 perf::set_startup_editors(workbench.visible_editor_ids());

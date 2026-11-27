@@ -137,6 +137,7 @@ impl Workbench {
     /// `openEditor` of a read-only `vscode://defaultsettings` resource: its open editor, its model, or a new model.
     pub(super) fn open_preferences_resource(&mut self, resource: impl AsRef<Path>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let path = resource.as_ref().to_path_buf();
+        self.leave_locked_group("vscode", &path);
         if let Some(index) = self.editors.editors.iter().position(|editor| editor.document().is("vscode", &path)) {
             self.editors.activate(index);
         } else {

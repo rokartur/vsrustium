@@ -69,11 +69,21 @@ impl Workbench {
         super::icon_select_box::profile_icon_file(icon)
     }
 
-    /// `computeTitle`: "Manage", or "Manage {0} (Profile)" in a profile that is not the default one.
+    /// `computeTitle`: "Manage" with the update badge's description, or "Manage {0} (Profile)" in a profile that is
+    /// not the default one.
     pub(super) fn manage_activity_title(&self) -> String {
-        match self.user_data_profiles.state.as_ref().map(|state| &state.current).filter(|current| !current.is_default) {
-            Some(current) => format!("Manage {} (Profile)", current.name),
-            None => "Manage".into(),
+        match (self.user_data_profiles.state.as_ref().map(|state| &state.current).filter(|current| !current.is_default), self.update_badge()) {
+            (Some(current), _) => format!("Manage {} (Profile)", current.name),
+            (None, Some((_, description))) => format!("Manage - {description}"),
+            (None, None) => "Manage".into(),
+        }
+    }
+
+    /// The global activity's badge (the update's), else the profile badge.
+    pub(super) fn manage_activity_badge(&self) -> Option<gpui::Div> {
+        match self.update_badge() {
+            Some((badge, _)) => super::activity::visible_badge(&[badge]).map(|content| self.activity_badge(content)),
+            None => self.profile_badge(),
         }
     }
 

@@ -388,7 +388,7 @@ impl Workbench {
         let mut overflowing = Vec::new();
         for tab in self.part_tabs(part) {
             match shown.contains(&tab.id) {
-                true => tabs.push(self.panel_tab(&tab, Some(tab.id) == active, background, window, cx)),
+                true => tabs.push(self.panel_tab(&tab, Some(tab.id) == active, tabs.is_empty(), background, window, cx)),
                 false => overflowing.push(MenuAction::Command { id: format!("{}.focus", tab.view), title: panel_tab_label(&tab, self), enabled: true, checked: Some(tab.id) == active, alt: None }),
             }
         }
@@ -490,7 +490,7 @@ impl Workbench {
     /// A composite bar tab (`.action-item` with 16px padding); the checked one is the part's own fill, connected to
     /// the content. Its width is the fractional one Chromium lays out: GPUI rounds a text element's width up, which
     /// made the Problems tab with its badge 2px wider than the reference's.
-    fn panel_tab(&self, view: &CompositeTab, active: bool, background: &str, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+    fn panel_tab(&self, view: &CompositeTab, active: bool, first: bool, background: &str, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let foreground = if active { self.foreground_or("panelTitle.activeForeground") } else { self.foreground_or("panelTitle.inactiveForeground") };
         let id = view.id;
         let dragged = DraggedComposite { id, label: view.title.into(), foreground, background: self.color(background) };
@@ -525,7 +525,9 @@ impl Workbench {
             .items_center()
             .cursor_pointer()
             .text_color(foreground)
-            .when(active, |tab| tab.bg(self.color(background)).rounded_t(px(7.)).border_t_1().border_r_1().border_color(self.color("surface.border")))
+            .when(active, |tab| tab.bg(self.color(background)).rounded_tr(px(7.)).border_t_1().border_r_1().border_color(self.color("surface.border")))
+            // connectedPaneTabs.css: the first tab's top left corner is the part's, square in compact density.
+            .when(active && !(first && self.compact_density()), |tab| tab.rounded_tl(px(7.)))
             .child(div().flex_none().w(px(text_width(view.title, 13., window))).whitespace_nowrap().line_height(px(24.)).child(view.title))
             .children(badge)
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))

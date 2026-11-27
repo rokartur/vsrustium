@@ -614,7 +614,7 @@ impl Workbench {
             count,
             cx.processor(move |workbench, range: std::ops::Range<usize>, _window, cx| {
                 // The row's content box starts 4px into the element search_row returns.
-                range.map(|index| div().relative().w_full().when(horizontal, |row| row.whitespace_nowrap()).child(workbench.search_row(&rows[index], index, tree_focused, false, cx)).children(guides.row(index, 4.)).into_any_element()).collect::<Vec<_>>()
+                range.map(|index| div().relative().w_full().when(horizontal, |row| row.whitespace_nowrap()).child(workbench.search_row(&rows[index], index, tree_focused, false, cx)).children(guides.row(index, 7.)).into_any_element()).collect::<Vec<_>>()
             }),
         )
         .track_scroll(&self.search.scroll)

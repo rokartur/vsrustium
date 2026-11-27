@@ -163,6 +163,9 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
+/// taskService.ts `TaskExecutionSupportedContext`.
+const TASK_EXECUTION_SUPPORTED: &str = "shellExecutionSupported && processExecutionSupported || customExecutionSupported";
+
 const WORKBENCH_MENUS: &[Row] = &[
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
@@ -226,6 +229,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoByTwoGrid", "&&Grid (2x2)", "4_layouts", 7., None, None),
     (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoRowsRight", "Two R&&ows Right", "4_layouts", 8., None, None),
     (MenuId::MenubarLayoutMenu, None, "workbench.action.editorLayoutTwoColumnsBottom", "Two &&Columns Bottom", "4_layouts", 9., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.moveEditorToNewWindow", "&&Move Editor into New Window", "3_new_window", 1., None, None),
+    (MenuId::MenubarLayoutMenu, None, "workbench.action.copyEditorToNewWindow", "&&Copy Editor into New Window", "3_new_window", 2., None, None),
     (MenuId::MenubarLayoutMenu, None, "workbench.action.toggleEditorGroupLayout", "Flip &&Layout", "5_flip", 1., None, None),
     (MenuId::MenubarGoMenu, None, "workbench.action.navigateBack", "&&Back", "1_history_nav", 1., None, Some("canNavigateBack")),
     (MenuId::MenubarGoMenu, None, "workbench.action.navigateForward", "&&Forward", "1_history_nav", 2., None, Some("canNavigateForward")),
@@ -320,13 +325,22 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarPreferencesMenu, None, "workbench.action.openSnippets", "Configure Snippets", "2_configuration", 5., None, None),
     // themes.contribution.ts
     (MenuId::MenubarPreferencesMenu, Some(MenuId::ThemesSubMenu), "", "&&Themes", "2_configuration", 7., None, None),
-    // The activity bar's Manage menu (quickAccess, preferences and themes contributions).
+    // task.contribution.ts `UserTasksGlobalActionContribution`, `TaskExecutionSupportedContext`.
+    (MenuId::MenubarPreferencesMenu, None, "workbench.action.tasks.openUserTasks", "Tasks", "2_configuration", 6., Some(TASK_EXECUTION_SUPPORTED), None),
+    // The activity bar's Manage menu (quickAccess, preferences, extensions, tasks and themes contributions).
     (MenuId::GlobalActivity, None, "workbench.action.showCommands", "Command Palette...", "1_command", 1., None, None),
+    (MenuId::GlobalActivity, None, "workbench.action.openSettings", "Settings", "2_configuration", 2., None, None),
+    (MenuId::GlobalActivity, None, "workbench.view.extensions", "Extensions", "2_configuration", 3., None, None),
+    (MenuId::GlobalActivity, None, "workbench.action.tasks.openUserTasks", "Tasks", "2_configuration", 6., Some(TASK_EXECUTION_SUPPORTED), None),
     (MenuId::GlobalActivity, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
     (MenuId::GlobalActivity, None, "workbench.action.openSnippets", "Snippets", "2_configuration", 5., None, None),
     (MenuId::GlobalActivity, Some(MenuId::ThemesSubMenu), "", "Themes", "2_configuration", 7., None, None),
     // modernUI.contribution.ts
     (MenuId::GlobalActivity, Some(MenuId::LayoutDensityMenu), "", "Layout Density", "2_configuration", 8., Some("config.workbench.experimental.modernUI == true"), None),
+    // update.ts `appendUpdateMenuItems`: the states the port's update service reaches (workbench/update.rs).
+    (MenuId::GlobalActivity, None, "update.check", "Check for Updates...", "7_update", 0., Some("updateState == 'idle'"), None),
+    (MenuId::GlobalActivity, None, "update.checking", "Checking for Updates...", "7_update", 0., Some("updateState == 'checking for updates'"), Some("false")),
+    (MenuId::GlobalActivity, None, "update.downloadNow", "Download Update (1)", "7_update", 0., Some("updateState == 'available for download'"), None),
     // clipboard.ts, editor.contribution.ts: the Copy As and Share submenus, shown once an extension fills them.
     (MenuId::MenubarEditMenu, Some(MenuId::MenubarCopy), "", "Copy As", "2_ccp", 3., None, None),
     (MenuId::MenubarFileMenu, Some(MenuId::MenubarShare), "", "Share", "45_share", 1., Some("!isSessionsWindow"), None),
@@ -400,6 +414,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::EditorTitleContext, None, "workbench.action.splitEditor", "Split Right", "5_split", 10., Some("!splitEditorsVertically"), None),
     (MenuId::EditorTitleContext, None, "workbench.action.splitEditor", "Split Down", "5_split", 10., Some("splitEditorsVertically"), None),
     (MenuId::EditorTitleContext, Some(MenuId::EditorSplitMoveSubmenu), "", "Split & Move", "5_split", 15., None, None),
+    (MenuId::EditorTitleContext, None, "workbench.action.moveEditorToNewWindow", "Move into New Window", "7_new_window", 10., None, None),
+    (MenuId::EditorTitleContext, None, "workbench.action.copyEditorToNewWindow", "Copy into New Window", "7_new_window", 20., None, None),
     (MenuId::EditorSplitMoveSubmenu, None, "workbench.action.splitEditorUp", "Split Up", "1_split", 10., None, None),
     (MenuId::EditorSplitMoveSubmenu, None, "workbench.action.splitEditorDown", "Split Down", "1_split", 20., None, None),
     (MenuId::EditorSplitMoveSubmenu, None, "workbench.action.splitEditorLeft", "Split Left", "1_split", 30., None, None),

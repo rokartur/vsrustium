@@ -23,6 +23,7 @@ impl Workbench {
             let text = collections.describe(folder);
             let path = PathBuf::from(format!("Environment changes{name}"));
             let document = TextDocument::from_text(ENVIRONMENT_CHANGES_SCHEME, &path, &text, "utf8".into(), Some("markdown"), &workbench.languages, &workbench.settings.lock().unwrap());
+            workbench.leave_locked_group(ENVIRONMENT_CHANGES_SCHEME, &path);
             workbench.editors.open(document, false);
             workbench.editors_changed(cx);
             Outcome::done()

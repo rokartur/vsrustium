@@ -346,9 +346,14 @@ impl Workbench {
         self.banner_context(window, &mut context);
         self.host_context(window, &mut context);
         self.layout_context(&mut context);
+        self.update_context(&mut context);
+        if let Some(alignment) = self.quick_input_alignment(window) {
+            context.insert("quickInputAlignment".into(), json!(alignment));
+        }
         // views.ts `FocusedViewContext` is '' while no view has focus, so `focusedView != ''` is false then.
         context.insert("focusedView".into(), json!(self.focused_movable_view(window).unwrap_or_default()));
         self.editor_groups_context(&mut context);
+        self.auxiliary_window_context(window, &mut context);
         self.history_context(&mut context);
         self.list_scroll_context(window, &mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));
@@ -394,7 +399,7 @@ impl Workbench {
             // breadcrumbsControl.ts `update`: every editor with a resource has breadcrumbs but untitled and merge editors.
             let breadcrumbs_possible = editor.document().scheme != "untitled" && self.editors.active_merge().is_none();
             context.insert("breadcrumbsPossible".into(), json!(breadcrumbs_possible));
-            context.insert("breadcrumbsVisible".into(), json!(breadcrumbs_possible && self.setting("breadcrumbs.enabled") != json!(false)));
+            context.insert("breadcrumbsVisible".into(), json!(breadcrumbs_possible && !self.drawing_compact_part() && self.setting("breadcrumbs.enabled") != json!(false)));
             context.insert("breadcrumbsHasSymbols".into(), json!(breadcrumbs_possible && !self.breadcrumb_symbols(editor).is_empty()));
             let pane = match editor.document().scheme.as_str() {
                 _ if self.playground_active() => "workbench.editor.walkThroughPart",
@@ -537,6 +542,7 @@ impl Workbench {
     pub(super) fn open_untitled_with_contents(&mut self, contents: &str, window: &mut Window, cx: &mut Context<Self>) {
         let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
         let document = TextDocument::untitled(&path, contents, None, &self.languages, &self.settings.lock().unwrap());
+        self.leave_locked_group("untitled", &path);
         self.editors.open(document, false);
         window.focus(&self.editor_focus, cx);
         self.editors_changed(cx);

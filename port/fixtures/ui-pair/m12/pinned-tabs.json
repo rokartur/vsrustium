@@ -1,5 +1,6 @@
 [
 	{ "wait": 3000 },
+	{ "hover": [600, 400] },
 	{ "hotkey": ["cmd", "p"], "foreground": true },
 	{ "wait": 800 },
 	{ "type": "main.ts", "foreground": true },
@@ -46,7 +47,8 @@
 	{ "wait": 1000 },
 	{ "shot": "tab-menu" },
 	{ "key": "escape", "foreground": true },
-	{ "wait": 500 },
+	{ "wait": 2500 },
+	{ "shot": "menu-closed-hover" },
 	{ "hotkey": ["cmd", "w"], "foreground": true },
 	{ "wait": 1000 },
 	{ "shot": "close-sticky-keyboard" },

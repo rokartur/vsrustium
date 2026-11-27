@@ -251,11 +251,21 @@ fn the_github_share_items_fill_the_share_submenus() {
     assert!(!ids(&menu_actions(&registry, MenuId::ExplorerContext, &no_context())).contains(&"Share"), "no repository, no Share");
 }
 
-/// The activity bar's Manage menu: the reference's items whose commands the port has, in its groups.
+/// The activity bar's Manage menu: the reference's items in its groups; Tasks once the host can run tasks.
 #[test]
 fn the_manage_menu_lists_the_global_activity_items() {
-    let actions = menu_actions(&workbench_menus(), MenuId::GlobalActivity, &no_context());
-    assert_eq!(ids(&actions), ["workbench.action.showCommands", "-", "workbench.action.openGlobalKeybindings", "workbench.action.openSnippets", "Themes"]);
+    let registry = workbench_menus();
+    let actions = menu_actions(&registry, MenuId::GlobalActivity, &no_context());
+    let without_tasks = ["workbench.action.showCommands", "-", "workbench.action.openSettings", "workbench.view.extensions", "workbench.action.openGlobalKeybindings", "workbench.action.openSnippets", "Themes"];
+    assert_eq!(ids(&actions), without_tasks);
+    let context = HashMap::from([("shellExecutionSupported".to_owned(), json!(true)), ("processExecutionSupported".to_owned(), json!(true))]);
+    let actions = menu_actions(&registry, MenuId::GlobalActivity, &context);
+    assert_eq!(ids(&actions)[5..7], ["workbench.action.openSnippets", "workbench.action.tasks.openUserTasks"]);
+    // update.ts `appendUpdateMenuItems`: one item of the update state, in its own group; none while disabled.
+    for (state, id) in [("idle", "update.check"), ("checking for updates", "update.checking"), ("available for download", "update.downloadNow")] {
+        let context = HashMap::from([("updateState".to_owned(), json!(state))]);
+        assert_eq!(ids(&menu_actions(&registry, MenuId::GlobalActivity, &context))[without_tasks.len()..], ["-", id]);
+    }
 }
 
 /// modernUI.contribution.test.ts: Layout Density follows Themes in the Manage menu while the modern UI is on, and

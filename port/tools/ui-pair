@@ -6,10 +6,13 @@
 // env FILE = file to open, relative to the folder; env ONLY = "reference" or "port" to run one of them; env ARGS = more arguments for both, space separated;
 // env SETTINGS = a JSON object of user settings for both)
 // Steps, in window points (both windows are 1024x768):
-//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y], "foreground": true}  {"key": "return"}  {"key": "escape", "foreground": true} (a real HID key down and up, the window brought to front and left there; also on hotkey)
+//   {"click": [x, y]}  {"click": [x, y], "modifier": ["cmd"]}  {"click": [x, y], "foreground": true}  {"doubleClick": [x, y]}  {"rightClick": [x, y], "foreground": true}  {"key": "return"}  {"key": "escape", "foreground": true} (the window brought to front and left there; also on hotkey)
 //   {"scroll": [x, y], "amount": notches} (real wheel notches down, the pointer left there)  {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"type": "Text", "foreground": true} (capitals as shift plus the letter)  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"], "button": "middle"}: a slow drag, captured while held
 //   {"windows": "name"}: the titles, sizes and visibility of the app's windows, as <app>-<name>.json
+//   {"window": "auxiliary", ...}: the step acts on (or shoots) the app's other on-screen window, the first one that is not the main window
+//   {"frame": [x, y, width, height], "window": "auxiliary"}: moves and sizes that window, in points from the main window's top left
+//   {"dragShot": [...]} without "shot": the drag alone; with "window" and "shotMain": true, a drag from that window captured in the main one
 //   {"restart": true}: after the app quit (a Cmd+Q step), start it again on the same user data and folder
 //   {"launch": ["docs/guide.md"]}: start the app a second time with these paths (relative to the folder), as a command line would
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
@@ -19,10 +22,13 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 
-type Step = { click?: number[]; scroll?: number[]; amount?: number; hover?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; windows?: string; button?: string; restart?: boolean; launch?: string[] };
+type Step = { window?: string; frame?: number[]; shotMain?: boolean; click?: number[]; scroll?: number[]; amount?: number; hover?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; windows?: string; button?: string; restart?: boolean; launch?: string[] };
 
 // Index = virtual key code (HIToolbox Events.h, kVK_ANSI_*); '' where the code is no character key.
 const usKeyCodes = ['a', 's', 'd', 'f', 'h', 'g', 'z', 'x', 'c', 'v', '', 'b', 'q', 'w', 'e', 'r', 'y', 't', '1', '2', '3', '4', '6', '5', '=', '9', '7', '-', '8', '0', ']', 'o', 'u', '[', 'i', 'p', '\n', 'l', 'j', "'", 'k', ';', '\\', ',', '/', 'n', 'm', '.', '\t', ' ', '`'];
+// cua-driver's key names (kVK_Return, kVK_Escape, ...).
+const namedKeyCodes: Record<string, number> = { return: 36, tab: 48, space: 49, backspace: 51, escape: 53, f10: 109, left: 123, right: 124, down: 125, up: 126 };
+const modifierFlags: Record<string, number> = { shift: 0x20000, ctrl: 0x40000, option: 0x80000, alt: 0x80000, cmd: 0x100000 };
 const shiftedKeys: Record<string, string> = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0', '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
 const coreGraphics = dlopen('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics', {
 	CGEventCreateKeyboardEvent: { args: [FFIType.ptr, FFIType.u16, FFIType.bool], returns: FFIType.ptr },
@@ -35,6 +41,8 @@ const coreFoundation = dlopen('/System/Library/Frameworks/CoreFoundation.framewo
 
 const [outDir, stepsFile, themeName = 'dark'] = process.argv.slice(2);
 const steps: Step[] = JSON.parse(readFileSync(stepsFile, 'utf8'));
+/** Windows `otherWindow` found: never taken for a sheet. */
+const otherWindowIds = new Set<number>();
 const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
 const themes: Record<string, [string, string]> = {
 	dark: ['Default Dark Modern', 'Dark Modern'],
@@ -119,10 +127,14 @@ function startPort(paths: string[], userData: string) {
 }
 
 async function run(app: string, firstPid: number, folder: string, restart: () => Promise<number>, launch: (paths: string[]) => Promise<void>) {
-	let { window, target, scale } = await attach(app, firstPid);
+	let { window, target: main, scale } = await attach(app, firstPid);
 	const at = (point: number[]) => ({ x: point[0] * scale, y: point[1] * scale });
 	for (const step of steps) {
-		if (step.click) {
+		const target = step.window ? await otherWindow(main) : main;
+		if (step.frame) {
+			const [x, y, width, height] = step.frame;
+			await cua('set_window_frame', { ...target, x: window.bounds.x + x, y: window.bounds.y + y, width, height });
+		} else if (step.click) {
 			await cua('click', { ...target, ...at(step.click), modifier: step.modifier, delivery_mode: step.foreground ? 'foreground' : undefined });
 		} else if (step.scroll) {
 			// Electron drops background wheel events; both get the real pointer's.
@@ -136,12 +148,16 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 			await cua('right_click', { ...target, ...at(step.rightClick), delivery_mode: step.foreground ? 'foreground' : undefined });
 		} else if (step.key || step.hotkey) {
 			if (step.foreground) {
-				// A foreground key alone restores the previous app after it: the window would turn inactive between
-				// the keys of a chord, which leaves chord mode (keybindingResolver `_scheduleLeaveChordMode`).
+				// The window stays in front between the keys of a chord: an inactive one leaves chord mode
+				// (keybindingResolver `_scheduleLeaveChordMode`).
 				await bringToFront(target);
+				const keys = step.key ? [step.key] : step.hotkey!;
+				pressKey(target.pid, keys.at(-1)!, keys.slice(0, -1));
+			} else {
+				// Background keys stay on cua-driver: unlike a posted key, its escape moves the port's traffic lights
+				// 1 pt right in m11/split-settings-edit, which the shots show.
+				await (step.key ? cua('press_key', { ...target, key: step.key }) : cua('hotkey', { ...target, keys: step.hotkey }));
 			}
-			const delivery_mode = step.foreground ? 'foreground' : undefined;
-			await (step.key ? cua('press_key', { ...target, key: step.key, delivery_mode }) : cua('hotkey', { ...target, keys: step.hotkey, delivery_mode }));
 		} else if (step.type) {
 			if (step.foreground) {
 				await bringToFront(target);
@@ -152,15 +168,18 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 		} else if (step.launch) {
 			await launch(step.launch);
 		} else if (step.restart) {
-			({ window, target, scale } = await attach(app, await restart()));
+			({ window, target: main, scale } = await attach(app, await restart()));
 		} else if (step.dragShot) {
 			const [x1, y1, x2, y2] = step.dragShot;
 			// A background drag reaches only Electron's own drag and drop; GPUI needs the real pointer.
 			// `foreground: true` sends the reference's drag through the real pointer too (a sash, not a drag and drop).
 			const delivery_mode = app === 'port' || step.foreground ? 'foreground' : 'background';
 			const drag = cua('drag', { ...target, from_x: x1 * scale, from_y: y1 * scale, to_x: x2 * scale, to_y: y2 * scale, duration_ms: 4000, steps: 40, modifier: step.modifier, button: step.button, delivery_mode });
-			await Bun.sleep(3500);
-			await shot(app, target.pid, target.window_id, step.shot!);
+			if (step.shot) {
+				await Bun.sleep(3500);
+				const shotTarget = step.shotMain ? main : target;
+				await shot(app, shotTarget.pid, shotTarget.window_id, step.shot);
+			}
 			await drag;
 		} else if (step.shot) {
 			await shot(app, target.pid, target.window_id, step.shot);
@@ -180,6 +199,10 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 				console.log(`${app}-${step.clipboard}.html: ${html.trimEnd()}`);
 			}
 		}
+		// A shot, windows or clipboard step only reads: nothing to settle after it.
+		if ((step.shot && !step.dragShot) || step.windows || step.clipboard) {
+			continue;
+		}
 		await Bun.sleep(400);
 	}
 }
@@ -190,16 +213,36 @@ async function attach(app: string, pid: number) {
 		const { windows } = await cua('list_windows', { pid });
 		return windows.find((w: { bounds: { width: number }; is_on_screen: boolean }) => w.is_on_screen && w.bounds.width === 1024);
 	}, 120000);
-	// The workbench and its extensions settle after the window appears.
-	await Bun.sleep(app === 'reference' ? 10000 : 6000);
 	const target = { pid, window_id: window.window_id };
-	// A first capture sets the screenshot pixel space the pixel actions use: 2x on a Retina display, 1x on a
+	// The workbench and its extensions settle after the window appears: wait until three captures 500 ms apart
+	// match, at most as long as the fixed 10 s (reference) and 6 s (port) waits that came before.
+	// The captures also set the screenshot pixel space the pixel actions use: 2x on a Retina display, 1x on a
 	// headless or 1x one. The PNG's width (bytes 16 to 19 of its header) gives the scale.
 	const probe = join(outDir, `.${app}-scale.png`);
-	await cua('get_window_state', { ...target, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: probe });
+	const deadline = Date.now() + (app === 'reference' ? 10000 : 6000);
+	let previous: number | bigint = -1;
+	let matches = 0;
+	while (matches < 2 && Date.now() < deadline) {
+		await Bun.sleep(500);
+		await cua('get_window_state', { ...target, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: probe });
+		const hash = Bun.hash(readFileSync(probe));
+		matches = hash === previous ? matches + 1 : 0;
+		previous = hash;
+	}
 	const scale = readFileSync(probe).readUInt32BE(16) / window.bounds.width;
 	rmSync(probe);
 	return { window, target, scale };
+}
+
+/** The app's on-screen window other than `main` (an auxiliary window), at least 400 points wide. */
+async function otherWindow(main: { pid: number; window_id: number }) {
+	type Listed = { window_id: number; is_on_screen: boolean; bounds: { width: number } };
+	const other = await until(async () => {
+		const { windows } = await cua('list_windows', { pid: main.pid });
+		return windows.find((w: Listed) => w.is_on_screen && w.window_id !== main.window_id && w.bounds.width >= 400);
+	}, 10000);
+	otherWindowIds.add(other.window_id);
+	return { pid: main.pid, window_id: other.window_id };
 }
 
 /** The window, or the sheet over it when one is open. */
@@ -208,7 +251,7 @@ async function shot(app: string, pid: number, windowId: number, name: string) {
 	const { windows } = await cua('list_windows', { pid });
 	// The port reopens its window when it enters a workspace: then the new 1024 wide window is the main one.
 	const main = windows.some((w: Listed) => w.window_id === windowId && w.is_on_screen) ? windowId : windows.find((w: Listed) => w.is_on_screen && w.bounds.width === 1024)?.window_id ?? windowId;
-	const sheet = windows.find((w: Listed) => w.is_on_screen && w.window_id !== main && w.bounds.width < 1024);
+	const sheet = windows.find((w: Listed) => w.is_on_screen && w.window_id !== main && w.bounds.width < 1024 && !otherWindowIds.has(w.window_id) && !otherWindowIds.has(main));
 	const file = resolve(outDir, `${app}-${name}.png`);
 	await cua('get_window_state', { pid, window_id: sheet?.window_id ?? main, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: file });
 	console.log(`${app}-${name}.png${sheet ? ' (sheet)' : ''}`);
@@ -224,27 +267,39 @@ async function bringToFront(target: object) {
 }
 
 /**
- * Types the text as US layout key events posted to the app's pid, in front or not: an m12/pinned-tabs run lost its
- * foreground keys posted to the HID tap. cua-driver's press_key spends 0.4 s (reference) to 1.4 s (port) per key reading the focused element back
- * over AX, and type_text refuses windows without an accessible text field, as GPUI's.
+ * Types the text as US layout key events, capitals and shifted symbols as shift plus the base key.
+ * type_text refuses windows without an accessible text field, as GPUI's.
  */
 async function typeText(pid: number, text: string) {
-	const shift = 0x20000; // kCGEventFlagMaskShift
 	for (const char of text) {
 		const lower = char.toLowerCase();
-		const base = shiftedKeys[char] ?? lower;
-		const keyCode = usKeyCodes.indexOf(base);
-		if (keyCode < 0) {
-			throw new Error(`ui-pair: no US key for ${JSON.stringify(char)}`);
-		}
-		const flags = shiftedKeys[char] || char !== lower ? shift : 0;
-		for (const down of [true, false]) {
-			const event = coreGraphics.symbols.CGEventCreateKeyboardEvent(null, keyCode, down);
-			coreGraphics.symbols.CGEventSetFlags(event, flags);
-			coreGraphics.symbols.CGEventPostToPid(pid, event);
-			coreFoundation.symbols.CFRelease(event);
-		}
+		pressKey(pid, shiftedKeys[char] ?? lower, shiftedKeys[char] || char !== lower ? ['shift'] : []);
 		await Bun.sleep(20);
+	}
+}
+
+/**
+ * A key down and up with the modifiers' flags, posted to the app's pid, in front or not: an m12/pinned-tabs run lost
+ * its foreground keys posted to the HID tap. cua-driver's press_key and hotkey spend 0.4 s (reference) to 1.4 s
+ * (port) per key reading the focused element back over AX.
+ */
+function pressKey(pid: number, key: string, modifiers: string[]) {
+	const keyCode = namedKeyCodes[key] ?? usKeyCodes.indexOf(key);
+	if (keyCode < 0) {
+		throw new Error(`ui-pair: no US key for ${JSON.stringify(key)}`);
+	}
+	let flags = 0;
+	for (const modifier of modifiers) {
+		if (!modifierFlags[modifier]) {
+			throw new Error(`ui-pair: no modifier ${JSON.stringify(modifier)}`);
+		}
+		flags |= modifierFlags[modifier];
+	}
+	for (const down of [true, false]) {
+		const event = coreGraphics.symbols.CGEventCreateKeyboardEvent(null, keyCode, down);
+		coreGraphics.symbols.CGEventSetFlags(event, flags);
+		coreGraphics.symbols.CGEventPostToPid(pid, event);
+		coreFoundation.symbols.CFRelease(event);
 	}
 }
 

@@ -391,6 +391,7 @@ impl Workbench {
     fn open_welcome_page(&mut self, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         self.ensure_walkthroughs(window);
         let path = PathBuf::from(GETTING_STARTED_PATH);
+        self.leave_locked_group(WALKTHROUGH_SCHEME, &path);
         match self.editors.editors.iter().position(|editor| editor.document().is(WALKTHROUGH_SCHEME, &path)) {
             Some(index) => self.editors.activate(index),
             None => {

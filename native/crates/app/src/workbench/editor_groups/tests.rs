@@ -238,6 +238,34 @@ fn sticky_editors_come_back_sticky_from_workspace_storage(cx: &mut TestAppContex
     assert_eq!(tabs, [("c.txt".to_string(), true), ("a.txt".to_string(), false), ("b.txt".to_string(), false)]);
 }
 
+/// The sticky tab's Unpin Editor hover, again after the tab's context menu closes by Escape under a still pointer.
+#[gpui::test]
+fn the_unpin_hover_comes_back_after_the_tab_menu_closes(cx: &mut TestAppContext) {
+    let (_dir, workbench, cx) = workbench_with("unpin-hover", &["a.txt", "b.txt"], cx);
+    run(&workbench, "workbench.action.pinEditor", cx);
+    cx.update(|window, cx| drop(window.draw(cx)));
+    let pin = cx.debug_bounds("tab-action-0").expect("the sticky tab's action").center();
+    let shown = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.hovers.shown_text().map(str::to_owned));
+    cx.simulate_mouse_move(pin, None, gpui::Modifiers::none());
+    cx.executor().advance_clock(std::time::Duration::from_millis(1500));
+    cx.run_until_parked();
+    assert_eq!(shown(cx).as_deref(), Some("Unpin Editor"));
+
+    cx.simulate_mouse_down(pin, gpui::MouseButton::Right, gpui::Modifiers::none());
+    cx.simulate_mouse_up(pin, gpui::MouseButton::Right, gpui::Modifiers::none());
+    assert!(workbench.read_with(cx, |workbench, _| workbench.context_menu.is_some()));
+    cx.simulate_keystrokes("escape");
+    for _ in 0..2 {
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+            drop(window.draw(cx));
+        });
+    }
+    cx.executor().advance_clock(std::time::Duration::from_millis(1500));
+    cx.run_until_parked();
+    assert_eq!(shown(cx).as_deref(), Some("Unpin Editor"));
+}
+
 /// dnd.ts `ResourcesDropHandler`: a file dropped from Finder on a group's right half opens pinned in a new group there.
 #[gpui::test]
 fn files_dropped_from_outside_open_in_the_group_the_overlay_shows(cx: &mut TestAppContext) {
@@ -254,4 +282,46 @@ fn files_dropped_from_outside_open_in_the_group_the_overlay_shows(cx: &mut TestA
     assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_owned()], vec!["b.txt".to_owned()]], 1));
     assert!(workbench.read_with(cx, |workbench, _| !workbench.editors.active().unwrap().preview));
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// editorGroupFinder.ts: a locked group keeps its editors; others open in the most recent unlocked group, or a new
+/// group beside the active one when every group is locked. The lock is stored with the group.
+#[gpui::test]
+fn a_locked_group_hands_opened_editors_to_an_unlocked_group(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("locked", &["a.txt", "b.txt"], cx);
+    run(&workbench, "workbench.action.splitEditorRight", cx);
+    run(&workbench, "workbench.action.lockEditorGroup", cx);
+    let open = |name: &str, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, cx| workbench.open_file(dir.join(name), true, window, cx));
+        cx.run_until_parked();
+    };
+    open("a.txt", cx);
+    assert_eq!(groups(&workbench, cx), (vec![vec!["a.txt".to_string(), "b.txt".to_string()], vec!["b.txt".to_string()]], 0));
+    // The locked group shows an editor it has open.
+    run(&workbench, "workbench.action.focusSecondEditorGroup", cx);
+    open("b.txt", cx);
+    assert_eq!(groups(&workbench, cx).1, 1);
+    run(&workbench, "workbench.action.focusFirstEditorGroup", cx);
+    run(&workbench, "workbench.action.toggleEditorGroupLock", cx);
+    run(&workbench, "workbench.action.files.newUntitledFile", cx);
+    let tabs = |names: &[&str]| names.iter().map(|name| name.to_string()).collect::<Vec<_>>();
+    assert_eq!(groups(&workbench, cx), (vec![tabs(&["a.txt", "b.txt"]), tabs(&["Untitled-1"]), tabs(&["b.txt"])], 1));
+    let saved = workbench.read_with(cx, |workbench, _| workbench.workspace_storage.lock().unwrap().get("memento/workbench.parts.editor").map(str::to_owned).unwrap());
+    let state: serde_json::Value = serde_json::from_str(&saved).unwrap();
+    let locked: Vec<serde_json::Value> = state["editorpart.state"]["serializedGrid"]["root"]["data"].as_array().unwrap().iter().map(|leaf| leaf["data"]["locked"].clone()).collect();
+    assert_eq!(locked, [json!(true), json!(null), json!(true)]);
+}
+
+/// editorGroupView.ts `openEditor`: `workbench.editor.autoLockGroups` locks a group whose first editor is listed.
+#[gpui::test]
+fn auto_lock_groups_locks_a_new_group_of_a_listed_editor(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("auto-lock", &["a.txt"], cx);
+    workbench.update(cx, |workbench, _| {
+        let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None);
+        workbench.settings = std::sync::Arc::new(std::sync::Mutex::new(settings));
+        workbench.update_setting("workbench.editor.autoLockGroups", json!({ "default": true }));
+    });
+    run(&workbench, "workbench.action.splitEditorRight", cx);
+    let locked = workbench.read_with(cx, |workbench, _| workbench.groups_in_grid_order().into_iter().map(|group| workbench.editors.locked.contains(&group)).collect::<Vec<_>>());
+    assert_eq!(locked, [false, true]);
 }
