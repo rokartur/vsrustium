@@ -138,8 +138,14 @@ impl Workbench {
     pub(super) fn release_host_models(&mut self, cx: &mut Context<Self>) {
         let count = self.editors.models.len();
         let scm_inputs = self.scm_input_models();
-        // A notebook cell's text model lives as long as its notebook.
-        self.editors.release_models_except(Instant::now(), |model| matches!(model.document().scheme.as_str(), crate::notebook::CELL_SCHEME | super::interactive::INPUT_SCHEME) || scm_inputs.iter().any(|(scheme, path)| model.document().is(scheme, path)));
+        // A notebook cell's text model lives as long as its notebook, a playground snippet's as long as the playground.
+        let playground_open = self.playground_open();
+        self.editors.release_models_except(Instant::now(), |model| {
+            let scheme = model.document().scheme.clone();
+            matches!(scheme.as_str(), crate::notebook::CELL_SCHEME | super::interactive::INPUT_SCHEME)
+                || (playground_open && scheme == super::walkthrough_part::SNIPPET_SCHEME)
+                || scm_inputs.iter().any(|(scheme, path)| model.document().is(scheme, path))
+        });
         if self.editors.models.len() != count {
             self.editors_changed(cx);
         }
@@ -689,8 +695,8 @@ pub(super) fn uri_parts(uri: &Value) -> Result<(&str, PathBuf), Value> {
     let (scheme, authority, path, query) = (part("scheme"), part("authority"), part("path"), part("query"));
     // editor.rs `split_query`: a non-file query stays in the model's path.
     let mut query = if query.is_empty() || scheme == "file" { String::new() } else { format!("?{query}") };
-    // editor.rs `split_fragment`: a notebook cell's fragment too.
-    if scheme == crate::notebook::CELL_SCHEME {
+    // editor.rs `split_fragment`: a notebook cell's or playground snippet's fragment too.
+    if crate::editor::has_fragment(scheme) {
         query.push('#');
         query.push_str(part("fragment"));
     }

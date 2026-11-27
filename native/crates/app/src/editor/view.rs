@@ -71,6 +71,10 @@ impl OpenEditor {
     /// `_getContentHeight` with `scrollBeyondLastLine`, at least the viewport.
     pub fn scroll_height(&self, viewport: Viewport) -> f32 {
         let lines = self.line_top(self.view_line_count(), viewport);
+        // walkThroughPart.ts `getEditorOptions`: the playground's editors set scrollBeyondLastLine false.
+        if self.document().scheme == crate::workbench::walkthrough_part::SNIPPET_SCHEME {
+            return viewport.height.max(lines);
+        }
         viewport.height.max(lines + (viewport.height - viewport.line_height).max(0.))
     }
 

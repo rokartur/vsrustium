@@ -212,6 +212,7 @@ fn a_markdown_cell_toolbar_goes_with_its_more_menu(cx: &mut TestAppContext) {
     let (workbench, cx, _) = workbench_with_cells(cells, cx);
     let (tab, handle) = workbench.read_with(cx, |workbench, _| (workbench.host.notebooks.editors[0].tab_model_id, workbench.host.notebooks.models[0].cells[1].handle));
     workbench.update(cx, |workbench, cx| {
+        workbench.update_user_setting("notebook.cellToolbarVisibility", json!("hover"));
         workbench.notebook_views.views.entry(tab).or_default().hovered = Some(handle);
         cx.notify();
     });
@@ -249,6 +250,25 @@ fn a_cell_dragged_by_its_left_column_moves_or_copies_to_the_drop_place(cx: &mut 
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.active_notebook_editor().unwrap().focus), 2);
     drag(2, 0, false, gpui::Modifiers::alt(), cx);
     assert_eq!(sources(&workbench, cx), ["a", "b", "c", "a"]);
+}
+
+/// notebookEditorWidget.ts `paddingBottom`: with `editor.scrollBeyondLastLine` the list scrolls until 50px of it
+/// are left; the wheel scrolls it as a workbench list, 50px a notch.
+#[gpui::test]
+fn the_notebook_list_scrolls_beyond_its_last_cell_with_the_wheel(cx: &mut TestAppContext) {
+    use crate::workbench::list_scroll::ListId;
+    let (workbench, cx) = notebook_workbench(cx);
+    let tab = workbench.read_with(cx, |workbench, _| workbench.active_notebook_tab().unwrap().0);
+    let scroller = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.list_scroller(ListId::Notebook(tab)));
+    let (bounds, content) = workbench.read_with(cx, |workbench, _| {
+        let model = &workbench.host.notebooks.models[0];
+        (workbench.list_scroller(ListId::Notebook(tab)).bounds(), workbench.notebook_rows(tab, model).last().map(|row| row.layout.top + row.layout.height).unwrap())
+    });
+    assert!(content < f32::from(bounds.size.height), "one cell fits the list: {content} in {bounds:?}");
+    assert_eq!(scroller(cx).max_position().y, content - 50.);
+    cx.simulate_event(gpui::ScrollWheelEvent { position: bounds.center(), delta: gpui::ScrollDelta::Lines(gpui::point(0., -1.)), ..Default::default() });
+    cx.run_until_parked();
+    assert_eq!(scroller(cx).position().y, 50.);
 }
 
 #[gpui::test]
@@ -332,6 +352,115 @@ fn the_variable_provider_command_collects_what_the_bound_kernel_sends(cx: &mut T
     cx.run_until_parked();
     let collected = futures::executor::block_on(answer).unwrap().unwrap();
     assert_eq!(collected[0]["variable"]["name"], "a");
+}
+
+/// editorStatus.ts keeps the `activeCodeEditor` of the moment the notebook editor became active: a notebook opened on
+/// a code cell shows that cell editor's entries, one opened on a markdown cell shows none, also once a code cell has
+/// the focus.
+#[gpui::test]
+fn the_editor_status_keeps_the_code_cell_editor_a_notebook_opened_on(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = workbench_with_cells(json!([json!({ "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} }), json!({ "cellKind": 1, "language": "markdown", "source": "# m", "outputs": [], "metadata": {} })]), cx);
+    assert!(workbench.read_with(cx, |workbench, _| workbench.notebook_status_editor().is_some()));
+}
+
+#[gpui::test]
+fn the_editor_status_of_a_notebook_opened_on_a_markdown_cell_stays_empty(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = workbench_with_cells(json!([json!({ "cellKind": 1, "language": "markdown", "source": "# m", "outputs": [], "metadata": {} }), json!({ "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} })]), cx);
+    workbench.update_in(cx, |workbench, window, cx| {
+        let tab = workbench.host.notebooks.editors[0].tab_model_id;
+        let handle = workbench.host.notebooks.models[0].cells[1].handle;
+        workbench.focus_notebook_cell(tab, handle, true, window, cx);
+    });
+    cx.run_until_parked();
+    assert!(workbench.read_with(cx, |workbench, _| workbench.notebook_status_editor().is_none()));
+}
+
+/// notebookRendererMessagingServiceImpl.ts: a renderer's messages from the webview reach the host only after its
+/// `onRenderer:` activation, in the order they came.
+#[gpui::test]
+fn renderer_messages_wait_for_the_renderer_activation(cx: &mut TestAppContext) {
+    let cells = json!([{ "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} }]);
+    let (workbench, cx, receiver) = workbench_with_cells(cells, cx);
+    receiver.try_iter().for_each(drop);
+    let post = |text: &str, cx: &mut VisualTestContext| {
+        workbench.update(cx, |workbench, cx| {
+            let editor_id = workbench.host.notebooks.editors[0].id.clone();
+            workbench.post_renderer_message(editor_id, "pub.r".into(), json!(text), cx);
+        });
+        cx.run_until_parked();
+    };
+    post("one", cx);
+    post("two", cx);
+    let sent: Vec<_> = receiver.try_iter().collect();
+    assert!(!sent.iter().any(|message| message.method == "$postRendererMessage"));
+    let activation = sent.into_iter().find(|message| message.method == "$activateByEvent" && message.args[0] == "onRenderer:pub.r").expect("the renderer activates");
+    let _ = activation.reply.expect("a call").send(Ok(serde_json::Value::Null));
+    cx.run_until_parked();
+    let posted: Vec<_> = receiver.try_iter().filter(|message| message.method == "$postRendererMessage").map(|message| message.args[2].clone()).collect();
+    assert_eq!(posted, [json!("one"), json!("two")]);
+    post("three", cx);
+    let posted: Vec<_> = receiver.try_iter().filter(|message| message.method == "$postRendererMessage").map(|message| message.args[2].clone()).collect();
+    assert_eq!(posted, [json!("three")]);
+}
+
+/// notebookKernelQuickPickStrategy.ts `KernelPickerMRUStrategy`: with no kernel the sources picker recommends
+/// extensions; with kernels it groups them by extension; a picked kernel is bound and then listed as selected above
+/// Select Another Kernel...
+#[gpui::test]
+fn the_kernel_picker_recommends_groups_and_remembers_kernels(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "a", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "b", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let rows = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let input = workbench.quick_inputs.current().unwrap();
+            let rows = input.order.iter().map(|row| &input.rows[*row]);
+            let rows = rows.map(|row| format!("{}{} {}", row.separator.as_ref().map(|label| format!("--{label}--")).unwrap_or_default(), row.item.label, row.item.description.clone().unwrap_or_default()));
+            (input.title.clone().unwrap_or_default(), rows.collect::<Vec<_>>())
+        })
+    };
+    let pick = |label: &str, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, cx| {
+            let input = workbench.quick_inputs.find_mut(|owner| matches!(owner, crate::main_thread_quick_open::Owner::Choose(_))).unwrap();
+            let handle = input.rows.iter().find(|row| row.item.label == label).unwrap().item.handle;
+            input.set_active_items(&[handle]);
+            workbench.flush_quick_input_events(window, cx);
+        });
+        cx.simulate_keystrokes("enter");
+        cx.run_until_parked();
+    };
+    let select_kernel = |cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("_notebook.selectKernel", Vec::new(), window, cx)));
+        cx.run_until_parked();
+    };
+
+    select_kernel(cx);
+    let recommended = ["$(lightbulb) Install/Enable suggested extensions Python + Jupyter", "Browse marketplace for kernel extensions "];
+    assert_eq!(rows(cx), ("Select Kernel".to_owned(), recommended.map(str::to_owned).to_vec()));
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+
+    workbench.update_in(cx, |workbench, window, cx| {
+        for (handle, id, label) in [(1, "a", "A"), (2, "b", "B")] {
+            let kernel = json!({ "id": format!("pub.ext/{id}"), "extensionId": { "value": "pub.ext" }, "notebookType": "jupyter-notebook", "label": label, "extensionLocation": { "scheme": "file", "path": "/ext" }, "preloads": [] });
+            workbench.handle_notebook_request("MainThreadNotebookKernels", "$addKernel", &[json!(handle), kernel], window, cx);
+        }
+    });
+    select_kernel(cx);
+    assert_eq!(rows(cx), ("Select Kernel".to_owned(), vec!["pub.ext ".to_owned()]));
+    pick("pub.ext", cx);
+    assert_eq!(rows(cx), ("Select Kernel from pub.ext".to_owned(), vec!["A ".to_owned(), "B ".to_owned()]));
+    pick("B", cx);
+    let bound = workbench.read_with(cx, |workbench, _| {
+        let model = &workbench.host.notebooks.models[0];
+        workbench.host.notebooks.kernels.matching(&model.view_type, &model.uri_string()).1.map(|kernel| kernel.id.clone())
+    });
+    assert_eq!(bound.as_deref(), Some("pub.ext/b"));
+
+    select_kernel(cx);
+    assert_eq!(rows(cx), (String::new(), vec!["B Currently Selected".to_owned(), "----Select Another Kernel... ".to_owned()]));
 }
 
 /// editActions.ts `ChangeCellLanguageAction`: the status bar's language item opens the picker (Auto Detect, then

@@ -20,6 +20,8 @@ const STATE_KEY: &str = "editorpart.state";
 const FILE_EDITOR_INPUT: &str = "workbench.editors.files.fileEditorInput";
 /// untitledTextEditorInput.ts `UntitledTextEditorInput.ID`.
 const UNTITLED_EDITOR_INPUT: &str = "workbench.editors.untitledEditorInput";
+/// editorWalkThrough.ts `EditorWalkThroughInputSerializer.ID`.
+const PLAYGROUND_INPUT: &str = "workbench.editors.walkThroughInput";
 
 impl Workbench {
     pub(in crate::workbench) fn save_editor_part_state(&mut self) {
@@ -71,6 +73,8 @@ impl Workbench {
             } else {
                 match document.scheme.as_str() {
                     "file" => json!({ "id": FILE_EDITOR_INPUT, "value": json!({ "resourceJSON": exthost::scan::file_uri(&document.path) }).to_string() }),
+                    // `EditorWalkThroughInputSerializer.serialize` is ''.
+                    super::super::welcome_page::WALKTHROUGH_SCHEME if self.is_playground(editor) => json!({ "id": PLAYGROUND_INPUT, "value": "" }),
                     "untitled" if untitled => {
                         let resource = json!({ "$mid": 1, "scheme": "untitled", "path": document.path.to_string_lossy() });
                         json!({ "id": UNTITLED_EDITOR_INPUT, "value": json!({ "resourceJSON": resource, "modeId": document.language_id }).to_string() })
@@ -148,6 +152,7 @@ impl Workbench {
                 },
                 // Its text comes from its backup (backup_tracker.rs `restore_backups`).
                 (Some(UNTITLED_EDITOR_INPUT), Some(path)) => crate::editor::TextDocument::untitled(&path, "", value["modeId"].as_str(), &self.languages, &self.settings.lock().unwrap()),
+                (Some(PLAYGROUND_INPUT), _) => self.new_playground_document(),
                 (Some(WEBVIEW_INPUT), _) => match self.restore_webview_editor(&value) {
                     Some(document) => document,
                     None => continue,

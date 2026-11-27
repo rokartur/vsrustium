@@ -105,7 +105,7 @@ impl Workbench {
         let Some(editor) = self.host.notebooks.editors.iter_mut().find(|editor| editor.tab_model_id == tab) else { return };
         editor.focus = cell;
         editor.selections = vec![(cell, cell + 1)];
-        self.reveal_notebook_cells(tab, cell, cell + 1, CellReveal::Top);
+        self.reveal_notebook_cells(tab, cell, cell + 1, CellReveal::Top, cx);
         self.editors_changed(cx);
         cx.notify();
     }

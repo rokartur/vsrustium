@@ -82,7 +82,7 @@ fn sanitize_link<'a>(event: Event<'a>, sanitizer: &Sanitizer) -> Event<'a> {
 }
 
 /// markedGfmHeadingIdPlugin.ts `slugify`: trimmed, lowercase, each whitespace a `-`.
-fn slugify(heading: &str) -> String {
+pub(super) fn slugify(heading: &str) -> String {
     heading.trim().to_lowercase().chars().map(|c| if c.is_whitespace() { '-' } else { c }).collect()
 }
 

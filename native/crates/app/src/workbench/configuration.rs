@@ -110,6 +110,10 @@ impl Workbench {
         if ["editor.folding", "editor.foldingStrategy", "editor.foldingMaximumRegions", "editor.defaultFoldingRangeProvider"].iter().any(|key| affects(change, key)) {
             self.trigger_folding_model_changed(cx);
         }
+        // commentsController.ts shows the threads again in the other style.
+        if affects(change, "comments.thread.experimental.style") {
+            self.sync_comment_widgets();
+        }
         if affects(change, "editor.stickyScroll") {
             self.sticky_outline_providers_changed(cx);
         }

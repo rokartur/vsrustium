@@ -306,6 +306,7 @@ impl Workbench {
                 Some(input) if input.can_select_many => Some(json!(input.selected_handles())),
                 input => input.and_then(|input| input.active_handles().first().map(|handle| json!(handle))),
             },
+            Event::TriggerButton(-1, _) => Some(json!("back")),
             Event::Hide => {
                 if let Some(Owner::Choose(reply)) = self.quick_inputs.owner_mut(id) {
                     resolve(reply, Ok(Value::Null));

@@ -80,6 +80,7 @@ mod user_activity;
 mod process_explorer;
 mod views_welcome;
 mod welcome_page;
+pub mod walkthrough_part;
 mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
@@ -107,6 +108,7 @@ mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
 pub mod interactive;
+mod kernel_picker;
 mod notebook_editor;
 mod repl_notebook;
 mod notebook_outline;
@@ -176,6 +178,8 @@ mod outline_actions;
 mod inlay_hints_accessibility;
 mod comment_navigation;
 mod comment_node;
+mod comment_thread_floating;
+mod comment_thread_floating_layout;
 mod comment_thread_widget;
 mod comments;
 mod comments_view;
@@ -307,6 +311,7 @@ pub struct Workbench {
     relauncher: relauncher::Relauncher,
     user_activity: user_activity::UserActivity,
     welcome: welcome_page::WelcomePage,
+    playground: walkthrough_part::Playground,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
     pub output: crate::output::Output,
@@ -498,6 +503,7 @@ impl Render for Workbench {
         self.follow_marker_navigation_cursor();
         self.follow_references_peek_editor();
         self.follow_hierarchy_peek_editor(window, cx);
+        self.lay_out_floating_comment_widgets(window);
         self.follow_symbol_navigation();
         self.follow_definition_link(cx);
         self.refresh_selection_highlights(window);
@@ -621,6 +627,7 @@ impl Workbench {
             relauncher: Default::default(),
             user_activity: Default::default(),
             welcome: Default::default(),
+            playground: Default::default(),
             context_keys: HashMap::new(),
             output: Default::default(),
             output_view: output_view::OutputView::new(cx),
@@ -895,6 +902,7 @@ impl Workbench {
         workbench.register_localization_commands();
         workbench.register_new_file_commands();
         workbench.register_welcome_page_commands();
+        workbench.register_playground_commands();
         workbench.register_process_explorer_commands();
         workbench.register_debug_commands();
         workbench.register_debug_console_commands();
@@ -1006,7 +1014,9 @@ impl Workbench {
         self.open_editors_focused_row = None;
         self.reveal_active_file();
         self.record_editor_history();
+        self.capture_notebook_status_editor();
         self.drop_closed_search_editors();
+        self.drop_closed_playground();
         self.load_search_editor_widget();
         self.find_editor_changed();
         self.schedule_keybinding_marks(cx);

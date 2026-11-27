@@ -6,7 +6,7 @@ Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Cod
 
 Mouse cursors are part of the look (Artur): every element gets the cursor the reference CSS gives it (`rg 'cursor:' src/vs --glob '*.css'`): `pointer` on clickable items (activity bar, tabs, list rows, status bar items with a command, buttons, links), `text` over editor text and input fields, the resize cursors on sashes, `default` elsewhere. GPUI: `.cursor_pointer()`, `.cursor_text()`, `.cursor_ew_resize()` and the like on the element, never a window-wide cursor.
 
-Ledger today: 423 verified, 12 ported, 0 stub, 4 todo, 126 removed, 28 n/a (of 593 rows).
+Ledger today: 422 verified, 13 ported, 0 stub, 4 todo, 126 removed, 28 n/a (of 593 rows).
 
 ## Done
 
@@ -155,6 +155,8 @@ Rows: `telemetry/source-search` `telemetry/network-capture` `mainthread/MainThre
 Scope: nothing new; close the gaps the earlier milestones left.
 
 Done when: `port/tools/api-tests` gives 318/28/0 (folder) and 4/0/0 (workspace): the reference baseline 356/46/0 less the suites and tests of removed features (chat, lm, the integrated browser, `env.remoteName`) (port/results/api-tests-reference.md); pixel-check of every window has no difference beyond anti-aliasing and the causes listed in `port/results/pixels.md`; every ledger row is `verified`, `removed` or `n/a`.
+
+Left open from milestone 13: the floating comment thread style (`comments.thread.experimental.style: floating`) of workbench/contrib/comments, which keeps that row `ported`.
 
 ## 21. Uplift to VS Code 1.148.0
 
