@@ -26,6 +26,7 @@ pub(super) const LINE_HEIGHT: f32 = 19.;
 const PADDING_X: f32 = 8.;
 const PADDING_Y: f32 = 2.;
 const MAX_WIDTH: f32 = 700.;
+const TEXT_MAX_WIDTH: f32 = 500.;
 const PARAGRAPH_GAP: f32 = 8.;
 /// CompositeMouseTracker's `_eventDebounceDelay` and WorkbenchHoverDelegate's `timeLimit`.
 const MOUSE_OUT_DELAY: Duration = Duration::from_millis(200);
@@ -320,12 +321,18 @@ impl Workbench {
             true => hover.text.split("\n\n").map(|paragraph| if paragraph.trim() == "---" { Vec::new() } else { parse_linked_text(paragraph) }).collect(),
             false => vec![vec![Node::Text(hover.text.clone())]],
         };
-        // shortcut: a paragraph is one line of text; wrap at max-width 700px when content longer than that shows.
+        // shortcut: a markdown paragraph is one line of text; wrap it at 500px when one longer than that shows.
         let mut content_width = paragraphs.iter().map(|nodes| text_width(&linked_text_label(nodes), false, window)).fold(0., f32::max);
         if preview {
             content_width += text_width(" (", false, window) + text_width("preview", true, window) + text_width(" )", false, window) + FONT_SIZE;
         }
         let mut content_height = paragraphs_height(&paragraphs);
+        // `.markdown-hover > .hover-contents`: max-width 500px, word-wrap.
+        let wraps = !markdown && !preview && language_status.is_none();
+        if wraps && content_width > TEXT_MAX_WIDTH {
+            content_width = TEXT_MAX_WIDTH;
+            content_height = wrapped_lines(&hover.text, window) as f32 * LINE_HEIGHT;
+        }
         if let Some((content_size, _)) = &language_status {
             (content_width, content_height) = (content_size.width, content_size.height);
         }
@@ -369,24 +376,27 @@ impl Workbench {
             })
             .when_some(language_status.map(|(_, rows)| rows), |panel, rows| panel.child(rows))
             .when(markdown, |panel| panel.child(self.markdown_paragraphs(paragraphs, cx)))
-            .when(!markdown && !interactive_rows, |panel| panel.child(
+            .when(wraps, |panel| panel.child(div().whitespace_normal().child(hover.text.clone())))
+            .when(preview, |panel| panel.child(
                 div()
                     .relative()
                     .flex()
                     .items_center()
                     .child(hover.text.clone())
-                    .when(preview, |row| {
-                        let link = self.color("textLink.foreground");
-                        let gear = div()
+                    .child(" (")
+                    .child(div().italic().child("preview"))
+                    .child(" ")
+                    .child(
+                        div()
                             .id("configure-preview-mode")
                             .cursor_pointer()
-                            .child(gpui::svg().external_path(gear.to_string_lossy().into_owned()).size(px(FONT_SIZE)).text_color(link))
+                            .child(gpui::svg().external_path(gear.to_string_lossy().into_owned()).size(px(FONT_SIZE)).text_color(self.color("textLink.foreground")))
                             .on_click(cx.listener(|workbench, _, window, cx| {
                                 workbench.dismiss_hover(cx);
                                 workbench.execute_command("workbench.action.openSettings", vec![serde_json::json!("workbench.editor.enablePreview")], window, cx);
-                            }));
-                        row.child(" (").child(div().italic().child("preview")).child(" ").child(gear).child(")")
-                    }),
+                            })),
+                    )
+                    .child(")"),
             ))
             // hideOnHover is off for markdown with a link: the pointer may move onto the hover to click it. A locked
             // hover tracks the pointer too (`_lockMouseTracker`), to hide once Alt is up and the pointer leaves.
@@ -503,6 +513,12 @@ fn paragraphs_height(paragraphs: &[Vec<Node>]) -> f32 {
         after_rule = nodes.is_empty();
     }
     height
+}
+
+fn wrapped_lines(text: &str, window: &Window) -> usize {
+    let run = TextRun { len: text.len(), font: window.text_style().font(), color: gpui::black(), background_color: None, underline: None, strikethrough: None };
+    let lines = window.text_system().shape_text(text.to_string().into(), px(FONT_SIZE), &[run], Some(px(TEXT_MAX_WIDTH)), None);
+    lines.map(|lines| lines.iter().map(|line| line.wrap_boundaries().len() + 1).sum()).unwrap_or(1)
 }
 
 fn linked_text_label(nodes: &[Node]) -> String {
