@@ -107,6 +107,7 @@ mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
 pub mod interactive;
+mod kernel_picker;
 mod notebook_editor;
 mod repl_notebook;
 mod notebook_outline;
@@ -1006,6 +1007,7 @@ impl Workbench {
         self.open_editors_focused_row = None;
         self.reveal_active_file();
         self.record_editor_history();
+        self.capture_notebook_status_editor();
         self.drop_closed_search_editors();
         self.load_search_editor_widget();
         self.find_editor_changed();

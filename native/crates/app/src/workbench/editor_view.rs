@@ -2023,8 +2023,10 @@ impl Workbench {
         }
         let prominent_items = items.len();
         // A webview, extension, walkthrough or multi diff editor shows no editor status entries.
-        // notebookIndicators.ts: a notebook editor whose cell editor has no focus shows its active cell instead.
-        let notebook_cell = self.active_notebook_editor().filter(|_| !self.editor_focus.is_focused(window)).and_then(|editor| Some((editor.focus, self.host.notebooks.model(&editor.notebook)?.cells.len())));
+        // editorStatusBar.ts `ActiveCellStatus`: a notebook editor shows its active cell (an interactive window's
+        // focused input is its own editor).
+        let interactive_input = self.editors.active().is_some_and(|active| self.is_interactive_input(active));
+        let notebook_cell = self.active_notebook_editor().filter(|_| !interactive_input).and_then(|editor| Some((editor.focus, self.host.notebooks.model(&editor.notebook)?.cells.len())));
         if let Some((input, cells)) = self.repl_input_status(window) {
             // Seen in the reference with the REPL input focused: its end of line only, between the indentation and
             // active cell entries of the list once it has a cell.
@@ -2041,13 +2043,36 @@ impl Workbench {
                 }
             }
         } else if let Some((index, count)) = notebook_cell {
-            // editorStatus.ts: the indentation of the active cell's editor (`activeCodeEditor`), which a markdown
-            // preview has not; seen in the reference with the list focused on a code cell.
+            // editorStatus.ts: the entries of the cell editor that was `activeCodeEditor` when the notebook editor
+            // became active, then `NotebookIndentationStatus` of the active cell's editor, which a markdown preview
+            // has not.
+            let status_editor = self.notebook_status_editor().map(|editor| Self::editor_status_entries(editor, &self.languages));
+            let [selection, indentation, encoding, eol, language] = match status_editor {
+                Some(entries) => entries.map(Some),
+                None => Default::default(),
+            };
+            items.extend(selection.into_iter().chain(indentation));
             if let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme == crate::notebook::CELL_SCHEME && self.active_cell_has_editor()) {
                 let [_, indentation, ..] = Self::editor_status_entries(editor, &self.languages);
                 items.push(indentation);
             }
+            items.extend(encoding.into_iter().chain(eol).chain(language));
             items.push((format!("Cell {} of {count}", index + 1), "", "notebook.centerActiveCell"));
+        } else if let Some((input, notebook)) = self.editors.active().filter(|_| interactive_input).zip(self.active_notebook_editor()) {
+            // An interactive window with its input focused: the input's entries (its `activeCodeEditor`), with the
+            // notebook's indentation and active cell entries once it has a cell.
+            let [selection, indentation, encoding, eol, language] = Self::editor_status_entries(input, &self.languages);
+            items.extend([selection, indentation]);
+            let cells = self.host.notebooks.model(&notebook.notebook).map_or(0, |model| model.cells.len());
+            let active_cell = self.host.notebooks.model(&notebook.notebook).and_then(|model| model.cells.get(notebook.focus)).and_then(|cell| self.cell_model(&cell.uri));
+            if let Some(cell) = active_cell {
+                let [_, cell_indentation, ..] = Self::editor_status_entries(cell, &self.languages);
+                items.push(cell_indentation);
+            }
+            items.extend([encoding, eol, language]);
+            if cells > 0 {
+                items.push((format!("Cell {} of {cells}", notebook.focus.min(cells - 1) + 1), "", "notebook.centerActiveCell"));
+            }
         } else if let Some(editor) = self.editors.active().filter(|editor| editor.document().open_error.is_some()) {
             // editorStatus.ts `updateMetadataElement`: a binary editor's size; a placeholder has no text editor entries.
             if let Some(crate::editor::OpenError::Binary(size)) = editor.document().open_error {

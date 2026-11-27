@@ -2,7 +2,8 @@
 //! `workbench.list.mouseWheelScrollSensitivity`, `fastScrollSensitivity` and `smoothScrolling`, the scrollbars
 //! that fade in on hover and scroll (with `workbench.list.scrollByPage` track presses), the top shadow, the
 //! `list.scroll*` commands and the `listScrollAtBoundary` context key. The Explorer, the Search results and the
-//! Keyboard Shortcuts table each keep their GPUI scroll state; this file drives it.
+//! Keyboard Shortcuts table each keep their GPUI scroll state; this file drives it. A notebook editor's cell list
+//! keeps its own scroll top (notebook_editor.rs).
 
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
@@ -34,13 +35,17 @@ pub enum ListId {
     Explorer,
     Search,
     KeybindingsTable,
+    /// The cell list of the notebook editor of this tab model id.
+    Notebook(u32),
 }
 
-/// The GPUI state a list scrolls with: a scrolled div or uniform list, or a `list` of measured rows.
+/// The GPUI state a list scrolls with: a scrolled div or uniform list, a `list` of measured rows, or a notebook
+/// list's scroll top and its maximum as they are now.
 #[derive(Clone)]
 pub enum ListScroller {
     Div(ScrollHandle),
     List(ListState),
+    Notebook { bounds: Bounds<Pixels>, top: f32, max: f32 },
 }
 
 impl ListScroller {
@@ -48,6 +53,7 @@ impl ListScroller {
         match self {
             ListScroller::Div(handle) => handle.bounds(),
             ListScroller::List(state) => state.viewport_bounds(),
+            ListScroller::Notebook { bounds, .. } => *bounds,
         }
     }
 
@@ -56,31 +62,20 @@ impl ListScroller {
         let offset = match self {
             ListScroller::Div(handle) => handle.offset(),
             ListScroller::List(state) => state.scroll_px_offset_for_scrollbar(),
+            ListScroller::Notebook { top, .. } => return point(0., *top),
         };
         point(-f32::from(offset.x), -f32::from(offset.y))
     }
 
-    fn max_position(&self) -> Point<f32> {
+    pub(super) fn max_position(&self) -> Point<f32> {
         let max = match self {
             ListScroller::Div(handle) => handle.max_offset(),
             ListScroller::List(state) => state.max_offset_for_scrollbar(),
+            ListScroller::Notebook { max, .. } => return point(0., max.max(0.)),
         };
         point(f32::from(max.x).max(0.), f32::from(max.y).max(0.))
     }
 
-    /// `Scrollable.validateScrollPosition`: clamped to the content. Returns whether it moved.
-    fn set_position(&self, position: Point<f32>) -> bool {
-        let max = self.max_position();
-        let position = point(position.x.clamp(0., max.x).round(), position.y.clamp(0., max.y).round());
-        if position == self.position() {
-            return false;
-        }
-        match self {
-            ListScroller::Div(handle) => handle.set_offset(point(px(-position.x), px(-position.y))),
-            ListScroller::List(state) => state.set_offset_from_scrollbar(point(px(0.), px(-position.y))),
-        }
-        true
-    }
 }
 
 /// One list's scrollbars and the smooth scroll running on it.
@@ -117,7 +112,25 @@ impl Workbench {
             ListId::Explorer => ListScroller::Div(self.explorer.scroll.clone()),
             ListId::Search => ListScroller::Div(self.search.scroll.0.borrow().base_handle.clone()),
             ListId::KeybindingsTable => ListScroller::List(self.keybindings_editor.list.clone()),
+            ListId::Notebook(tab) => self.notebook_list_scroller(tab),
         }
+    }
+
+    /// `Scrollable.validateScrollPosition`: clamped to the content. Returns whether it moved.
+    fn set_list_position(&mut self, list: ListId, position: Point<f32>) -> bool {
+        let scroller = self.list_scroller(list);
+        let max = scroller.max_position();
+        let position = point(position.x.clamp(0., max.x).round(), position.y.clamp(0., max.y).round());
+        if position == scroller.position() {
+            return false;
+        }
+        match (scroller, list) {
+            (ListScroller::Div(handle), _) => handle.set_offset(point(px(-position.x), px(-position.y))),
+            (ListScroller::List(state), _) => state.set_offset_from_scrollbar(point(px(0.), px(-position.y))),
+            (ListScroller::Notebook { .. }, ListId::Notebook(tab)) => self.set_notebook_scroll_top(tab, position.y),
+            (ListScroller::Notebook { .. }, _) => unreachable!("only notebook lists scroll a notebook"),
+        }
+        true
     }
 
     /// `IListService.lastFocusedList` for the scroll commands and context key.
@@ -128,6 +141,8 @@ impl Workbench {
             Some(ListId::Search)
         } else if self.explorer.focus.is_focused(window) {
             Some(ListId::Explorer)
+        } else if self.notebook_views.list_focus.is_focused(window) {
+            self.active_notebook_tab().map(|(tab, _)| ListId::Notebook(tab))
         } else {
             None
         }
@@ -147,7 +162,7 @@ impl Workbench {
         let scroll = self.list_scroll(list);
         scroll.smooth = None;
         scroll.animation = None;
-        if self.list_scroller(list).set_position(position) {
+        if self.set_list_position(list, position) {
             self.list_scrolled(list, cx);
         }
     }
@@ -177,7 +192,7 @@ impl Workbench {
 
     /// scrollableElement.ts `_onMouseWheel`. A physical wheel (AppKit's line deltas) scrolls smoothly with
     /// `workbench.list.smoothScrolling`; a trackpad always scrolls at once.
-    fn list_wheel(&mut self, list: ListId, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn list_wheel(&mut self, list: ListId, event: &ScrollWheelEvent, window: &mut Window, cx: &mut Context<Self>) {
         let (x, y) = match event.delta {
             ScrollDelta::Pixels(delta) => (f32::from(delta.x) / 40., f32::from(delta.y) / 40.),
             ScrollDelta::Lines(delta) => (delta.x, delta.y),
@@ -229,7 +244,7 @@ impl Workbench {
         if done {
             self.list_scroll(list).smooth = None;
         }
-        if scroller.set_position(position) {
+        if self.set_list_position(list, position) {
             self.list_scrolled(list, cx);
         }
         !done

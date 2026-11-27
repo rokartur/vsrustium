@@ -88,8 +88,9 @@ fn a_notebook_shown_as_repl_executes_its_last_cell(cx: &mut TestAppContext) {
     run(&workbench, "type", vec![json!({ "text": "x" })], cx);
     assert_eq!(sources(&workbench, cx)[1], "1+1", "history cells are read-only");
 
-    let dirty = workbench.read_with(cx, |workbench, _| workbench.tab_shows_dirty(workbench.editors.active_index().unwrap()));
+    let (dirty, badge) = workbench.read_with(cx, |workbench, _| (workbench.tab_shows_dirty(workbench.editors.active_index().unwrap()), workbench.dirty_working_copy_count()));
     assert!(dirty, "the tab shows its notebook's dirty state");
+    assert_eq!(badge, 1, "the explorer's badge counts the dirty notebook");
     receiver.try_iter().count();
     run(&workbench, "workbench.action.closeActiveEditor", Vec::new(), cx);
     let open = workbench.read_with(cx, |workbench, _| workbench.editors.active_tab().is_some());
