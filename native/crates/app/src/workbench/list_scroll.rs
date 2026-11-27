@@ -196,6 +196,11 @@ impl Workbench {
     fn list_scrolled(&mut self, list: ListId, cx: &mut Context<Self>) {
         // Chromium's mouse move after a scroll leaves the row the content took from under the pointer; GPUI sends none.
         self.leave_hover_target(cx);
+        self.reveal_list_scrollbars(list, cx);
+    }
+
+    /// scrollableElement.ts `_reveal`: the scrollbars show, and fade after the timeout unless the pointer is on them.
+    fn reveal_list_scrollbars(&mut self, list: ListId, cx: &mut Context<Self>) {
         let scroll = self.list_scroll(list);
         scroll.bars.set_shown(true, Instant::now());
         scroll.hide_timer = None;
@@ -477,7 +482,7 @@ impl Workbench {
         scroll.bars.mouse_over = over;
         scroll.hover_changed = Some(Instant::now());
         match over {
-            true => self.list_scrolled(list, cx),
+            true => self.reveal_list_scrollbars(list, cx),
             false => self.hide_list_scrollbars(list, cx),
         }
     }

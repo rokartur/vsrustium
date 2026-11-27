@@ -388,6 +388,7 @@ impl Workbench {
         let tab_group = gpui::SharedString::from(format!("tab-{index}"));
         let close = div()
             .id(("close", index))
+            .debug_selector(move || format!("tab-action-{index}"))
             .group(action_group.clone())
             .relative()
             .rounded(px(4.))
