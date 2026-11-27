@@ -376,7 +376,8 @@ impl Workbench {
             Some(location) => {
                 let path = location.resource["path"].as_str().unwrap_or_default();
                 let (folder, name) = path.rsplit_once('/').unwrap_or(("", path));
-                (name.to_string(), self.peek_folder_label(folder))
+                // referencesWidget.ts `getUriLabel(dirname(uri))`: not relative, so the whole folder.
+                (name.to_string(), self.tildify(std::path::Path::new(folder)))
             }
             None => (String::new(), String::new()),
         };

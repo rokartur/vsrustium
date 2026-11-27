@@ -24,8 +24,9 @@ pub const HEADER_SIZE: f32 = 28.;
 /// paneview.ts: a vertical pane's default `minimumBodySize`.
 const MINIMUM_BODY_SIZE: f32 = 120.;
 /// viewPaneContainer.ts `layout`: the modern layout's gap below the last pane, `FLOATING_PANEL_MARGIN` and the
-/// part's 1px border.
+/// part's 1px border; compact density has no margin.
 const BOTTOM_GAP: f32 = 5.;
+const COMPACT_BOTTOM_GAP: f32 = 1.;
 pub const FILE_VIEW: &str = "workbench.explorer.fileView";
 pub const EMPTY_VIEW: &str = "workbench.explorer.emptyView";
 pub(super) const OUTLINE_VIEW: &str = "outline";
@@ -111,7 +112,7 @@ impl PaneView {
     /// `addPanes` at their minimum sizes, the first layout, then `restoreViewSizes`: each pane at its stored size,
     /// else its weight's share (`computeInitialSizes`) of the container's height, which is the pane view's and its
     /// bottom gap.
-    pub fn new(height: f32, panes: &[(&'static str, bool, Option<f32>)], horizontal: bool) -> Self {
+    pub fn new(height: f32, bottom_gap: f32, panes: &[(&'static str, bool, Option<f32>)], horizontal: bool) -> Self {
         let views = panes.iter().map(|&(_, expanded, _)| {
             let (minimum, maximum) = size_limits(expanded, default_body_limits(horizontal));
             View::new(minimum, minimum, maximum)
@@ -120,7 +121,7 @@ impl PaneView {
         split.layout(height);
         let total_weight: f32 = panes.iter().map(|&(id, _, _)| view_weight(id)).sum();
         for (index, &(id, _, size)) in panes.iter().enumerate() {
-            split.resize_view(index, size.unwrap_or((height + BOTTOM_GAP) * view_weight(id) / total_weight));
+            split.resize_view(index, size.unwrap_or((height + bottom_gap) * view_weight(id) / total_weight));
         }
         let mut pane_view = PaneView {
             ids: panes.iter().map(|&(id, _, _)| id).collect(),
@@ -326,9 +327,13 @@ impl Workbench {
 
     /// The containers' pane views at the side bar's height: the card's borders, the composite title, the compact
     /// activity bar, and the pane view's 5px less.
+    fn pane_view_bottom_gap(&self) -> f32 {
+        if self.compact_density() { COMPACT_BOTTOM_GAP } else { BOTTOM_GAP }
+    }
+
     pub(super) fn layout_view_panes(&mut self, side_bar_height: f32, cx: &mut Context<Self>) {
         let compact = if self.compact_activity_bar_location().is_some() { 32. } else { 0. };
-        let height = side_bar_height - 2. - 32. - compact - BOTTOM_GAP;
+        let height = side_bar_height - 2. - 32. - compact - self.pane_view_bottom_gap();
         self.layout_container_panes(height, cx);
     }
 
@@ -390,6 +395,7 @@ impl Workbench {
         let global_state = self.views_visibility_state(container.key());
         let order = |id: &str| global_state.iter().find(|view| view["id"] == id).and_then(|view| view["order"].as_f64());
         descriptors.sort_by(|a, b| order(a.0).unwrap_or(f64::MAX).total_cmp(&order(b.0).unwrap_or(f64::MAX)));
+        let bottom_gap = self.pane_view_bottom_gap();
         let panes = self.panes_mut(container);
         panes.stored_sizes.clear();
         let mut pane_states = Vec::new();
@@ -401,7 +407,7 @@ impl Workbench {
             }
             pane_states.push((id, !state["collapsed"].as_bool().unwrap_or(collapsed_by_default), size));
         }
-        panes.view = Some(PaneView::new(height, &pane_states, horizontal));
+        panes.view = Some(PaneView::new(height, bottom_gap, &pane_states, horizontal));
     }
 
     /// viewContainerModel.ts `updateState`: collapsed and size per view in the workspace, order in the profile.
@@ -837,7 +843,7 @@ mod tests {
 
     #[test]
     fn body_limits_clamp_the_pane_and_the_others_take_the_change() {
-        let mut view = PaneView::new(600., &[(OPEN_EDITORS_VIEW, true, None), (FILE_VIEW, true, None)], false);
+        let mut view = PaneView::new(600., BOTTOM_GAP, &[(OPEN_EDITORS_VIEW, true, None), (FILE_VIEW, true, None)], false);
         view.set_body_limits(0, 44., 66.);
         assert_eq!(view.sizes(), [HEADER_SIZE + 66., 600. - HEADER_SIZE - 66.]);
         view.set_body_limits(0, 0., 0.);
@@ -849,13 +855,13 @@ mod tests {
 
     #[test]
     fn collapsed_panes_are_their_headers_and_the_folder_takes_the_rest() {
-        let view = PaneView::new(662., &EXPLORER, false);
+        let view = PaneView::new(662., BOTTOM_GAP, &EXPLORER, false);
         assert_eq!(view.sizes(), vec![606., 28., 28.]);
     }
 
     #[test]
     fn expanding_outline_and_timeline_gives_each_its_header_and_minimum_body_as_the_reference_does() {
-        let mut view = PaneView::new(662., &EXPLORER, false);
+        let mut view = PaneView::new(662., BOTTOM_GAP, &EXPLORER, false);
         assert!(view.set_expanded(1, true));
         assert!(view.set_expanded(2, true));
         assert_eq!(view.sizes(), vec![366., 148., 148.]);
@@ -864,7 +870,7 @@ mod tests {
 
     #[test]
     fn a_collapsed_pane_comes_back_at_its_expanded_size() {
-        let mut view = PaneView::new(662., &EXPLORER, false);
+        let mut view = PaneView::new(662., BOTTOM_GAP, &EXPLORER, false);
         view.set_expanded(1, true);
         view.start_sash_drag(0, 486., false);
         view.drag_sash(406., false);
@@ -879,7 +885,7 @@ mod tests {
 
     #[test]
     fn stored_sizes_restore_and_moved_panes_keep_their_sizes() {
-        let mut view = PaneView::new(662., &[(FILE_VIEW, true, Some(300.)), (OUTLINE_VIEW, true, Some(334.)), (TIMELINE_VIEW, false, Some(28.))], false);
+        let mut view = PaneView::new(662., BOTTOM_GAP, &[(FILE_VIEW, true, Some(300.)), (OUTLINE_VIEW, true, Some(334.)), (TIMELINE_VIEW, false, Some(28.))], false);
         assert_eq!(view.sizes(), vec![300., 334., 28.]);
         view.move_pane(2, 0);
         assert_eq!(view.ids(), [TIMELINE_VIEW, FILE_VIEW, OUTLINE_VIEW]);
@@ -890,7 +896,7 @@ mod tests {
     // The reference's Graph header sits 3px above the middle: the share counts the container's 5px bottom gap.
     #[test]
     fn equal_shares_are_of_the_container_with_its_bottom_gap() {
-        let view = PaneView::new(662., &[(SCM_CHANGES_VIEW, true, None), (SCM_HISTORY_VIEW, true, None)], false);
+        let view = PaneView::new(662., BOTTOM_GAP, &[(SCM_CHANGES_VIEW, true, None), (SCM_HISTORY_VIEW, true, None)], false);
         assert_eq!(view.sizes(), vec![328., 334.]);
     }
 

@@ -99,6 +99,10 @@ pub(super) struct EditorGroups {
     drop_target: Option<(u32, Option<Direction>)>,
     /// The tab being dragged, from the drag's start to its release (auxiliary_windows.rs `cross_window_drag`).
     pub(super) dragged_tab: Option<DraggedTab>,
+    /// Each group's tab bars' scrolling, by group and `upper` bar; read while drawing.
+    pub(super) tab_scrolls: std::cell::RefCell<HashMap<(u32, bool), super::editor_view::tab_scroll::TabScroll>>,
+    /// multiEditorTabsControl.ts `lastMouseWheelEventTime`.
+    pub(super) last_tab_wheel: Cell<Option<std::time::Instant>>,
 }
 
 impl EditorGroups {
