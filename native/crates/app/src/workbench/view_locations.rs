@@ -1,11 +1,8 @@
 //! Where each movable view is (viewDescriptorService.ts): its default container, or the container `views.customizations`
 //! moved it to, with the containers generated for views moved to a new entry (`workbench.views.service.<location>.<uuid>`),
 //! and layoutActions.ts Move View, Move Focused View and Reset Focused View Location.
-// shortcut: the movable views are the ones whose body any container can draw (Outline, Timeline and the panel's
-// views); the folder view, Source Control, Search, Run and Debug and contributed tree views stay in their container
-// until their bodies draw outside it. Built-in panel containers take no added views (panes side by side in the panel).
 
-use gpui::{ClickEvent, Context, Div, InteractiveElement, IntoElement, ParentElement, PromptLevel, Rgba, Stateful, StatefulInteractiveElement, Styled, Window};
+use gpui::{ClickEvent, Context, Div, InteractiveElement, ParentElement, PromptLevel, Rgba, Stateful, StatefulInteractiveElement, Styled, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
@@ -13,7 +10,8 @@ use super::hover::HoverOptions;
 use super::layout::Part;
 use super::search_view::SideBarView;
 use super::tree_view::static_id;
-use super::view_panes::{OUTLINE_VIEW, PaneContainer, TIMELINE_VIEW, ViewPane};
+use super::debug_view::{BREAKPOINTS_VIEW, CALL_STACK_VIEW, DEBUG_CONTAINER, DEBUG_WELCOME_VIEW, LOADED_SCRIPTS_VIEW, VARIABLES_VIEW, WATCH_VIEW};
+use super::view_panes::{EMPTY_VIEW, FILE_VIEW, OPEN_EDITORS_VIEW, OUTLINE_VIEW, PaneContainer, SCM_CHANGES_VIEW, SCM_HISTORY_VIEW, TIMELINE_VIEW, ViewPane};
 use crate::commands::Outcome;
 use crate::quick_input::{Entry, Item, Kind, QuickInput};
 
@@ -24,6 +22,12 @@ mod tests;
 pub(super) const VIEWS_CUSTOMIZATIONS_KEY: &str = "views.customizations";
 pub(super) const EXPLORER_CONTAINER: &str = "workbench.view.explorer";
 pub(super) const SCM_CONTAINER: &str = "workbench.view.scm";
+/// search.ts `VIEWLET_ID` and `VIEW_ID`.
+pub(super) const SEARCH_CONTAINER: &str = "workbench.view.search";
+pub(super) const SEARCH_VIEW: &str = "workbench.view.search";
+pub(super) const TESTING_CONTAINER: &str = "workbench.view.extension.test";
+/// The built-in side bar containers views move between, as Move View lists them.
+const SIDE_BAR_CONTAINERS: [&str; 4] = [EXPLORER_CONTAINER, SEARCH_CONTAINER, SCM_CONTAINER, DEBUG_CONTAINER];
 /// viewDescriptorService.ts `COMMON_CONTAINER_ID_PREFIX`.
 const GENERATED_PREFIX: &str = "workbench.views.service";
 
@@ -90,17 +94,58 @@ impl Workbench {
         self.profile_storage.lock().unwrap().set(VIEWS_CUSTOMIZATIONS_KEY, customizations.to_string());
     }
 
-    /// The views the port can move, in their containers' order: the Explorer's, then the panel's.
+    /// The views with `canMoveView`, in their containers' order: the side bar's, the panel's, then the extensions'
+    /// tree views.
     pub(super) fn movable_views(&self) -> Vec<MovableView> {
+        let view = |id, name, default_container, icon| MovableView { id, name, default_container, icon };
         let mut views = vec![
-            MovableView { id: OUTLINE_VIEW, name: "Outline", default_container: EXPLORER_CONTAINER, icon: "symbol-class" },
-            MovableView { id: TIMELINE_VIEW, name: "Timeline", default_container: EXPLORER_CONTAINER, icon: "history" },
+            view(OPEN_EDITORS_VIEW, "Open Editors", EXPLORER_CONTAINER, "book"),
+            view(EMPTY_VIEW, "No Folder Opened", EXPLORER_CONTAINER, "files"),
+            view(FILE_VIEW, "Folders", EXPLORER_CONTAINER, "files"),
+            view(OUTLINE_VIEW, "Outline", EXPLORER_CONTAINER, "symbol-class"),
+            view(TIMELINE_VIEW, "Timeline", EXPLORER_CONTAINER, "history"),
+            view(SEARCH_VIEW, "Search", SEARCH_CONTAINER, "search-large"),
+            view(SCM_CHANGES_VIEW, "Changes", SCM_CONTAINER, "source-control"),
+            view(SCM_HISTORY_VIEW, "Graph", SCM_CONTAINER, "source-control"),
+            view(VARIABLES_VIEW, "Variables", DEBUG_CONTAINER, "debug-alt"),
+            view(WATCH_VIEW, "Watch", DEBUG_CONTAINER, "debug-alt"),
+            view(CALL_STACK_VIEW, "Call Stack", DEBUG_CONTAINER, "debug-alt"),
+            view(LOADED_SCRIPTS_VIEW, "Loaded Scripts", DEBUG_CONTAINER, "debug-alt"),
+            view(BREAKPOINTS_VIEW, "Breakpoints", DEBUG_CONTAINER, "debug-alt"),
         ];
-        views.extend(self.panel.views.iter().map(|view| MovableView { id: view.view_id, name: view.title, default_container: view.id, icon: panel_view_icon(view.id) }));
+        views.extend(self.panel.views.iter().map(|panel_view| view(panel_view.view_id, panel_view.title, panel_view.id, panel_view_icon(panel_view.id))));
+        for tree_view in &self.tree_views.views {
+            let Some((container, icon)) = self.tree_view_default_container(&tree_view.container) else { continue };
+            views.push(view(tree_view.id, static_id(&tree_view.name), container, icon));
+        }
         views
     }
 
-    fn movable_view(&self, id: &str) -> Option<MovableView> {
+    /// The container a `contributes.views` key names, with its codicon, which a contributed view takes as its
+    /// `containerIcon`.
+    // A view's own `icon` and a container's file icon draw as the window codicon (port/notes.md, milestone 11).
+    fn tree_view_default_container(&self, key: &str) -> Option<(&'static str, &'static str)> {
+        match key {
+            "explorer" => Some((EXPLORER_CONTAINER, "files")),
+            "scm" => Some((SCM_CONTAINER, "source-control")),
+            "debug" => Some((DEBUG_CONTAINER, "debug-alt")),
+            "test" => Some((TESTING_CONTAINER, "beaker")),
+            key => self.tree_views.containers.iter().find(|container| container.key == key).map(|container| {
+                let icon = match &container.icon {
+                    super::view_containers::ContainerIcon::Codicon(name) => static_id(name),
+                    super::view_containers::ContainerIcon::File(_) => "window",
+                };
+                (container.id, icon)
+            }),
+        }
+    }
+
+    /// Whether the view is in `container`: a view that cannot move always is in its own.
+    pub(super) fn stays_in(&self, view: &str, container: &str) -> bool {
+        self.movable_view(view).is_none_or(|view| self.view_container(&view) == container)
+    }
+
+    pub(super) fn movable_view(&self, id: &str) -> Option<MovableView> {
         self.movable_views().into_iter().find(|view| view.id == id)
     }
 
@@ -117,9 +162,9 @@ impl Workbench {
         self.container_ids().into_iter().find(|id| *id == stored).unwrap_or(view.default_container)
     }
 
-    /// The containers views can be in: the Explorer, Source Control, the panel's and the generated ones.
+    /// The containers views can be in: the side bar's, the panel's and the generated ones.
     fn container_ids(&self) -> Vec<&'static str> {
-        let mut ids = vec![EXPLORER_CONTAINER, SCM_CONTAINER];
+        let mut ids = self.side_bar_container_ids();
         ids.extend(self.panel.views.iter().map(|view| view.id));
         ids.extend(self.generated_containers());
         ids
@@ -130,9 +175,18 @@ impl Workbench {
         customizations["viewContainerLocations"].as_object().into_iter().flatten().map(|(id, _)| id.as_str()).filter(|id| is_generated_container(id)).map(static_id).collect()
     }
 
+    /// The built-in side bar containers, Testing and the extensions' `viewsContainers.activitybar`, in the activity
+    /// bar's order.
+    fn side_bar_container_ids(&self) -> Vec<&'static str> {
+        let mut ids = SIDE_BAR_CONTAINERS.to_vec();
+        ids.push(TESTING_CONTAINER);
+        ids.extend(self.tree_views.containers.iter().map(|container| container.id));
+        ids
+    }
+
     /// `getViewContainerLocation`.
     pub(super) fn container_location(&self, container: &str) -> Part {
-        if container == EXPLORER_CONTAINER || container == SCM_CONTAINER {
+        if self.side_bar_container_ids().contains(&container) {
             return Part::SideBar;
         }
         if is_generated_container(container) {
@@ -142,8 +196,15 @@ impl Workbench {
     }
 
     /// The movable views in the container, in the movable views' order.
+    // Upstream sorts a container's views by descriptor `order` (none last); the movable views' order matches it for
+    // the Explorer's views moved beside a panel view (move-view.json), not in general (port/notes.md).
     pub(super) fn views_in(&self, container: &str) -> Vec<MovableView> {
         self.movable_views().into_iter().filter(|view| self.view_container(view) == container).collect()
+    }
+
+    /// `hideIfEmpty`: the Explorer, Search and Source Control leave the activity bar while none of their views shows.
+    pub(super) fn container_hidden_if_empty(&self, container: &str) -> bool {
+        [EXPLORER_CONTAINER, SEARCH_CONTAINER, SCM_CONTAINER].contains(&container) && !self.views_in(container).iter().any(|view| self.movable_view_shown(view))
     }
 
     /// The generated containers in the part that hold a view.
@@ -202,13 +263,26 @@ impl Workbench {
         self.open_view_container_of(container, view, cx);
     }
 
+    /// A view dropped on a container's activity bar item or panel tab moves into it and opens there.
+    pub(super) fn drop_view_on_container(&mut self, view: &'static str, container: &'static str, cx: &mut Context<Self>) {
+        let Some(movable) = self.movable_view(view) else { return };
+        if self.view_container(&movable) == container {
+            return;
+        }
+        self.move_view_to_container(view, container, cx);
+        self.open_view_container_of(container, view, cx);
+    }
+
     /// The container the side bar shows.
     pub(super) fn side_bar_container(&self) -> Option<&'static str> {
         match self.side_bar_view {
             SideBarView::Explorer => Some(EXPLORER_CONTAINER),
+            SideBarView::Search => Some(SEARCH_CONTAINER),
             SideBarView::Scm => Some(SCM_CONTAINER),
-            SideBarView::Generated(id) => Some(id),
-            _ => None,
+            SideBarView::Debug => Some(DEBUG_CONTAINER),
+            SideBarView::Testing => Some(TESTING_CONTAINER),
+            SideBarView::Contributed(id) | SideBarView::Generated(id) => Some(id),
+            SideBarView::Extensions => None,
         }
     }
 
@@ -241,11 +315,7 @@ impl Workbench {
     fn open_view_container_of(&mut self, container: &'static str, view: &str, cx: &mut Context<Self>) {
         match self.container_location(container) {
             Part::SideBar => {
-                self.side_bar_view = match container {
-                    EXPLORER_CONTAINER => SideBarView::Explorer,
-                    SCM_CONTAINER => SideBarView::Scm,
-                    other => SideBarView::Generated(other),
-                };
+                self.side_bar_view = side_bar_view_of(container);
                 self.set_part_hidden(Part::SideBar, false, cx);
                 self.expand_pane(pane_container(container), view, cx);
             }
@@ -283,16 +353,24 @@ impl Workbench {
     /// The pane of a view drawn outside its own container's code.
     pub(super) fn movable_view_pane(&mut self, id: &'static str, window: &mut Window, cx: &mut Context<Self>) -> ViewPane {
         match id {
-            OUTLINE_VIEW => {
-                let show_actions = self.outline_pane.focus.is_focused(window);
-                ViewPane { id, title: "Outline".into(), description: None, actions: Some(self.outline_title_actions(window, cx).into_any_element()), show_actions, body: self.outline_pane_body(window, cx) }
-            }
+            OPEN_EDITORS_VIEW => self.open_editors_pane(window, cx),
+            FILE_VIEW | EMPTY_VIEW => self.folder_view_pane(window, cx),
+            OUTLINE_VIEW => self.outline_view_pane(window, cx),
             TIMELINE_VIEW => self.timeline_pane(window, cx),
-            _ => {
-                let view = self.panel.views.iter().find(|view| view.view_id == id).expect("a movable view");
-                let (title, render, actions) = (view.title, view.render, view.actions);
-                ViewPane { id, title: title.into(), description: None, actions: Some(actions(self, window, cx)), show_actions: false, body: render(self, window, cx) }
+            SEARCH_VIEW => self.search_view_pane(window, cx),
+            SCM_CHANGES_VIEW => self.scm_changes_pane(window, cx),
+            SCM_HISTORY_VIEW => {
+                let provider = self.active_scm_provider().expect("Graph shows with a history provider");
+                self.scm_graph_pane(provider, window, cx)
             }
+            VARIABLES_VIEW | WATCH_VIEW | CALL_STACK_VIEW | LOADED_SCRIPTS_VIEW | BREAKPOINTS_VIEW | DEBUG_WELCOME_VIEW => self.debug_view_pane(id, window, cx),
+            _ => match self.panel.views.iter().find(|view| view.view_id == id) {
+                Some(view) => {
+                    let (title, render, actions) = (view.title, view.render, view.actions);
+                    ViewPane { id, title: title.into(), description: None, actions: Some(actions(self, window, cx)), show_actions: false, body: render(self, window, cx) }
+                }
+                None => self.tree_view_pane(id, window, cx),
+            },
         }
     }
 
@@ -314,8 +392,20 @@ impl Workbench {
         if self.outline_pane.focus.is_focused(window) {
             return Some(OUTLINE_VIEW);
         }
+        if self.open_editors_focus.is_focused(window) {
+            return Some(OPEN_EDITORS_VIEW);
+        }
         if self.timeline_focus_within(window) {
             return Some(TIMELINE_VIEW);
+        }
+        if self.explorer.focus.is_focused(window) {
+            return Some(FILE_VIEW);
+        }
+        if self.search.focus.is_focused(window) || super::search_view::SEARCH_FIELDS.iter().any(|&field| self.search.input(field).focus.is_focused(window)) {
+            return Some(SEARCH_VIEW);
+        }
+        if self.scm.input_focus.is_focused(window) || self.scm.list_focus.is_focused(window) {
+            return Some(SCM_CHANGES_VIEW);
         }
         let focused_container = if self.problems_focus.is_focused(window) || self.problems.filter_focus.is_focused(window) {
             Some(super::problems_view::MARKERS_CONTAINER_ID)
@@ -360,7 +450,7 @@ impl Workbench {
         let mut containers = Vec::new();
         for part in [Part::SideBar, Part::Panel, Part::AuxiliaryBar] {
             let mut ids: Vec<&'static str> = match part {
-                Part::SideBar => vec![EXPLORER_CONTAINER, SCM_CONTAINER],
+                Part::SideBar => self.side_bar_container_ids(),
                 _ => self.panel.views.iter().filter(|view| self.view_container_part(view.id) == part).map(|view| view.id).collect(),
             };
             ids.extend(self.generated_containers_in(part));
@@ -373,20 +463,25 @@ impl Workbench {
 
     /// `ViewContainerModel.title`.
     fn container_title(&self, id: &str) -> String {
+        if let Some(container) = self.tree_views.containers.iter().find(|container| container.id == id) {
+            return container.title.clone();
+        }
         match id {
             EXPLORER_CONTAINER => "Explorer".into(),
+            SEARCH_CONTAINER => "Search".into(),
             SCM_CONTAINER => "Source Control".into(),
+            DEBUG_CONTAINER => "Run and Debug".into(),
+            TESTING_CONTAINER => "Testing".into(),
             _ if is_generated_container(id) => self.generated_container_view(id).map_or_else(String::new, |view| view.name.into()),
             _ => self.panel.views.iter().find(|view| view.id == id).map_or_else(String::new, |view| view.title.into()),
         }
     }
 
-    /// MoveViewAction `getView`: the movable views grouped by container, the focused one picked.
+    /// MoveViewAction `getView`: the movable views grouped by container, the first one active (upstream selects the
+    /// focused one, which a single-select pick does not show).
     fn pick_view_to_move(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let focused = self.focused_movable_view(window);
         let mut entries = Vec::new();
         let mut views = Vec::new();
-        let mut active = Vec::new();
         for (part, container, title) in self.containers_by_location() {
             let shown: Vec<MovableView> = self.views_in(container).into_iter().filter(|view| self.movable_view_shown(view)).collect();
             if shown.is_empty() {
@@ -399,9 +494,6 @@ impl Workbench {
             };
             entries.push(Entry::Separator(Some(format!("{location} / {title}"))));
             for view in shown {
-                if Some(view.id) == focused {
-                    active.push(views.len() as i64);
-                }
                 entries.push(Entry::Item(Item { handle: views.len() as i64, label: view.name.into(), ..Item::default() }));
                 views.push(view.id);
             }
@@ -409,7 +501,6 @@ impl Workbench {
         let mut input = QuickInput::new(0, Kind::QuickPick);
         input.placeholder = Some("Select a View to Move".into());
         input.set_items(entries);
-        input.set_active_items(&active);
         let picked = self.choose(input, window, cx);
         cx.spawn_in(window, async move |workbench, cx| {
             let Some(index) = picked.await.ok().and_then(Result::ok).and_then(|handle| handle.as_u64()) else { return };
@@ -421,7 +512,20 @@ impl Workbench {
 
     /// `visibleViewDescriptors`: a panel view whose `when` does not hold (Test Results without results) is left out.
     pub(super) fn movable_view_shown(&self, view: &MovableView) -> bool {
-        self.panel.views.iter().find(|panel_view| panel_view.view_id == view.id).is_none_or(|panel_view| (panel_view.visible)(self))
+        let has_folder = self.folder.as_ref().is_some_and(|tree| !tree.workspace.folders.is_empty());
+        match view.id {
+            FILE_VIEW => has_folder,
+            EMPTY_VIEW => !has_folder,
+            // shortcut: their hidden state stays under the Explorer's key after a move, upstream keys it by the container.
+            OPEN_EDITORS_VIEW | OUTLINE_VIEW | TIMELINE_VIEW => !self.view_hidden("explorer", view.id),
+            SCM_HISTORY_VIEW => self.active_scm_provider().is_some_and(|provider| provider.has_history_provider),
+            VARIABLES_VIEW | WATCH_VIEW | CALL_STACK_VIEW | LOADED_SCRIPTS_VIEW | BREAKPOINTS_VIEW => self.debug_views().iter().any(|(id, _)| *id == view.id),
+            id => match (self.panel.views.iter().find(|panel_view| panel_view.view_id == id), self.tree_views.views.iter().find(|tree_view| tree_view.id == id)) {
+                (Some(panel_view), _) => (panel_view.visible)(self),
+                (None, Some(tree_view)) => self.shown_views_of(&tree_view.container).contains(&id),
+                (None, None) => true,
+            },
+        }
     }
 
     /// MoveFocusedViewAction: new entries in the locations the view is not alone in, then the other containers.
@@ -452,23 +556,21 @@ impl Workbench {
         cx.spawn_in(window, async move |workbench, cx| {
             let Some(index) = picked.await.ok().and_then(Result::ok).and_then(|handle| handle.as_u64()) else { return };
             let destination = destinations[index as usize];
-            let _ = workbench.update_in(cx, |workbench, _, cx| {
-                let container = match destination {
-                    Destination::NewEntry(part) => workbench.move_view_to_location(view.id, part, cx),
-                    Destination::Container(container) => {
-                        workbench.move_view_to_container(view.id, container, cx);
-                        container
-                    }
-                };
-                workbench.open_view_container_of(container, view.id, cx);
+            let _ = workbench.update_in(cx, |workbench, window, cx| {
+                match destination {
+                    Destination::NewEntry(part) => _ = workbench.move_view_to_location(view.id, part, cx),
+                    Destination::Container(container) => workbench.move_view_to_container(view.id, container, cx),
+                }
+                // layoutActions.ts: `viewsService.openView(focusedViewId, true)`.
+                drop(workbench.execute_command(&format!("{}.focus", view.id), Vec::new(), window, cx));
             });
         })
         .detach();
     }
 
     /// The picks of MoveFocusedViewAction with the separator before each: "New Panel Entry" unless the view is alone
-    /// in the panel (likewise the side bars), then each location's containers but the view's own. Containers that
-    /// reject added views (Extensions) and the built-in panel ones (see the shortcut above) are not offered.
+    /// in the panel (likewise the side bars), then each location's containers but the view's own. Extensions rejects
+    /// added views; Testing and the extensions' containers draw only their own (port/notes.md).
     fn move_destinations(&self, view: &MovableView, current: &'static str) -> Vec<(Option<&'static str>, String, Destination)> {
         let solo = self.views_in(current).len() == 1;
         let current_location = self.container_location(current);
@@ -482,7 +584,8 @@ impl Workbench {
         for (part, separator) in [(Part::SideBar, "Side Bar"), (Part::Panel, "Panel"), (Part::AuxiliaryBar, "Secondary Side Bar")] {
             let mut separator = Some(separator);
             for (_, id, title) in containers.iter().filter(|(location, id, _)| *location == part && *id != current) {
-                let accepts = *id == EXPLORER_CONTAINER || *id == SCM_CONTAINER || is_generated_container(id) || *id == view.default_container;
+                let draws_only_own_views = *id == TESTING_CONTAINER || self.tree_views.containers.iter().any(|container| container.id == *id);
+                let accepts = !draws_only_own_views || *id == view.default_container;
                 if accepts {
                     picks.push((separator.take(), title.clone(), Destination::Container(id)));
                 }
@@ -511,6 +614,20 @@ pub(super) fn pane_container(container: &'static str) -> PaneContainer {
     match container {
         EXPLORER_CONTAINER => PaneContainer::Explorer,
         SCM_CONTAINER => PaneContainer::Scm,
+        SEARCH_CONTAINER => PaneContainer::Search,
+        DEBUG_CONTAINER => PaneContainer::Debug,
         other => PaneContainer::Generated(other),
+    }
+}
+
+fn side_bar_view_of(container: &'static str) -> SideBarView {
+    match container {
+        EXPLORER_CONTAINER => SideBarView::Explorer,
+        SEARCH_CONTAINER => SideBarView::Search,
+        SCM_CONTAINER => SideBarView::Scm,
+        DEBUG_CONTAINER => SideBarView::Debug,
+        TESTING_CONTAINER => SideBarView::Testing,
+        other if is_generated_container(other) => SideBarView::Generated(other),
+        other => SideBarView::Contributed(other),
     }
 }

@@ -274,7 +274,7 @@ impl Workbench {
             .id(gpui::SharedString::from(format!("test:{id}")))
             .group("testing-row")
             .h(px(ROW_HEIGHT))
-            .mx(px(4.))
+            .mx(px(self.pane_row_inset()))
             .pl(px(8. * depth as f32 + 4.))
             .flex()
             .items_center()

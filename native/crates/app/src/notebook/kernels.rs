@@ -18,6 +18,8 @@ pub struct Kernel {
     pub handle: u64,
     /// `${extensionId}/${controllerId}`.
     pub id: String,
+    /// The extension identifier's value.
+    pub extension: String,
     pub notebook_type: String,
     pub label: String,
     pub description: Option<String>,
@@ -77,6 +79,7 @@ impl Kernels {
         let kernel = Kernel {
             handle,
             id: text("id").unwrap_or_default(),
+            extension: data["extensionId"]["value"].as_str().unwrap_or_default().to_owned(),
             notebook_type: text("notebookType").unwrap_or_default(),
             label: text("label").unwrap_or_default(),
             description: text("description"),

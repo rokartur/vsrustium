@@ -427,7 +427,7 @@ impl Workbench {
             .group(row_id.clone())
             .relative()
             .h(px(22.))
-            .mx(px(4.))
+            .mx(px(self.pane_row_inset()))
             .pl(px(11. + self.tree_indent() * depth as f32))
             .pr(px(12.))
             .flex()

@@ -99,7 +99,17 @@ impl Workbench {
             ("workbench.view.testing", "workbench.view.testing"),
         ];
         for (view, container) in containers {
-            self.commands.register(format!("{view}.focus"), move |workbench, _, window, cx| workbench.execute_command(container, Vec::new(), window, cx));
+            self.commands.register(format!("{view}.focus"), move |workbench, _, window, cx| {
+                if !workbench.open_moved_view(view, cx) {
+                    return workbench.execute_command(container, Vec::new(), window, cx);
+                }
+                match view {
+                    "workbench.view.search" => workbench.focus_search_input(super::search_view::SearchField::Query, true, window, cx),
+                    "workbench.scm" => window.focus(&workbench.scm.input_focus.clone(), cx),
+                    _ => {}
+                }
+                Outcome::done()
+            });
         }
         // markers.contribution.ts: "Focus Problems (Errors, Warnings, Infos)" opens the Problems view focused.
         self.commands.register("workbench.action.problems.focus", |workbench, _, window, cx| workbench.execute_command("workbench.panel.markers.view.focus", Vec::new(), window, cx));
@@ -129,6 +139,13 @@ impl Workbench {
     pub(super) fn open_tree_view(&mut self, id: &str, focus: bool, window: &mut Window, cx: &mut Context<Self>) {
         let Some(view) = self.tree_views.views.iter().find(|view| view.id == id) else { return };
         let (id, container) = (view.id, view.container.clone());
+        if self.open_moved_view(id, cx) {
+            if focus {
+                self.focus_tree_view(id, window, cx);
+            }
+            self.sync_tree_views(cx);
+            return;
+        }
         match container.as_str() {
             "explorer" => {
                 drop(self.execute_command("workbench.view.explorer", Vec::new(), window, cx));
@@ -138,7 +155,10 @@ impl Workbench {
                 drop(self.execute_command("workbench.view.scm", Vec::new(), window, cx));
                 self.expand_pane(PaneContainer::Scm, id, cx);
             }
-            "debug" => drop(self.execute_command("workbench.view.debug", Vec::new(), window, cx)),
+            "debug" => {
+                drop(self.execute_command("workbench.view.debug", Vec::new(), window, cx));
+                self.expand_pane(PaneContainer::Debug, id, cx);
+            }
             "test" => drop(self.execute_command("workbench.view.testing", Vec::new(), window, cx)),
             key => {
                 let Some(container) = self.tree_views.containers.iter().find(|container| container.key == key) else { return };
@@ -161,19 +181,23 @@ impl Workbench {
 
     /// The shown views of a contributed container, by its `workbench.view.extension.<id>` id.
     pub(super) fn container_views(&self, id: &str) -> Vec<&'static str> {
-        self.tree_views.containers.iter().find(|container| container.id == id).map(|container| self.shown_views_of(&container.key)).unwrap_or_default()
+        let Some(container) = self.tree_views.containers.iter().find(|container| container.id == id) else { return Vec::new() };
+        self.shown_views_of(&container.key).into_iter().filter(|view| self.stays_in(view, id)).collect()
     }
 
     /// Whether a contributed view's tree shows: its container in the visible side bar and the view expanded.
     pub(super) fn tree_view_body_visible(&self, id: &'static str) -> bool {
         let Some(view) = self.tree_views.views.iter().find(|view| view.id == id) else { return false };
+        if self.movable_view(id).is_some_and(|movable| self.view_container(&movable) != movable.default_container) {
+            return self.is_view_visible(id);
+        }
         if !self.is_part_visible(Part::SideBar) || !self.shown_views_of(&view.container).contains(&id) {
             return false;
         }
         let shown_container = match view.container.as_str() {
             "explorer" => return self.side_bar_view == SideBarView::Explorer && self.view_pane_expanded(PaneContainer::Explorer, id),
             "scm" => return self.side_bar_view == SideBarView::Scm && self.view_pane_expanded(PaneContainer::Scm, id),
-            "debug" => SideBarView::Debug,
+            "debug" => return self.side_bar_view == SideBarView::Debug && self.view_pane_expanded(PaneContainer::Debug, id),
             "test" => SideBarView::Testing,
             key => match self.tree_views.containers.iter().find(|container| container.key == key) {
                 Some(container) => SideBarView::Contributed(container.id),
@@ -231,9 +255,9 @@ impl Workbench {
         frame.child(self.side_bar_title_text(container_title)).child(div().flex_1().min_h_0().flex().flex_col().children(self.contributed_view_sections(&views, window, cx)))
     }
 
-    /// The contributed views of a built-in container (`scm`, `debug`, `test`) as sections below its own views.
-    pub(super) fn contributed_sections_of(&self, container: &str, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let views = self.shown_views_of(container);
+    /// The contributed views of Testing as sections below its own view.
+    pub(super) fn testing_contributed_sections(&self, window: &Window, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let views: Vec<_> = self.shown_views_of("test").into_iter().filter(|view| self.stays_in(view, super::view_locations::TESTING_CONTAINER)).collect();
         self.contributed_view_sections(&views, window, cx)
     }
 

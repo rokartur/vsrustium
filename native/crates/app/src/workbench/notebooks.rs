@@ -83,8 +83,7 @@ impl Workbench {
                     _ => CellReveal::InView,
                 };
                 let (start, end) = (arg(1)["start"].as_u64().unwrap_or_default() as usize, arg(1)["end"].as_u64().unwrap_or_default() as usize);
-                self.reveal_notebook_cells(tab, start, end, reveal);
-                cx.notify();
+                self.reveal_notebook_cells(tab, start, end, reveal, cx);
                 Outcome::done()
             }
             ("MainThreadNotebookEditors", "$trySetSelections") => {
@@ -161,18 +160,25 @@ impl Workbench {
             .detach();
             Outcome::Pending(receiver)
         });
-        self.commands.register("_notebook.selectKernel", |workbench, args, _, cx| Outcome::Ready(Ok(json!(workbench.select_kernel(args.first().unwrap_or(&Value::Null), cx)))));
-        self.commands.register("notebook.execute", |workbench, args, _, cx| {
+        self.commands.register("_notebook.selectKernel", |workbench, args, window, cx| {
+            let context = args.first().unwrap_or(&Value::Null);
+            match context["id"].is_string() && context["extension"].is_string() {
+                true => Outcome::Ready(Ok(json!(workbench.select_kernel(context, cx)))),
+                false => workbench.show_kernel_picker(false, window, cx),
+            }
+        });
+        self.register_kernel_picker_commands();
+        self.commands.register("notebook.execute", |workbench, args, window, cx| {
             let Some(key) = workbench.notebook_from_args(args.first()) else { return Outcome::done() };
             let model = workbench.host.notebooks.model(&key).expect("a shown notebook");
             let handles = model.cells.iter().filter(|cell| cell.kind == notebook::CODE).map(|cell| cell.handle).collect();
-            workbench.execute_notebook_cells(&key, handles, cx)
+            workbench.execute_notebook_cells(&key, handles, window, cx)
         });
-        self.commands.register("notebook.cell.execute", |workbench, args, _, cx| {
+        self.commands.register("notebook.cell.execute", |workbench, args, window, cx| {
             let Some((key, indices)) = workbench.cells_from_args(&args) else { return Outcome::done() };
             let model = workbench.host.notebooks.model(&key).expect("a shown notebook");
             let handles = indices.into_iter().filter_map(|index| model.cells.get(index)).filter(|cell| cell.kind == notebook::CODE).map(|cell| cell.handle).collect();
-            workbench.execute_notebook_cells(&key, handles, cx)
+            workbench.execute_notebook_cells(&key, handles, window, cx)
         });
         self.commands.register("notebook.cell.clearOutputs", |workbench, args, _, cx| {
             let Some((key, indices)) = workbench.cells_from_args(&args) else { return Outcome::done() };
@@ -191,7 +197,6 @@ impl Workbench {
                 false => workbench.insert_cell_below(kind, window, cx),
             });
         }
-        self.commands.register("notebook.selectKernel", |workbench, _, window, cx| workbench.show_kernel_picker(window, cx));
         self.register_notebook_list_commands();
         self.register_notebook_find_commands();
         self.register_notebook_output_commands();
@@ -239,7 +244,7 @@ impl Workbench {
         self.host.notebooks.held.push(notebook::uri_string(&uri));
         let (sender, receiver) = oneshot::channel();
         cx.spawn(async move |workbench, cx| {
-            let created = resolve_notebook(&workbench, cx, uri.clone(), view_type, content).await;
+            let created = resolve_notebook(&workbench, cx, uri.clone(), view_type, content, false).await;
             let _ = sender.send(created.map(|_| uri));
         })
         .detach();
@@ -272,7 +277,7 @@ impl Workbench {
         }
         let (sender, receiver) = oneshot::channel();
         cx.spawn(async move |workbench, cx| {
-            let result = resolve_notebook(&workbench, cx, uri.clone(), view_type, None).await;
+            let result = resolve_notebook(&workbench, cx, uri.clone(), view_type, None, false).await;
             if result.is_err() {
                 let _ = workbench.update(cx, |workbench, _| workbench.host.notebooks.held.retain(|held| *held != key));
             }
@@ -562,7 +567,7 @@ impl Workbench {
             return receiver;
         }
         let snapshot = model.snapshot(|cell| self.cell_text(&cell.uri));
-        let type_id = match self.host.notebooks.interactives.iter().any(|interactive| interactive.repl && interactive.notebook == key) {
+        let type_id = match model.repl_working_copy {
             true => notebook::repl_working_copy_type_id(&view_type),
             false => notebook::working_copy_type_id(&view_type),
         };
@@ -595,11 +600,14 @@ impl Workbench {
     }
 
     /// The backed up bytes of a notebook (`resolveFromBackup`), its REPL editor's backup else, None without a backup.
-    fn notebook_backup(&self, uri: &Value, view_type: &str) -> Option<Vec<u8>> {
+    fn notebook_backup(&self, uri: &Value, view_type: &str, repl: bool) -> Option<Vec<u8>> {
         let home = self.lifecycle.backups.home.as_ref()?;
         let resource = crate::uri::Uri::from_json(uri).ok()?;
-        let backup = |type_id: String| backups::resolve(&backups::backup_path(home, &resource, &type_id)).map(|backup| backup.content);
-        backup(notebook::working_copy_type_id(view_type)).or_else(|| backup(notebook::repl_working_copy_type_id(view_type)))
+        let type_id = match repl {
+            true => notebook::repl_working_copy_type_id(view_type),
+            false => notebook::working_copy_type_id(view_type),
+        };
+        backups::resolve(&backups::backup_path(home, &resource, &type_id)).map(|backup| backup.content)
     }
 
     /// ReplWindowWorkingCopyEditorHandler `createEditor` for a REPL backup without an open notebook: a REPL editor
@@ -697,7 +705,7 @@ impl Workbench {
             self.host.notebooks.held.push(key.clone());
         }
         cx.spawn_in(window, async move |workbench, cx| {
-            let result = resolve_notebook(&workbench, cx, uri.clone(), view_type, None).await;
+            let result = resolve_notebook(&workbench, cx, uri.clone(), view_type, None, false).await;
             let shown = workbench.update_in(cx, |workbench, window, cx| {
                 let shown = result.and_then(|_| workbench.show_notebook(&key, &options, window, cx));
                 if opening {
@@ -924,46 +932,6 @@ impl Workbench {
         Outcome::done()
     }
 
-    /// notebookKernelQuickPickStrategy.ts `KernelPickerFlatStrategy`: the kernels for the active notebook, the
-    /// selected one first and described as such; the picked one is bound.
-    // shortcut: no "Install/Enable suggested extensions" and "Browse marketplace" items until the gallery (milestone 18).
-    fn show_kernel_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
-        let Some(key) = self.active_notebook_editor().map(|editor| editor.notebook.clone()) else { return Outcome::done() };
-        let model = self.host.notebooks.model(&key).expect("an editor shows an open notebook");
-        let (view_type, uri) = (model.view_type.clone(), model.uri.clone());
-        let (all, selected) = self.host.notebooks.kernels.matching(&view_type, &key);
-        let selected_id = selected.map(|kernel| kernel.id.clone());
-        let mut kernels: Vec<(String, crate::quick_input::Item)> = Vec::new();
-        for kernel in all {
-            let current = selected_id.as_deref() == Some(kernel.id.as_str());
-            let description = match current {
-                true => Some(kernel.description.clone().map_or("Currently Selected".to_owned(), |description| format!("{description} - Currently Selected"))),
-                false => kernel.description.clone(),
-            };
-            let item = crate::quick_input::Item { handle: kernels.len() as i64, label: kernel.label.clone(), description, detail: kernel.detail.clone(), pickable: true, ..Default::default() };
-            kernels.push((kernel.id.clone(), item));
-        }
-        kernels.sort_by_key(|(id, _)| selected_id.as_deref() != Some(id.as_str()));
-        let mut input = crate::quick_input::QuickInput::new(0, crate::quick_input::Kind::QuickPick);
-        input.placeholder = Some("Select kernel".into());
-        input.set_items(kernels.iter().map(|(_, item)| crate::quick_input::Entry::Item(item.clone())).collect());
-        let ids: Vec<(i64, String)> = kernels.into_iter().map(|(id, item)| (item.handle, id)).collect();
-        let picked = self.choose(input, window, cx);
-        cx.spawn(async move |workbench, cx| {
-            let Ok(Ok(handle)) = picked.await else { return };
-            let Some((_, kernel_id)) = handle.as_i64().and_then(|handle| ids.iter().find(|(item, _)| *item == handle)) else { return };
-            let _ = workbench.update(cx, |workbench, cx| {
-                let associations = workbench.host.notebooks.kernels.select(Some(kernel_id.as_str()), &view_type, &uri);
-                for association in &associations {
-                    workbench.host.send("ExtHostNotebookKernels", "$acceptNotebookAssociation", association_args(association));
-                }
-                cx.notify();
-            });
-        })
-        .detach();
-        Outcome::done()
-    }
-
     /// The scheme and path of the active notebook editor's notebook.
     pub(super) fn active_notebook_resource(&self) -> Option<(String, std::path::PathBuf)> {
         let model = self.host.notebooks.model(&self.active_notebook_editor()?.notebook)?;
@@ -1000,8 +968,8 @@ impl Workbench {
         Some((key, indices))
     }
 
-    /// `_notebook.selectKernel` with `{ id, extension }`: binds that kernel to the active notebook; without one the
-    /// kernel picker would show (it waits for the notebook editor's toolbar).
+    /// `_notebook.selectKernel` with `{ id, extension }`: binds that kernel to the active notebook (or the context's
+    /// editor's), as the picker would.
     fn select_kernel(&mut self, context: &Value, cx: &mut Context<Self>) -> bool {
         let editor = match context["notebookEditorId"].as_str() {
             Some(id) => self.host.notebooks.editors.iter().find(|editor| editor.id == id),
@@ -1017,19 +985,16 @@ impl Workbench {
             return true;
         }
         let Some(kernel_id) = all.iter().find(|kernel| kernel.id.eq_ignore_ascii_case(&wanted)).map(|kernel| kernel.id.clone()) else { return false };
-        let associations = self.host.notebooks.kernels.select(Some(&kernel_id), &view_type, &uri);
-        for association in &associations {
-            self.host.send("ExtHostNotebookKernels", "$acceptNotebookAssociation", association_args(association));
-        }
-        cx.notify();
+        self.select_picked_kernel(&view_type, &uri, &kernel_id, cx);
         true
     }
 
     /// notebookExecutionServiceImpl.ts `executeNotebookCells`: each cell without an execution gets one, the
-    /// resolved kernel is bound and runs the cells its languages allow; the outcome resolves once it returns.
-    pub(super) fn execute_notebook_cells(&mut self, key: &str, handles: Vec<u64>, cx: &mut Context<Self>) -> Outcome {
+    /// resolved kernel (`resolveKernel`: else the one picked from the kernel picker) is bound and runs the cells its
+    /// languages allow; the outcome resolves once it returns.
+    pub(super) fn execute_notebook_cells(&mut self, key: &str, handles: Vec<u64>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
         let model = self.host.notebooks.model(key).expect("an open notebook");
-        let (view_type, uri) = (model.view_type.clone(), model.uri.clone());
+        let view_type = model.view_type.clone();
         let mut started = Vec::new();
         for handle in handles {
             if self.host.notebooks.kernels.start_cell(key, handle) {
@@ -1037,12 +1002,37 @@ impl Workbench {
                 self.initialize_cell_execution(key, handle, cx);
             }
         }
+        if self.host.notebooks.kernels.resolve(&view_type, key).is_some() {
+            return self.run_cells_on_kernel(key, started, cx);
+        }
+        let picked = self.show_kernel_picker(false, window, cx);
+        let key = key.to_owned();
+        let (sender, receiver) = oneshot::channel();
+        cx.spawn(async move |workbench, cx| {
+            if let Outcome::Pending(picked) = picked {
+                let _ = picked.await;
+            }
+            let Ok(outcome) = workbench.update(cx, |workbench, cx| workbench.run_cells_on_kernel(&key, started, cx)) else { return };
+            let _ = sender.send(match outcome {
+                Outcome::Ready(result) => result,
+                Outcome::Pending(pending) => pending.await.unwrap_or(Ok(Value::Null)),
+            });
+        })
+        .detach();
+        Outcome::Pending(receiver)
+    }
+
+    /// The rest of `executeNotebookCells` once the kernel is resolved; without one the executions complete.
+    fn run_cells_on_kernel(&mut self, key: &str, started: Vec<u64>, cx: &mut Context<Self>) -> Outcome {
+        let Some(model) = self.host.notebooks.model(key) else { return Outcome::done() };
+        let (view_type, uri) = (model.view_type.clone(), model.uri.clone());
         let Some(kernel) = self.host.notebooks.kernels.resolve(&view_type, key).cloned() else {
             for handle in started {
                 self.complete_cell_execution(key, handle, &json!({}), cx);
             }
             return Outcome::done();
         };
+        self.add_most_recent_kernel(&view_type, &kernel.id);
         let mut valid = Vec::new();
         for handle in started {
             let model = self.host.notebooks.model(key).expect("an open notebook");
@@ -1148,7 +1138,7 @@ impl Workbench {
             "$completeExecution" => {
                 if let Some(execution) = self.host.notebooks.kernels.executions.remove(&handle) {
                     self.complete_cell_execution(&execution.notebook, execution.cell_handle, arg(1), cx);
-                    self.scroll_interactive_to_executed(&execution.notebook, execution.cell_handle);
+                    self.scroll_interactive_to_executed(&execution.notebook, execution.cell_handle, cx);
                 }
                 Outcome::done()
             }
@@ -1177,7 +1167,7 @@ impl Workbench {
         }
         let execution = notebook::kernels::Execution { notebook: key.clone(), cell_handle, state: ExecutionState::Pending };
         self.host.notebooks.kernels.executions.insert(handle, execution);
-        self.scroll_interactive_to_executed(&key, cell_handle);
+        self.scroll_interactive_to_executed(&key, cell_handle, cx);
         Ok(Value::Null)
     }
 
@@ -1299,7 +1289,8 @@ impl Workbench {
             return;
         }
         let restore = self.notebook_views.restores.remove(0);
-        let options = json!({ "pinned": !restore.preview, "preserveFocus": true, "inactive": !restore.active });
+        // layout.ts `restoreParts`: the active group's active editor takes the focus.
+        let options = json!({ "pinned": !restore.preview, "preserveFocus": !restore.active, "inactive": !restore.active });
         let previous_group = self.editors.id;
         if self.editors.group_ids_mru().contains(&restore.group) {
             self.activate_group(restore.group);
@@ -1321,7 +1312,7 @@ impl Workbench {
                 let held = key.clone();
                 let (sender, receiver) = oneshot::channel();
                 cx.spawn_in(window, async move |workbench, cx| {
-                    let resolved = resolve_notebook(&workbench, cx, resource.clone(), "jupyter-notebook".into(), None).await;
+                    let resolved = resolve_notebook(&workbench, cx, resource.clone(), "jupyter-notebook".into(), None, true).await;
                     let shown = workbench.update_in(cx, |workbench, window, cx| {
                         let shown = match resolved {
                             Ok(_) => match workbench.show_repl(resource, options, window, cx) {
@@ -1348,6 +1339,10 @@ impl Workbench {
                 if shown.is_ok() {
                     if matches!(restore.input, NotebookInput::Interactive { .. }) {
                         workbench.create_interactive_input(&key, window, cx);
+                        // interactiveEditor.ts `focus`: the active window's input takes the keyboard.
+                        if restore.active {
+                            workbench.focus_interactive_input(window, cx);
+                        }
                     }
                     if let Some(from) = workbench.editors.editors.iter().position(|editor| editor.document().is(NOTEBOOK_EDITOR_SCHEME, Path::new(&key))) {
                         workbench.editors.move_editor(from, restore.index);
@@ -1521,11 +1516,12 @@ async fn read_notebook(workbench: &WeakEntity<Workbench>, cx: &mut AsyncApp, uri
 }
 
 /// `NotebookEditorModelResolverService.resolve`: the model of `uri`, created from `content` (dirty), its backup
-/// (dirty) or its resource.
-async fn resolve_notebook(workbench: &WeakEntity<Workbench>, cx: &mut AsyncApp, uri: Value, view_type: String, content: Option<Value>) -> NotebookResult {
+/// (dirty) or its resource. A REPL editor's (`repl`, `viewType: 'repl'`) has the `notebook/<type>/repl` working
+/// copy and, untitled without `interactiveWindow.promptToSaveOnClose`, is a scratchpad (ReplEditorInput).
+async fn resolve_notebook(workbench: &WeakEntity<Workbench>, cx: &mut AsyncApp, uri: Value, view_type: String, content: Option<Value>, repl: bool) -> NotebookResult {
     let backup = match content {
         Some(_) => None,
-        None => workbench.update(cx, |workbench, _| workbench.notebook_backup(&uri, &view_type)).map_err(canceled)?,
+        None => workbench.update(cx, |workbench, _| workbench.notebook_backup(&uri, &view_type, repl)).map_err(canceled)?,
     };
     let dirty = content.is_some() || backup.is_some();
     let data = match (content, backup) {
@@ -1533,6 +1529,19 @@ async fn resolve_notebook(workbench: &WeakEntity<Workbench>, cx: &mut AsyncApp, 
         (None, Some(bytes)) => data_to_notebook(workbench, cx, &view_type, &bytes).await?,
         (None, None) => read_notebook(workbench, cx, &uri, &view_type).await?,
     };
-    workbench.update(cx, |workbench, cx| workbench.add_notebook(uri, &view_type, &data, dirty, cx)).map_err(canceled)?;
+    workbench
+        .update(cx, |workbench, cx| {
+            let created = workbench.host.notebooks.model(&notebook::uri_string(&uri)).is_none();
+            workbench.add_notebook(uri.clone(), &view_type, &data, dirty, cx);
+            if repl && created {
+                let scratchpad = uri["scheme"] == "untitled" && workbench.setting("interactiveWindow.promptToSaveOnClose") != true;
+                let model = workbench.host.notebooks.model_mut(&notebook::uri_string(&uri)).expect("just added");
+                model.repl_working_copy = true;
+                model.scratchpad = scratchpad;
+                model.modified = model.dirty;
+                model.dirty &= !scratchpad;
+            }
+        })
+        .map_err(canceled)?;
     Ok(Value::Null)
 }

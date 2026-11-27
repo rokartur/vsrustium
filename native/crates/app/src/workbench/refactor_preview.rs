@@ -271,7 +271,7 @@ impl Workbench {
             .flex_none()
             .flex()
             .items_center()
-            .mx(px(4.))
+            .mx(px(self.pane_row_inset()))
             .pl(px(4. + 8. * depth as f32))
             .rounded(px(4.))
             .cursor_pointer()

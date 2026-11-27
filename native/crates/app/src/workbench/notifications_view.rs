@@ -917,8 +917,10 @@ impl Workbench {
             (true, false) => ("bell-slash", "Do Not Disturb Mode is Enabled".to_owned()),
             (false, dot) => (if dot { "bell-dot" } else { "bell" }, self.notifications_tooltip(in_progress)),
         };
+        // floatingPanels.css: the right edge label's padding is 4px in compact density.
+        let size = if !left && self.compact_density() { 24. } else { 28. };
         let item = self
-            .icon(icon, 28., 16., foreground)
+            .icon(icon, size, 16., foreground)
             .id("status.notifications")
             .h_full()
             .cursor_pointer()

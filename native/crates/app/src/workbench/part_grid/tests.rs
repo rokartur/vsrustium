@@ -356,3 +356,24 @@ fn progress_at_a_view_container_badges_its_activity_bar_item(cx: &mut TestAppCon
     window_cx.executor().advance_clock(Duration::from_millis(200));
     assert!(!badges(window_cx).contains(&Badge::Progress));
 }
+
+/// layoutDensityActions.ts: Compact writes `window.density.layout`, and the rail narrows to 40px and the cards close up.
+#[gpui::test]
+fn the_compact_layout_density_narrows_the_rail_and_joins_the_cards(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!("code-gpui-layout-density-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    let (workbench, window_cx) = open(Some(dir.clone()), &stores(), cx);
+    let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None);
+    workbench.update(window_cx, |workbench, _| *workbench.settings.lock().unwrap() = settings);
+    let rail = |window_cx: &mut VisualTestContext| workbench.read_with(window_cx, |workbench, _| workbench.part_grid.grid.as_ref().unwrap().part_bounds(Part::ActivityBar).unwrap()[2]);
+    assert_eq!(rail(window_cx), 48.);
+    workbench.update_in(window_cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.setLayoutDensity.compact", Vec::new(), window, cx)));
+    window_cx.run_until_parked();
+    assert_eq!(workbench.read_with(window_cx, |workbench, _| workbench.setting("window.density.layout")), "compact");
+    assert_eq!(rail(window_cx), 40.);
+    assert_eq!(workbench.read_with(window_cx, |workbench, _| (workbench.status_bar_height(), workbench.pane_row_inset())), (26., 2.));
+    workbench.update_in(window_cx, |workbench, window, cx| drop(workbench.execute_command("workbench.action.setLayoutDensity.default", Vec::new(), window, cx)));
+    window_cx.run_until_parked();
+    assert_eq!(rail(window_cx), 48.);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

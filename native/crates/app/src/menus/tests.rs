@@ -258,6 +258,21 @@ fn the_manage_menu_lists_the_global_activity_items() {
     assert_eq!(ids(&actions), ["workbench.action.showCommands", "-", "workbench.action.openGlobalKeybindings", "workbench.action.openSnippets", "Themes"]);
 }
 
+/// modernUI.contribution.test.ts: Layout Density follows Themes in the Manage menu while the modern UI is on, and
+/// its options are checked by `window.density.layout`.
+#[test]
+fn layout_density_is_in_the_manage_menu_with_the_current_density_checked() {
+    let registry = workbench_menus();
+    let context = HashMap::from([("config.workbench.experimental.modernUI".to_owned(), json!(true)), ("config.window.density.layout".to_owned(), json!("compact"))]);
+    assert_eq!(ids(&menu_actions(&registry, MenuId::GlobalActivity, &context)).last(), Some(&"Layout Density"));
+    let options = menu_actions(&registry, MenuId::LayoutDensityMenu, &context);
+    let checked: Vec<_> = options.iter().map(|action| match action {
+        MenuAction::Command { id, checked, .. } => (id.as_str(), *checked),
+        _ => unreachable!(),
+    }).collect();
+    assert_eq!(checked, [("workbench.action.setLayoutDensity.default", false), ("workbench.action.setLayoutDensity.compact", true)]);
+}
+
 #[test]
 fn mnemonic_menu_label_drops_mnemonics() {
     assert_eq!(mnemonic_menu_label("Save A&&ll"), "Save All");

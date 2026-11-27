@@ -9,7 +9,9 @@ use gpui::{BoxShadow, ClickEvent, Context, Div, FocusHandle, MouseButton, MouseD
 use serde_json::{Value, json};
 
 use super::super::Workbench;
+use super::super::list_scroll::ListId;
 use super::super::input_box_view::{InputId, InputLook, InputView};
+use super::overview_ruler::RulerDecoration;
 use super::{CellReveal, parse_cell_id};
 use crate::editor::find::controller::{Seed, selection_search_string};
 use crate::editor::find::model::search_params;
@@ -482,7 +484,7 @@ impl Workbench {
             window.focus(&keyboard, cx);
         }
         let Some(range) = range else {
-            self.reveal_notebook_cells(tab, index, index + 1, CellReveal::CenterIfOutside);
+            self.reveal_notebook_cells(tab, index, index + 1, CellReveal::CenterIfOutside, cx);
             return;
         };
         if let Some(editor) = self.editors.active_mut() {
@@ -490,22 +492,21 @@ impl Workbench {
             let editor = self.editors.active().expect("set above");
             self.host.send_selection(editor, "api");
         }
-        self.reveal_notebook_line(tab, index, range.start.line);
+        self.reveal_notebook_line(tab, index, range.start.line, cx);
         cx.notify();
     }
 
     /// `revealRangeInCenterIfOutsideViewportAsync` on a cell's line.
-    fn reveal_notebook_line(&mut self, tab: u32, index: usize, line: usize) {
+    fn reveal_notebook_line(&mut self, tab: u32, index: usize, line: usize, cx: &mut Context<Self>) {
         let Some(model) = self.host.notebooks.editor(tab).and_then(|editor| self.host.notebooks.model(&editor.notebook)) else { return };
         let rows = self.notebook_rows(tab, model);
         let Some(row) = rows.iter().find(|row| row.index == index) else { return };
-        let content_height = rows.last().map_or(0., |row| row.layout.top + row.layout.height);
         let line_height = self.notebook_line_height();
         let top = row.layout.top + row.layout.editor_top + layout::EDITOR_TOP_PADDING + line as f32 * line_height;
         let view = self.notebook_views.views.entry(tab).or_default();
         let height = f32::from(view.bounds.get().size.height);
         if top < view.scroll_top || top + line_height > view.scroll_top + height {
-            view.scroll_top = (top + line_height / 2. - height / 2.).clamp(0., (content_height - height).max(0.));
+            self.set_list_scroll(ListId::Notebook(tab), point(0., top + line_height / 2. - height / 2.), cx);
         }
     }
 
@@ -518,12 +519,30 @@ impl Workbench {
         let Some(model) = self.host.notebooks.editor(tab).and_then(|editor| self.host.notebooks.model(&editor.notebook)) else { return };
         let rows = self.notebook_rows(tab, model);
         let Some(row) = rows.iter().find(|row| row.index == index) else { return };
-        let content_height = rows.last().map_or(0., |row| row.layout.top + row.layout.height);
         let top = row.layout.top + offset;
-        let view = self.notebook_views.views.entry(tab).or_default();
-        let height = f32::from(view.bounds.get().size.height);
-        view.scroll_top = (top - height / 2.).clamp(0., (content_height - height).max(0.));
-        cx.notify();
+        let height = f32::from(self.notebook_views.views.entry(tab).or_default().bounds.get().size.height);
+        self.set_list_scroll(ListId::Notebook(tab), point(0., top - height / 2.), cx);
+    }
+
+    /// findMatchDecorationModel.ts's overview ruler decorations in the center lane: every cell with matches in
+    /// `findMatchForeground`, then the current match in `selectionHighlightForeground`.
+    pub(in crate::workbench) fn notebook_find_ruler_decorations(&self, tab: u32) -> Vec<RulerDecoration> {
+        let find = &self.notebook_views.find;
+        if find.tab != Some(tab) {
+            return Vec::new();
+        }
+        let mut decorations = Vec::new();
+        for cell in &find.matches {
+            let lines = cell.content.iter().map(|found| found.range.start.line).collect();
+            decorations.push(RulerDecoration { cell: cell.index, color: "editorOverviewRuler.findMatchForeground", lines, include_output: !cell.webview.is_empty() });
+        }
+        if let Some((cell, within)) = find.current.and_then(|current| find.locate(current)) {
+            let matches = &find.matches[cell];
+            let lines = matches.content.get(within).map(|found| vec![found.range.start.line]);
+            let include_output = lines.is_none();
+            decorations.push(RulerDecoration { cell: matches.index, color: "editorOverviewRuler.selectionHighlightForeground", lines: lines.unwrap_or_default(), include_output });
+        }
+        decorations
     }
 
     fn notebook_find_replace_pattern(&self) -> ReplacePattern {

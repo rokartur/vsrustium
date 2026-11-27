@@ -504,6 +504,9 @@ impl Workbench {
     }
 
     fn open_search_view(&mut self, cx: &mut Context<Self>) {
+        if self.open_moved_view(super::view_locations::SEARCH_VIEW, cx) {
+            return;
+        }
         self.side_bar_view = SideBarView::Search;
         self.set_part_hidden(Part::SideBar, false, cx);
     }
