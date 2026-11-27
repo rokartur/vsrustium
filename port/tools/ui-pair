@@ -31,7 +31,6 @@ const coreGraphics = dlopen('/System/Library/Frameworks/CoreGraphics.framework/C
 	CGEventCreateKeyboardEvent: { args: [FFIType.ptr, FFIType.u16, FFIType.bool], returns: FFIType.ptr },
 	CGEventSetFlags: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.void },
 	CGEventPostToPid: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.void },
-	CGEventPost: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
 });
 const coreFoundation = dlopen('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation', {
 	CFRelease: { args: [FFIType.ptr], returns: FFIType.void },
@@ -156,7 +155,7 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 			if (step.foreground) {
 				await bringToFront(target);
 			}
-			await typeText(target.pid, step.type, step.foreground);
+			await typeText(target.pid, step.type);
 		} else if (step.wait) {
 			await Bun.sleep(step.wait);
 		} else if (step.launch) {
@@ -248,11 +247,11 @@ async function bringToFront(target: object) {
 }
 
 /**
- * Types the text as US layout key events posted to the app (background) or to the HID tap (foreground, the app in
- * front). cua-driver's press_key spends 0.4 s (reference) to 1.4 s (port) per key reading the focused element back
+ * Types the text as US layout key events posted to the app's pid, in front or not: an m12/pinned-tabs run lost its
+ * foreground keys posted to the HID tap. cua-driver's press_key spends 0.4 s (reference) to 1.4 s (port) per key reading the focused element back
  * over AX, and type_text refuses windows without an accessible text field, as GPUI's.
  */
-async function typeText(pid: number, text: string, foreground = false) {
+async function typeText(pid: number, text: string) {
 	const shift = 0x20000; // kCGEventFlagMaskShift
 	for (const char of text) {
 		const lower = char.toLowerCase();
@@ -265,11 +264,7 @@ async function typeText(pid: number, text: string, foreground = false) {
 		for (const down of [true, false]) {
 			const event = coreGraphics.symbols.CGEventCreateKeyboardEvent(null, keyCode, down);
 			coreGraphics.symbols.CGEventSetFlags(event, flags);
-			if (foreground) {
-				coreGraphics.symbols.CGEventPost(0, event); // kCGHIDEventTap
-			} else {
-				coreGraphics.symbols.CGEventPostToPid(pid, event);
-			}
+			coreGraphics.symbols.CGEventPostToPid(pid, event);
 			coreFoundation.symbols.CFRelease(event);
 		}
 		await Bun.sleep(20);
