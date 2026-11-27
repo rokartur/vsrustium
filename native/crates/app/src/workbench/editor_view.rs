@@ -1396,8 +1396,8 @@ impl Workbench {
                     }
                     content = content.child(highlight);
                 }
-                // wordHighlighter.ts stops on blur: a notebook cell without the focus has none.
-                for (_, columns) in editor.highlights.iter().filter(|(line, _)| *line == index && (!in_cell || focused)) {
+                // wordHighlighter.ts stops on blur: a notebook cell or playground snippet without the focus has none.
+                for (_, columns) in editor.highlights.iter().filter(|(line, _)| *line == index && (!stacked || focused)) {
                     let (start, end) = layout.range(columns.start, columns.end);
                     let (start, end) = (start * char_width, end * char_width);
                     let mut highlight = div().absolute().top_0().h_full().left(px(start)).w(px(end - start));
