@@ -3,7 +3,7 @@
 //! blocks are live code editors over `walkThroughSnippet` models, scrolled with the page. The focused snippet is the
 //! group's code editor (`EditorGroup::stacked_editors`), the others draw as `embedded_code_editor`s.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
 use gpui::{
@@ -43,6 +43,8 @@ pub struct Playground {
     was_open: bool,
     /// The focused snippet's model id and cursor as last drawn: a new one scrolls the page to it.
     revealed_cursor: Cell<Option<(u32, usize)>>,
+    /// The page after `expandMacros`, with the keybindings generation it resolved.
+    expanded_content: RefCell<Option<(u64, String)>>,
 }
 
 impl Workbench {
@@ -102,6 +104,7 @@ impl Workbench {
         match self.editors.editors.iter().position(|editor| editor.document().is(WALKTHROUGH_SCHEME, &path)) {
             Some(index) => self.editors.activate(index),
             None => {
+                self.playground.expanded_content.take();
                 let document = self.new_playground_document();
                 self.editors.open(document, false);
             }
@@ -204,16 +207,24 @@ impl Workbench {
 
     /// The page's markdown after `expandMacros` and the platform's spans (`.mac-only` and the others,
     /// `multiCursorModifier`), as the reference draws it on macOS.
+    /// `decorateContent` resolves the shortcuts once, in the context of the moment, and again when the keybindings
+    /// change: the labels do not follow the focus.
     fn playground_markdown(&self, window: &Window) -> Vec<Block> {
-        let context = self.key_context(window);
-        let resolver = &self.keybindings.resolver;
-        let text = expand_macros(CONTENT, |command| resolver.lookup_primary_keybinding(command, &context).map(|item| crate::keybindings::label(&item.keybinding)));
+        let generation = self.keybindings.generation;
+        let mut expanded = self.playground.expanded_content.borrow_mut();
+        if expanded.as_ref().is_none_or(|(resolved, _)| *resolved != generation) {
+            let context = self.key_context(window);
+            let resolver = &self.keybindings.resolver;
+            let text = expand_macros(CONTENT, |command| resolver.lookup_primary_keybinding(command, &context).map(|item| crate::keybindings::label(&item.keybinding)));
+            *expanded = Some((generation, text));
+        }
+        let text = &expanded.as_ref().expect("set above").1;
         // walkThroughPart.ts `multiCursorModifier`: `UILabelProvider.modifierLabels[OS]` of the add-cursor modifier.
         let modifier = match self.setting("editor.multiCursorModifier") == json!("ctrlCmd") {
             true => "\u{2318}",
             false => "\u{2325}",
         };
-        parse(&expand_spans(&text, modifier))
+        parse(&expand_spans(text, modifier))
     }
 
     /// The page: `.walkThroughContent` in a scrollable element, the snippets' editors where their code blocks are.
@@ -231,6 +242,8 @@ impl Workbench {
             .id("walkthrough-playground")
             .flex_1()
             .min_h_0()
+            // Without it a flex item is as wide as its longest unwrapped paragraph.
+            .min_w_0()
             .flex()
             .flex_col()
             .overflow_y_scroll()
@@ -246,7 +259,7 @@ impl Workbench {
             .child(div().flex_none());
         let mut margin_bottom = 0.;
         for (element, (margin_top, margin_below)) in children {
-            page = page.child(div().flex_none().w_full().flex().flex_col().mt(px(f32::max(margin_top, margin_bottom))).child(element));
+            page = page.child(div().flex_none().w_full().min_w_0().flex().flex_col().mt(px(f32::max(margin_top, margin_bottom))).child(element));
             margin_bottom = margin_below;
         }
         page = page.child(div().flex_none().h(px(margin_bottom)));
@@ -312,7 +325,7 @@ impl Workbench {
                         Some(first) => format!("{}.", first + index as u64),
                         None => "\u{2022}".to_owned(),
                     };
-                    let mut content = div().w_full().flex().flex_col();
+                    let mut content = div().w_full().min_w_0().flex().flex_col();
                     for (block_index, block) in item.iter().enumerate() {
                         // A tight item's text has no paragraph margins.
                         content = content.child(self.page_block(&format!("{id}-{index}-{block_index}"), block, snippets, next_snippet, window, cx));
