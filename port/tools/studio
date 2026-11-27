@@ -14,7 +14,8 @@ name=port-src
 if [[ $(git rev-parse --absolute-git-dir) != $(cd "$(git rev-parse --git-common-dir)" && pwd) ]]; then
   name=$name-$(basename "$root")
   # Seed from the integration mirror when it exists: its native/target is the freshest, so a new worktree's first build reuses its dependencies.
-  ssh studio "cd ~/$work && test -d $name || { seed=port-src-integrate; test -d \$seed || seed=port-src; cp -cR \$seed $name; }"
+  # The Studio's login shell is fish: the seed choice runs in bash.
+  ssh studio "cd ~/$work && bash -c $(printf '%q' "test -d $name || { seed=port-src-integrate; test -d \$seed || seed=port-src; cp -cR \$seed $name; }")"
 fi
 head=$(git rev-parse HEAD)
 # The Studio repo has no LFS server; the two LFS files are copied below like any other file.

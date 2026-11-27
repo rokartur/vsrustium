@@ -1,0 +1,1 @@
+[{"wait": 9000}, {"click": [361, 116]}, {"wait": 1500}, {"shot": "floating"}, {"click": [712, 299]}, {"wait": 1000}, {"shot": "reply"}, {"dragShot": [700, 101, 600, 350], "shot": "drag"}, {"wait": 800}, {"shot": "dropped"}, {"doubleClick": [600, 238]}, {"wait": 800}, {"shot": "reset"}]

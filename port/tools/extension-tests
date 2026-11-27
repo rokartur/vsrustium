@@ -27,6 +27,8 @@ if [[ ${APP:-port} == reference ]]; then
     --disable-extension GitHub.copilot-chat >"$OUT/log" 2>&1
 else
   (cd native && cargo build --release -q -p app) || exit 1
+  # configuration-editing's extensions.json cases expect js-debug, a product.json built-in a new mirror lacks.
+  port/tools/fetch-builtin-extensions >/dev/null || exit 1
   source port/tools/gui-lock.sh
   SHELL=/bin/bash VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 600 native/target/release/vsrustium "${args[@]}" >"$OUT/log" 2>&1
 fi

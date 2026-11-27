@@ -92,6 +92,14 @@ Drop into the editor (Shift while dragging files) is checked by `cargo test -p a
 
 Empty `FOLDER`, steps `steps-keybindings.json`: Preferences: Open Keyboard Shortcuts (JSON), then `{"key": "f9", "command": "editor.action.refactor", "args": {}}` typed into the array. Pair `keybindings-schema-pair.png`: "Missing property "kind"." at Ln 3, Col 60, the only problem, in both. An earlier run that opened Default Keybindings showed the port failing to load `vscode://schemas/inlineCompletionProviderIdArgs`, now served from the inline completion providers (`inlineCompletionProviderGetMatcher`). Left: the Default Keybindings content itself (the port lists fewer commands), which is the keybinding service's, not this schema's.
 
+## Floating comment threads
+
+`ARGS=--extensionDevelopmentPath=port/fixtures/extensions/comments`, `SETTINGS={"comments.thread.experimental.style":"floating"}`, steps `steps-comment-floating.json`: click line 2's glyph, click "Reply...", drag the title 100px left and 249px down, double-click the title. Shots `floating`, `reply`, `drag` (held), `dropped`, `reset`.
+
+Same: the 240px widget centered on line 2 after the lines next to it (line 1 runs under it), the outline around `return left` and the connector to the widget's corner, the head with the Resolve check and Close, the comments scrolled with Bob's reactions cut, the reply form growing the widget down, the drag clamped to the scrollable area at the same place, the double click putting the widget back, wider because a reply is being written.
+
+Differences, fixed after the pairs: the widget sat 8px left (the estimate of where line 5 ends left out the color box's injected char, then counted its drawn width), the title did not drag (the head's actions container spanned the label and took the press), the widget was 12px taller with the reply open (the comment form buttons are `small`: 22px, 11px text, and the form's last margin collapses; this also fixes the inline Save button being taller). Left: the reference shows the comments' scrollbar while the comments overflow, the port only scrolls.
+
 ## Comment editing and commands
 
 `ARGS=--extensionDevelopmentPath=port/fixtures/extensions/comments`, now with a reaction handler, a `+1` reaction (2, reacted) on Ann's comment, `port-comments.edit` (`comments/comment/title`, `comment == editable`) and `port-comments.save` (`comments/comment/context`). Steps `steps-comment-add.json`: Expand All Comments, click the `+1` reaction, click Ann's edit action, Cmd+Enter.

@@ -32,11 +32,12 @@ pub(super) const COMMENT_CHROME: f32 = 8. + 22. + 4. + 8.;
 pub(super) const BODY_LINE: f32 = 18.;
 /// `.comment-form-container` 8px margins around the 32px "Reply..." button.
 pub(super) const REPLY_BUTTON_FORM: f32 = 8. + 32. + 8.;
-/// The expanded form: the 90px input with its 12px padding, then the 26px buttons in 10px margins.
-pub(super) const REPLY_EDITOR_FORM: f32 = 8. + 102. + 10. + 26. + 10. + 8.;
+/// The expanded form: the 90px input with its 12px padding, then the 22px small buttons in 10px margins; the last
+/// margin collapses with the container's 8px.
+pub(super) const REPLY_EDITOR_FORM: f32 = 8. + 102. + 10. + 22. + 10.;
 /// `.edit-container`: 5px above the 102px input, then the buttons in 10px margins and 10px padding; it replaces the
 /// body and its 4px padding.
-pub(super) const EDIT_FORM: f32 = 5. + 102. + 10. + 10. + 26. + 10. - 4.;
+pub(super) const EDIT_FORM: f32 = 5. + 102. + 10. + 10. + 22. + 10. - 4.;
 
 /// An expanded thread shown in an editor.
 pub(super) struct ThreadWidget {
@@ -336,9 +337,9 @@ impl Workbench {
             .flex()
             .items_center()
             .bg(background)
-            .child(div().ml(px(20.)).min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(label))
+            .child(div().ml(px(20.)).flex_1().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(label))
             // The actions take their own clicks: a floating widget's title drags from everywhere else.
-            .child(div().flex_1().flex().justify_end().items_center().pr(px(2.)).children(actions).on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()))
+            .child(div().flex_none().flex().items_center().pr(px(2.)).children(actions).on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()))
             .into_any_element()
     }
 
@@ -360,7 +361,7 @@ impl Workbench {
         let (controller, thread_handle) = (widget.controller, widget.thread);
         let replying = self.comments.reply.as_ref().is_some_and(|reply| reply.controller == controller && reply.thread == thread_handle && reply.comment.is_none());
         let prompt = if thread.comments.is_empty() { "Type a new comment" } else { "Reply..." };
-        let form = div().mx(px(20.)).my(px(8.));
+        let form = div().mx(px(20.)).mt(px(8.)).when(!replying, |form| form.mb(px(8.)));
         if !replying {
             // review.css: `outline-color: var(--vscode-contrastBorder)`, which falls back to the text color without one.
             let outline = self.theme.color("contrastBorder").unwrap_or(self.foreground_or("editor.foreground"));
@@ -412,9 +413,12 @@ impl Workbench {
             };
             let button = div()
                 .id(gpui::SharedString::from(format!("comment-reply-action-{id}")))
-                .h(px(26.))
+                .h(px(22.))
                 .ml(px(5.))
-                .px(px(8.))
+                // button.css `.monaco-text-button.small` (CommentFormActions' `small: true`).
+                .px(px(6.))
+                .text_size(px(11.))
+                .line_height(px(14.))
                 .flex()
                 .items_center()
                 .rounded(px(4.))
