@@ -64,6 +64,10 @@ pub(super) struct EditorGroups {
     /// editorDropTarget.ts: the group a dragged tab is over and the side it would split, `None` to move into it.
     drop_target: Option<(u32, Option<Direction>)>,
     sash_hover: Option<(SashId, Task<()>)>,
+    /// Each group's tab bars' scrolling, by group and `upper` bar; read while drawing.
+    pub(super) tab_scrolls: std::cell::RefCell<HashMap<(u32, bool), super::editor_view::tab_scroll::TabScroll>>,
+    /// multiEditorTabsControl.ts `lastMouseWheelEventTime`.
+    pub(super) last_tab_wheel: Cell<Option<std::time::Instant>>,
 }
 
 /// Editors that cannot be copied into a new group (`EditorInputCapabilities.Singleton` or not serializable):

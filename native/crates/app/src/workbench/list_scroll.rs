@@ -34,6 +34,8 @@ pub enum ListId {
     Explorer,
     Search,
     KeybindingsTable,
+    /// An editor group's tab bar (multiEditorTabsControl.ts `tabsScrollbar`); `upper` is the sticky tabs' own bar.
+    EditorTabs { group: u32, upper: bool },
 }
 
 /// The GPUI state a list scrolls with: a scrolled div or uniform list, or a `list` of measured rows.
@@ -41,12 +43,19 @@ pub enum ListId {
 pub enum ListScroller {
     Div(ScrollHandle),
     List(ListState),
+    /// A tab bar's scrolled tabs, after `sticky_width` of sticky tabs that stay in place: the bar scrolls as one
+    /// element, as multiEditorTabsControl.ts's tabs container does with its sticky tabs inside.
+    Tabs { handle: ScrollHandle, sticky_width: f32 },
 }
 
 impl ListScroller {
     pub(super) fn bounds(&self) -> Bounds<Pixels> {
         match self {
             ListScroller::Div(handle) => handle.bounds(),
+            ListScroller::Tabs { handle, sticky_width } => {
+                let bounds = handle.bounds();
+                Bounds::new(bounds.origin - point(px(*sticky_width), px(0.)), size(bounds.size.width + px(*sticky_width), bounds.size.height))
+            }
             ListScroller::List(state) => state.viewport_bounds(),
         }
     }
@@ -54,7 +63,7 @@ impl ListScroller {
     /// (left, top), positive.
     pub(super) fn position(&self) -> Point<f32> {
         let offset = match self {
-            ListScroller::Div(handle) => handle.offset(),
+            ListScroller::Div(handle) | ListScroller::Tabs { handle, .. } => handle.offset(),
             ListScroller::List(state) => state.scroll_px_offset_for_scrollbar(),
         };
         point(-f32::from(offset.x), -f32::from(offset.y))
@@ -62,7 +71,7 @@ impl ListScroller {
 
     fn max_position(&self) -> Point<f32> {
         let max = match self {
-            ListScroller::Div(handle) => handle.max_offset(),
+            ListScroller::Div(handle) | ListScroller::Tabs { handle, .. } => handle.max_offset(),
             ListScroller::List(state) => state.max_offset_for_scrollbar(),
         };
         point(f32::from(max.x).max(0.), f32::from(max.y).max(0.))
@@ -76,7 +85,7 @@ impl ListScroller {
             return false;
         }
         match self {
-            ListScroller::Div(handle) => handle.set_offset(point(px(-position.x), px(-position.y))),
+            ListScroller::Div(handle) | ListScroller::Tabs { handle, .. } => handle.set_offset(point(px(-position.x), px(-position.y))),
             ListScroller::List(state) => state.set_offset_from_scrollbar(point(px(0.), px(-position.y))),
         }
         true
@@ -117,6 +126,10 @@ impl Workbench {
             ListId::Explorer => ListScroller::Div(self.explorer.scroll.clone()),
             ListId::Search => ListScroller::Div(self.search.scroll.0.borrow().base_handle.clone()),
             ListId::KeybindingsTable => ListScroller::List(self.keybindings_editor.list.clone()),
+            ListId::EditorTabs { group, upper } => {
+                let scroll = self.tab_scroll(group, upper);
+                ListScroller::Tabs { sticky_width: scroll.sticky_width.get(), handle: scroll.handle }
+            }
         }
     }
 
@@ -139,7 +152,20 @@ impl Workbench {
 
     pub(super) fn horizontal_scrolling(&self, list: ListId) -> bool {
         // keybindingsEditor.ts creates its table with `horizontalScrolling: false`.
-        list != ListId::KeybindingsTable && self.setting("workbench.list.horizontalScrolling") == json!(true)
+        match list {
+            ListId::KeybindingsTable => false,
+            ListId::EditorTabs { .. } => true,
+            _ => self.setting("workbench.list.horizontalScrolling") == json!(true),
+        }
+    }
+
+    /// The (vertical, horizontal) scrollbar sizes, 0 for a bar the list does not have.
+    fn scrollbar_sizes(&self, list: ListId) -> (f32, f32) {
+        match list {
+            // multiEditorTabsControl.ts `createTabsScrollbar`: `vertical: Hidden`, `getTabsScrollbarSizing` 3 or 10.
+            ListId::EditorTabs { .. } => (0., if self.setting("workbench.editor.titleScrollbarSizing") == json!("large") { 10. } else { 3. }),
+            _ => (SCROLLBAR_SIZE, if self.horizontal_scrolling(list) { SCROLLBAR_SIZE } else { 0. }),
+        }
     }
 
     /// Sets the scroll position now, ending a smooth scroll, and reveals the scrollbars.
@@ -182,14 +208,28 @@ impl Workbench {
             ScrollDelta::Pixels(delta) => (f32::from(delta.x) / 40., f32::from(delta.y) / 40.),
             ScrollDelta::Lines(delta) => (delta.x, delta.y),
         };
+        if let ListId::EditorTabs { group, .. } = list
+            && self.switch_tab_by_wheel(group, event, window, cx)
+        {
+            return;
+        }
+        let tabs = matches!(list, ListId::EditorTabs { .. });
         let number = |key: &str, default: f64| self.setting(key).as_f64().unwrap_or(default) as f32;
-        let (sensitivity, fast) = (number("workbench.list.mouseWheelScrollSensitivity", 1.), number("workbench.list.fastScrollSensitivity", 5.));
-        let (mut delta_left, delta_top) = wheel_scroll_delta(x, y, event.modifiers.alt, sensitivity, fast);
+        // The tabs' ScrollableElement keeps its default sensitivities and scrolls without animation.
+        let (sensitivity, fast) = match tabs {
+            true => (1., 5.),
+            false => (number("workbench.list.mouseWheelScrollSensitivity", 1.), number("workbench.list.fastScrollSensitivity", 5.)),
+        };
+        let (mut delta_left, mut delta_top) = wheel_scroll_delta(x, y, event.modifiers.alt, sensitivity, fast);
         if !self.horizontal_scrolling(list) {
             delta_left = 0.;
         }
+        // scrollableElement.ts `scrollYToX`.
+        if tabs && delta_left == 0. {
+            (delta_left, delta_top) = (delta_top, 0.);
+        }
         let scroller = self.list_scroller(list);
-        let smooth = matches!(event.delta, ScrollDelta::Lines(_)) && self.setting("workbench.list.smoothScrolling") == json!(true);
+        let smooth = !tabs && matches!(event.delta, ScrollDelta::Lines(_)) && self.setting("workbench.list.smoothScrolling") == json!(true);
         // `getFutureScrollPosition`: a running smooth scroll continues from where it is going.
         let future = self.list_scroll(list).smooth.as_ref().map_or_else(|| scroller.position(), |smooth| smooth.to);
         let max = scroller.max_position();
@@ -279,16 +319,24 @@ impl Workbench {
         let bounds = scroller.bounds();
         let (position, max) = (scroller.position(), scroller.max_position());
         let horizontal = self.horizontal_scrolling(list);
+        let (vertical_size, horizontal_size) = self.scrollbar_sizes(list);
         let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
-        let vertical_bar = Scrollbar::new(if horizontal { SCROLLBAR_SIZE } else { 0. }, height, height + max.y, position.y);
-        let horizontal_bar = horizontal.then(|| Scrollbar::new(SCROLLBAR_SIZE, width, width + max.x, position.x));
-        let scroll_by_page = self.setting("workbench.list.scrollByPage") == json!(true);
+        let vertical_bar = (vertical_size > 0.).then(|| Scrollbar::new(horizontal_size, height, height + max.y, position.y));
+        let horizontal_bar = horizontal.then(|| Scrollbar::new(vertical_size, width, width + max.x, position.x));
+        let tabs = matches!(list, ListId::EditorTabs { .. });
+        let scroll_by_page = !tabs && self.setting("workbench.list.scrollByPage") == json!(true);
         let shadow = (position.y > 0.).then(|| self.scroll_shadow());
         let now = Instant::now();
-        let (opacity, shown, animating, drag) = match self.list_scrolls.0.get(&list) {
+        let (mut opacity, mut shown, animating, drag) = match self.list_scrolls.0.get(&list) {
             Some(scroll) => (scroll.bars.opacity(now), scroll.bars.shown, scroll.bars.in_transition(now), scroll.drag),
             None => (0., false, false, None),
         };
+        // multiEditorTabsControl.ts `getTabsScrollbarVisibility`: `visible` and `hidden` override the fade.
+        match self.setting("workbench.editor.titleScrollbarVisibility").as_str().filter(|_| tabs) {
+            Some("visible") => (opacity, shown) = (1., true),
+            Some("hidden") => (opacity, shown) = (0., false),
+            _ => {}
+        }
         let faded = |key: &str| {
             let color = self.color(key);
             Rgba { a: color.a * opacity, ..color }
@@ -299,12 +347,14 @@ impl Workbench {
             move |_, window, _| {
                 let list_hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
                 let mut tracks: Vec<(Hitbox, Bounds<Pixels>, Axis, Scrollbar)> = Vec::new();
-                let bars = [(Axis::Vertical, Some(vertical_bar)), (Axis::Horizontal, horizontal_bar)];
+                let bars = [(Axis::Vertical, vertical_bar), (Axis::Horizontal, horizontal_bar)];
                 for (axis, bar) in bars {
                     let Some(bar) = bar else { continue };
                     let track = match axis {
-                        Axis::Vertical => Bounds::new(point(bounds.right() - px(SCROLLBAR_SIZE), bounds.top()), size(px(SCROLLBAR_SIZE), px(bar.track))),
-                        Axis::Horizontal => Bounds::new(point(bounds.left(), bounds.bottom() - px(SCROLLBAR_SIZE)), size(px(bar.track), px(SCROLLBAR_SIZE))),
+                        Axis::Vertical => Bounds::new(point(bounds.right() - px(vertical_size), bounds.top()), size(px(vertical_size), px(bar.track))),
+                        // tabs.css: the Modern UI tabs' scrollbar sits on the strip's top edge.
+                        Axis::Horizontal if tabs => Bounds::new(bounds.origin, size(px(bar.track), px(horizontal_size))),
+                        Axis::Horizontal => Bounds::new(point(bounds.left(), bounds.bottom() - px(horizontal_size)), size(px(bar.track), px(horizontal_size))),
                     };
                     // An invisible scrollbar takes no pointer events (scrollbars.css `.invisible`).
                     if bar.needed && shown {
@@ -315,7 +365,11 @@ impl Workbench {
             },
             move |_, (list_hitbox, tracks), window, _| {
                 let mut sliders = Vec::new();
-                for (_, track, axis, bar) in &tracks {
+                for (hitbox, track, axis, bar) in &tracks {
+                    // multieditortabscontrol.css: the tabs' scrollbar is `cursor: default` in the pointer strip.
+                    if tabs {
+                        window.set_cursor_style(gpui::CursorStyle::Arrow, hitbox);
+                    }
                     let slider = match axis {
                         Axis::Vertical => Bounds::new(track.origin + point(px(0.), px(bar.slider_position)), size(track.size.width, px(bar.slider_size))),
                         Axis::Horizontal => Bounds::new(track.origin + point(px(bar.slider_position), px(0.)), size(px(bar.slider_size), track.size.height)),
@@ -325,7 +379,9 @@ impl Workbench {
                         _ if slider.contains(&window.mouse_position()) => colors[1],
                         _ => colors[0],
                     };
-                    window.paint_quad(fill(slider, color));
+                    // tabs.css: the tabs' slider is `cornerRadius-circle`.
+                    let radius = if tabs { slider.size.height / 2. } else { px(0.) };
+                    window.paint_quad(fill(slider, color).corner_radii(radius));
                     sliders.push(slider);
                 }
                 if animating {
@@ -432,8 +488,8 @@ impl Workbench {
         }
         let (position, max) = (scroller.position(), scroller.max_position());
         let state = match axis {
-            Axis::Vertical => Scrollbar::new(if self.horizontal_scrolling(list) { SCROLLBAR_SIZE } else { 0. }, visible, visible + max.y, position.y),
-            Axis::Horizontal => Scrollbar::new(SCROLLBAR_SIZE, visible, visible + max.x, position.x),
+            Axis::Vertical => Scrollbar::new(self.scrollbar_sizes(list).1, visible, visible + max.y, position.y),
+            Axis::Horizontal => Scrollbar::new(self.scrollbar_sizes(list).0, visible, visible + max.x, position.x),
         };
         self.list_scroll(list).drag = Some(SliderDrag { axis, pointer, state });
         self.list_scrolled(list, cx);
