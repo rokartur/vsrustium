@@ -299,7 +299,7 @@ impl Workbench {
         let mut row = div()
             .id(gpui::SharedString::from(key))
             .h(px(ROW_HEIGHT))
-            .mx(px(4.))
+            .mx(px(self.pane_row_inset()))
             .rounded(px(4.))
             .flex()
             .items_center()

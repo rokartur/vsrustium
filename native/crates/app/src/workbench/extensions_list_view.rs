@@ -283,7 +283,7 @@ impl Workbench {
                     workbench.show_manage_extension_menu(&id, event.position, window, cx);
                 }),
             );
-        div().w_full().h(px(ROW_HEIGHT)).px(px(4.)).flex().child(row_element).into_any_element()
+        div().w_full().h(px(ROW_HEIGHT)).px(px(self.pane_row_inset())).flex().child(row_element).into_any_element()
     }
 
     /// `ExtensionIconWidget`: the installed icon, else the gallery's, else the default codicon.

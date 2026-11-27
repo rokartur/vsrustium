@@ -228,13 +228,14 @@ impl Workbench {
         if stats.infos > 0 {
             counts.push(("info", stats.infos));
         }
+        let (margin, padding) = self.status_item_spacing();
         let mut item = div()
             .id("status.problems")
             .relative()
             .h_full()
             .cursor_pointer()
-            .mx(px(3.))
-            .px(px(5.))
+            .mx(px(margin))
+            .px(px(padding))
             .flex()
             .items_center()
             .on_click(cx.listener(|workbench, _, window, cx| drop(workbench.execute_command("workbench.actions.view.toggleProblems", Vec::new(), window, cx))));

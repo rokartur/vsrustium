@@ -451,8 +451,8 @@ impl Workbench {
             .flex_none()
             .h(px(ITEM_HEIGHT))
             .line_height(px(ITEM_HEIGHT))
-            // The modern list's rows sit 4px in from the view's edges, rounded.
-            .mx(px(4.))
+            // The modern list's rows sit in from the view's edges, rounded.
+            .mx(px(self.pane_row_inset()))
             .rounded(px(4.))
             .pl(px(8.))
             .flex()

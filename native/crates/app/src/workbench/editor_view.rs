@@ -122,8 +122,13 @@ impl Workbench {
             })
     }
 
-    /// The active tab reaches into the part's top border, which Chrome still draws over it.
+    /// The active tab reaches into the part's top border, which Chrome still draws over it. A compact editor paints
+    /// its right and bottom strokes, and its left one at the window's left edge (editorBorder.css).
     pub(super) fn part_top_border(&self) -> Div {
+        if self.compact_density() {
+            let outer_left = self.part_at_left_edge(super::layout::Part::Editor);
+            return self.compact_card_strokes("editor.border", [false, true, true, outer_left], outer_left);
+        }
         div().absolute().inset(px(-1.)).border_1().rounded(px(8.)).border_color(self.color("surface.border"))
     }
 
@@ -2069,6 +2074,9 @@ impl Workbench {
         };
         // statusbarpart.css `.compact-left`: the language entry next to the compact combined entry.
         let compact_language = combined.is_some();
+        let (margin, padding) = self.status_item_spacing();
+        // modernUI statusBar.css: in compact density a `.compact-left` label keeps the 4px padding and drops its left margin.
+        let (compact_right_margin, compact_padding) = if self.compact_density() { (margin, padding) } else { (5., 3.) };
         let items = items.into_iter().enumerate().map(|(index, (label, tooltip, command))| {
             let compact = compact_language && Some(index) == language_index;
             // The media preview's dimensions and file size entries have neither tooltip nor command.
@@ -2077,10 +2085,10 @@ impl Workbench {
                 .id(("editor-status", index))
                 .relative()
                 .h_full()
-                .w(text_width(&label) + px(if compact { 6. } else { 10. }))
+                .w(text_width(&label) + px(2. * if compact { compact_padding } else { padding }))
                 .flex_none()
-                .when(!compact, |item| item.mx(px(3.)).px(px(5.)))
-                .when(compact, |item| item.mr(px(5.)).px(px(3.)))
+                .when(!compact, |item| item.mx(px(margin)).px(px(padding)))
+                .when(compact, |item| item.mr(px(compact_right_margin)).px(px(compact_padding)))
                 .flex()
                 .items_center()
                 .whitespace_nowrap()

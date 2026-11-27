@@ -937,9 +937,9 @@ impl Workbench {
             .relative()
             .h(px(ROW_HEIGHT))
             .flex_none()
-            // list.css rows: 4px from the pane's edges with rounded corners, as the Explorer's; the tree has `hide-arrows`
+            // list.css rows: inset from the pane's edges with rounded corners, as the Explorer's; the tree has `hide-arrows`
             // (views.css: no twistie width), the indent measured against the reference with ui-pair.
-            .mx(px(4.))
+            .mx(px(self.pane_row_inset()))
             .rounded(px(4.))
             .pl(px(INDENT))
             .pr(px(12.))

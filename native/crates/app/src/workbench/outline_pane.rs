@@ -222,7 +222,7 @@ impl Workbench {
             .flex()
             .items_center()
             .cursor_pointer()
-            .mx(px(4.))
+            .mx(px(self.pane_row_inset()))
             .rounded(px(4.))
             // monaco-tl-twistie: 3px row inset and 8px base indent, then the indent per level.
             .pl(px(11. + indent * row.depth as f32))

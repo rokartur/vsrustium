@@ -401,7 +401,7 @@ impl Workbench {
             None => (self.empty_pane_message(drop_feedback).into_any_element(), None),
         };
         let content_bounds = self.composite_bar(part).content_bounds.clone();
-        self.pane_composite_card(background)
+        self.pane_composite_card(part, background)
             .on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<DraggedComposite>, _, cx| {
                 let over = event.bounds.contains(&event.event.position);
                 let target = if over { Some(part) } else { workbench.panel.drop_target.filter(|target| *target != part) };
@@ -447,8 +447,13 @@ impl Workbench {
         }
     }
 
-    fn pane_composite_card(&self, background: &str) -> Div {
-        div().flex_1().min_w_0().flex().flex_col().overflow_hidden().border_1().rounded(px(8.)).bg(self.color(background)).border_color(self.color("surface.border"))
+    fn pane_composite_card(&self, part: Part, background: &str) -> Div {
+        let card = div().flex_1().min_w_0().flex().flex_col().overflow_hidden().border_1().bg(self.color(background));
+        if !self.compact_density() {
+            return card.rounded(px(8.)).border_color(self.color("surface.border"));
+        }
+        let stroke = if part == Part::Panel { "modernPanel.border" } else { "surface.border" };
+        card.border_color(gpui::transparent_black()).child(self.compact_card_strokes(stroke, [false, true, true, self.part_at_left_edge(part)], true))
     }
 
     /// `.composite.title`: the tab strip's background with its bottom line, tabs on the left, then the active view's
