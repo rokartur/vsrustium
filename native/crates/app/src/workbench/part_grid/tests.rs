@@ -377,3 +377,107 @@ fn the_compact_layout_density_narrows_the_rail_and_joins_the_cards(cx: &mut Test
     assert_eq!(rail(window_cx), 48.);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// layoutActions.ts `CustomizeLayoutAction`: the sections with their icons, eye buttons and checks; a pick runs its
+/// command and the items follow; Restore Defaults puts the side bar left and the quick input on top; a second run
+/// hides the picker.
+#[gpui::test]
+fn customize_layout_shows_the_layout_live_and_restores_the_defaults(cx: &mut TestAppContext) {
+    use crate::main_thread_quick_open::Owner;
+    use crate::quick_input::{Entry, Event};
+    let dir = std::env::temp_dir().join(format!("code-gpui-customize-layout-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    let stores = stores();
+    stores.workspace.lock().unwrap().set("workbench.panelpart.activepanelid", super::super::output_view::OUTPUT_VIEW_ID.to_string());
+    let (workbench, window_cx) = open(Some(dir.clone()), &stores, cx);
+    let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None);
+    workbench.update(window_cx, |workbench, _| *workbench.settings.lock().unwrap() = settings);
+    let run = |command: &'static str, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx)));
+        cx.run_until_parked();
+    };
+    let picker = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.quick_inputs.find_id(|owner| matches!(owner, Owner::CustomizeLayout(_))));
+    let rows = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let id = workbench.quick_inputs.find_id(|owner| matches!(owner, Owner::CustomizeLayout(_))).unwrap();
+            let input = workbench.quick_inputs.get(id).unwrap();
+            let rows: Vec<String> = input
+                .items()
+                .iter()
+                .map(|entry| match entry {
+                    Entry::Separator(label) => format!("-{}", label.clone().unwrap_or_default()),
+                    Entry::Item(item) => format!("{}{}", item.label, item.buttons.iter().map(|button| format!(" [{}]", button.codicon.clone().unwrap_or_default())).collect::<String>()),
+                    Entry::Header(_) => unreachable!(),
+                })
+                .collect();
+            (rows, input.active_handles())
+        })
+    };
+    let event = |event: Event, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, cx| {
+            let id = workbench.quick_inputs.find_id(|owner| matches!(owner, Owner::CustomizeLayout(_))).unwrap();
+            if let Event::Accept(_) = event {
+                workbench.quick_inputs.get_mut(id).unwrap().set_selected_items(&[12]);
+            }
+            workbench.customize_layout_event(id, event, window, cx);
+        });
+        cx.run_until_parked();
+    };
+
+    run("workbench.action.customizeLayout", window_cx);
+    let (shown, _) = rows(window_cx);
+    assert_eq!(shown[..15], [
+        "-Visibility",
+        "$(layout-activitybar-left) Activity Bar [eye]",
+        "$(layout-sidebar-left) Primary Side Bar [eye]",
+        "$(layout-sidebar-right) Secondary Side Bar [eye-closed]",
+        "$(layout-panel) Panel [eye-closed]",
+        "$(layout-statusbar) Status Bar [eye]",
+        "-Primary Side Bar Position",
+        "$(layout-sidebar-left) Left $(check)",
+        "$(layout-sidebar-right) Right",
+        "-Panel Alignment",
+        "$(layout-panel-left) Left",
+        "$(layout-panel-right) Right",
+        "$(layout-panel-center) Center $(check)",
+        "$(layout-panel-justify) Justify",
+        "-Quick Input Position",
+    ]);
+    assert_eq!(shown[15..17], ["$(arrow-up) Top $(check)", "$(circle) Center"]);
+    assert_eq!(shown[shown.len() - 4..], ["-Modes", "$(screen-full) Full Screen", "$(target) Zen Mode", "$(layout-centered) Centered Layout"]);
+
+    // The Panel row's eye button shows the panel; the row follows.
+    event(Event::TriggerItemButton(3, 0, None), window_cx);
+    assert!(workbench.read_with(window_cx, |workbench, _| workbench.is_part_visible(Part::Panel)));
+    assert_eq!(rows(window_cx).0[4], "$(layout-panel) Panel [eye]");
+    // Accepting Center moves the quick input to the center snap line and keeps that row active.
+    event(Event::Accept(false), window_cx);
+    let (shown, active) = rows(window_cx);
+    assert_eq!((shown[15..17].to_vec(), active), (vec!["$(arrow-up) Top".to_owned(), "$(circle) Center $(check)".to_owned()], vec![12]));
+    run("workbench.action.moveSideBarRight", window_cx);
+    assert_eq!(rows(window_cx).0[1], "$(layout-activitybar-right) Activity Bar [eye]");
+
+    event(Event::TriggerButton(0, None), window_cx);
+    assert_eq!(workbench.read_with(window_cx, |workbench, _| workbench.setting("workbench.sideBar.location")), "left");
+    assert_eq!(rows(window_cx).0[15..17], ["$(arrow-up) Top $(check)", "$(circle) Center"]);
+    run("workbench.action.customizeLayout", window_cx);
+    assert_eq!(picker(window_cx), None);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// sidebarPart.ts `toggleActivityBarVisibility`: hiding remembers the location, showing restores it.
+#[gpui::test]
+fn toggling_the_activity_bar_restores_its_location(cx: &mut TestAppContext) {
+    let dir = std::env::temp_dir().join(format!("code-gpui-activity-bar-toggle-{}", std::process::id()));
+    std::fs::create_dir_all(dir.join("User")).unwrap();
+    let (workbench, window_cx) = open(Some(dir.clone()), &stores(), cx);
+    let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None);
+    workbench.update(window_cx, |workbench, _| *workbench.settings.lock().unwrap() = settings);
+    let mut locations = Vec::new();
+    for command in ["workbench.action.activityBarLocation.top", "workbench.action.toggleActivityBarVisibility", "workbench.action.toggleActivityBarVisibility"] {
+        workbench.update_in(window_cx, |workbench, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx)));
+        locations.push(workbench.read_with(window_cx, |workbench, _| workbench.setting("workbench.activityBar.location")));
+    }
+    assert_eq!(locations, ["top", "hidden", "top"]);
+    std::fs::remove_dir_all(&dir).unwrap();
+}

@@ -22,6 +22,9 @@ use crate::quick_input::{Button, Event, Focus, Header, Kind, QuickInput, Row, Se
 
 /// `QuickInputController.MAX_WIDTH`.
 const MAX_WIDTH: f32 = 600.;
+/// `QuickInputDragAndDropController._snapThreshold` and `_snapLineHorizontalRatio`.
+const SNAP_THRESHOLD: f32 = 20.;
+const CENTER_SNAP_RATIO: f32 = 0.25;
 /// `quickPickTop` in layout.ts while the title bar shows the command center.
 const TOP: f32 = 6.;
 /// The title bar part's height, `activeContainerOffset.top` for the drag.
@@ -356,7 +359,7 @@ impl Workbench {
             return None;
         }
         let viewport = window.viewport_size();
-        let width = (f32::from(viewport.width) * 0.62).min(MAX_WIDTH);
+        let width = widget_width(f32::from(viewport.width));
         let (top, left) = match self.quick_inputs.view_state {
             Some((top, left)) => (top.map_or(TOP, |top| (f32::from(viewport.height) * top).round()), (f32::from(viewport.width) * left.unwrap_or(0.5) - width / 2.).round()),
             None => (TOP, ((f32::from(viewport.width) - width) / 2.).round()),
@@ -508,6 +511,40 @@ impl Workbench {
         let (top, left) = drag_layout(f32::from(top_left.y), f32::from(top_left.x), window_size, widget_size, TITLE_BAR_HEIGHT, TOP);
         self.quick_inputs.view_state = Some((Some(top), Some(left)));
         cx.notify();
+    }
+
+    /// `QuickInputDragAndDropController.setAlignment`: the top or the center snap line, centered across, saved as a
+    /// dragged position is.
+    pub(super) fn set_quick_input_alignment(&mut self, center: bool, window: &Window, cx: &mut Context<Self>) {
+        let viewport = window.viewport_size();
+        let (width, height) = (f32::from(viewport.width), f32::from(viewport.height));
+        let widget = widget_width(width);
+        let top = if center { (height * CENTER_SNAP_RATIO).round() } else { TOP };
+        let left = ((width / 2.).round() - (widget / 2.).round() + widget / 2.) / width;
+        self.quick_inputs.view_state = Some((Some(top / height), Some(left)));
+        self.save_quick_input_view_state();
+        cx.notify();
+    }
+
+    /// `QuickInputAlignmentContextKey`: `top` or `center` while the widget sits on that snap line and centered across
+    /// (`_layout` snaps within 20px), unset at any other position.
+    pub(super) fn quick_input_alignment(&self, window: &Window) -> Option<&'static str> {
+        let Some((top, left)) = self.quick_inputs.view_state else { return Some("top") };
+        let viewport = window.viewport_size();
+        let (width, height) = (f32::from(viewport.width), f32::from(viewport.height));
+        let widget = widget_width(width);
+        let centered_left = (width / 2.).round() - (widget / 2.).round();
+        if (width * left.unwrap_or(0.5) - widget / 2. - centered_left).abs() >= SNAP_THRESHOLD {
+            return None;
+        }
+        let top = top.map_or(TOP, |top| height * top);
+        if (top - TOP).abs() < SNAP_THRESHOLD {
+            Some("top")
+        } else if (top - (height * CENTER_SNAP_RATIO).round()).abs() < SNAP_THRESHOLD {
+            Some("center")
+        } else {
+            None
+        }
     }
 
     /// `.quick-input-titlebar`: the back button, the title, and the title buttons.
@@ -1020,6 +1057,11 @@ fn reveal_row(list: &ListState, heights: &[f32], position: usize, viewport: f32)
         }
         item_top += item_height;
     }
+}
+
+/// quickInputController.ts `updateLayout`: 62% of the window, at most `MAX_WIDTH`.
+fn widget_width(window_width: f32) -> f32 {
+    (window_width * 0.62).min(MAX_WIDTH)
 }
 
 fn row_height(row: &Row) -> f32 {

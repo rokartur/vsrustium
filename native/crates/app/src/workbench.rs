@@ -74,6 +74,7 @@ pub(crate) mod host;
 mod power;
 mod relauncher;
 mod update;
+pub(crate) mod customize_layout;
 pub(crate) mod perf_view;
 mod proxy_auth;
 mod user_activity;
@@ -532,6 +533,7 @@ impl Render for Workbench {
         self.update_metered_connection(cx);
         self.check_relaunch_settings(window, cx);
         self.welcome_page_frame(window, cx);
+        self.follow_customize_layout(window, cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -816,6 +818,7 @@ impl Workbench {
         workbench.register_list_scroll_commands();
         workbench.register_search_actions();
         workbench.register_layout_actions();
+        workbench.register_customize_layout_commands();
         workbench.register_zen_mode_actions();
         workbench.register_centered_layout_actions();
         workbench.register_editor_group_actions();
