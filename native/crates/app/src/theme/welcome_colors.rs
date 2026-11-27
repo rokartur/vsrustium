@@ -1,4 +1,4 @@
-//! Registry defaults of gettingStartedColors.ts and walkThroughUtils.ts, as `registry_default` columns: dark, light,
+//! Registry defaults of gettingStartedColors.ts, walkThroughUtils.ts and the block quote colors of baseColors.ts, as `registry_default` columns: dark, light,
 //! high contrast, high contrast light.
 
 use super::ColorValue::{self, *};
@@ -12,6 +12,8 @@ pub(super) fn welcome_default(key: &str) -> Option<[ColorValue; 4]> {
         "welcomePage.progress.foreground" => [Key("textLink.foreground"), Key("textLink.foreground"), Key("textLink.foreground"), Key("textLink.foreground")],
         "walkthrough.stepTitle.foreground" => [Hex("#ffffff"), Hex("#000000"), None, None],
         "walkThrough.embeddedEditorBackground" => [Hex("#00000066"), Hex("#f4f4f4"), None, None],
+        "textBlockQuote.background" => [Hex("#222222"), Hex("#f2f2f2"), None, Hex("#F2F2F2")],
+        "textBlockQuote.border" => [Hex("#007acc80"), Hex("#007acc80"), Hex("#ffffff"), Hex("#292929")],
         _ => return Option::None,
     })
 }

@@ -274,7 +274,9 @@ impl Workbench {
     fn dirty_documents(&self, kind: DocumentKind) -> Vec<((String, String), u64)> {
         match kind {
             DocumentKind::Custom => self.webview_panels.custom_editors.documents.iter().filter(|document| document.is_dirty()).map(|document| (document_key(&document.resource, &document.view_type), document.version)).collect(),
-            DocumentKind::Notebook => self.host.notebooks.models.iter().filter(|model| model.dirty).map(|model| (document_key(&model.uri, &model.view_type), model.version_id)).collect(),
+            // workingCopyBackupTracker.ts backs up modified working copies, a REPL scratchpad too.
+            // shortcut: a modified interactive window does not back up, upgrade with `interactiveWindow.restore`.
+            DocumentKind::Notebook => self.host.notebooks.models.iter().filter(|model| model.dirty || (model.repl_working_copy && model.modified)).map(|model| (document_key(&model.uri, &model.view_type), model.version_id)).collect(),
         }
     }
 

@@ -39,8 +39,24 @@ impl Default for OutlineViewState {
     }
 }
 
+/// notebookOutline.ts `MenuId.NotebookOutlineFilter`: command, setting and title, in group order.
+const NOTEBOOK_OUTLINE_FILTERS: [(&str, &str, &str); 3] = [
+    ("notebook.outline.toggleShowMarkdownHeadersOnly", "notebook.outline.showMarkdownHeadersOnly", "Markdown Headers Only"),
+    ("notebook.outline.toggleCodeCells", "notebook.outline.showCodeCells", "Code Cells"),
+    ("notebook.outline.toggleCodeCellSymbols", "notebook.outline.showCodeCellSymbols", "Code Cell Symbols"),
+];
+
 impl Workbench {
     pub(super) fn register_outline_actions(&mut self) {
+        // notebookOutline.ts: the Filter Entries toggles flip their user setting.
+        for (id, setting, _) in NOTEBOOK_OUTLINE_FILTERS {
+            self.commands.register(id, move |workbench, _, _, cx| {
+                let shown = workbench.setting(setting) == true;
+                workbench.update_user_setting(setting, json!(!shown));
+                cx.notify();
+                Outcome::done()
+            });
+        }
         self.commands.register("outline.collapse", |workbench, _, _, cx| {
             workbench.set_outline_all_expanded(false, cx);
             Outcome::done()
@@ -152,6 +168,25 @@ impl Workbench {
         let navigation: Vec<MenuItem> = menus.iter().filter(|item| item.group == "navigation").cloned().collect();
         let secondary: Vec<MenuItem> = menus.iter().filter(|item| item.group != "navigation").cloned().collect();
         let mut bar = div().flex().pr(px(8.));
+        // notebookOutline.ts: Filter Entries (MenuId.NotebookOutlineFilter, navigation order -1) while a notebook
+        // editor is active.
+        if self.active_notebook_editor().is_some() {
+            let mut filters = Vec::new();
+            for (index, (id, setting, title)) in NOTEBOOK_OUTLINE_FILTERS.into_iter().enumerate() {
+                if index == 1 {
+                    filters.push(MenuAction::Separator);
+                }
+                filters.push(MenuAction::Command { id: id.into(), title: title.into(), enabled: true, checked: self.setting(setting) == true, alt: None });
+            }
+            let context = context.clone();
+            bar = bar.child(self.outline_action_button("filter", "Filter Entries".into()).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                    cx.stop_propagation();
+                    workbench.show_context_menu_actions(filters.clone(), &context, Bounds::new(event.position, Default::default()), Vec::new(), window, cx);
+                }),
+            ));
+        }
         for action in menu_actions(&navigation, MenuId::ViewTitle, &context) {
             let MenuAction::Command { id, title, .. } = action else { continue };
             let icon = if id == "outline.collapse" { "collapse-all" } else { "expand-all" };

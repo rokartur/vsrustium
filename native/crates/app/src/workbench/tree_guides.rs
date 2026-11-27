@@ -184,7 +184,7 @@ impl Workbench {
                 self.search.focus_and_select(Some(row.key));
                 window.focus(&self.search.focus.clone(), cx);
             }
-            ListId::KeybindingsTable | ListId::EditorTabs { .. } => unreachable!("not a tree"),
+            ListId::KeybindingsTable | ListId::EditorTabs { .. } | ListId::Notebook(_) => unreachable!("only the Explorer and Search lists are trees"),
         }
         cx.notify();
     }
@@ -193,7 +193,7 @@ impl Workbench {
         match list {
             ListId::Explorer => self.folder.as_ref().map(|tree| tree.rows().iter().map(|row| row.depth).collect()).unwrap_or_default(),
             ListId::Search => self.search.rows(&self.search_folders(), Some(&self.collapse_results())).iter().map(|row| row.depth).collect(),
-            ListId::KeybindingsTable | ListId::EditorTabs { .. } => Vec::new(),
+            ListId::KeybindingsTable | ListId::EditorTabs { .. } | ListId::Notebook(_) => Vec::new(),
         }
     }
 

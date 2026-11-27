@@ -3,6 +3,16 @@
     "wait": 4000
   },
   {
+    "click": [
+      540,
+      300
+    ],
+    "foreground": true
+  },
+  {
+    "wait": 800
+  },
+  {
     "hotkey": [
       "cmd",
       "shift",
@@ -19,6 +29,26 @@
   },
   {
     "wait": 2000
+  },
+  {
+    "key": "down",
+    "foreground": true
+  },
+  {
+    "wait": 300
+  },
+  {
+    "key": "down",
+    "foreground": true
+  },
+  {
+    "wait": 2000
+  },
+  {
+    "wait": 500
+  },
+  {
+    "shot": "move-view-command"
   },
   {
     "key": "return",
@@ -58,6 +88,16 @@
     "shot": "outline-in-panel"
   },
   {
+    "click": [
+      540,
+      300
+    ],
+    "foreground": true
+  },
+  {
+    "wait": 800
+  },
+  {
     "hotkey": [
       "cmd",
       "shift",
@@ -71,6 +111,9 @@
   {
     "type": "View: Move View",
     "foreground": true
+  },
+  {
+    "wait": 2000
   },
   {
     "wait": 2000
@@ -112,5 +155,143 @@
   },
   {
     "shot": "timeline-in-side-bar-entry"
+  },
+  {
+    "click": [
+      540,
+      300
+    ],
+    "foreground": true
+  },
+  {
+    "wait": 800
+  },
+  {
+    "hotkey": [
+      "cmd",
+      "shift",
+      "p"
+    ],
+    "foreground": true
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "type": "View: Move View",
+    "foreground": true
+  },
+  {
+    "wait": 2000
+  },
+  {
+    "wait": 2000
+  },
+  {
+    "key": "return",
+    "foreground": true
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "type": "Search",
+    "foreground": true
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "key": "return",
+    "foreground": true
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "shot": "search-destination-picker"
+  },
+  {
+    "type": "Explorer",
+    "foreground": true
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "key": "return",
+    "foreground": true
+  },
+  {
+    "wait": 2500
+  },
+  {
+    "shot": "search-in-explorer"
+  },
+  {
+    "click": [
+      540,
+      300
+    ],
+    "foreground": true
+  },
+  {
+    "wait": 800
+  },
+  {
+    "hotkey": [
+      "cmd",
+      "shift",
+      "p"
+    ],
+    "foreground": true
+  },
+  {
+    "wait": 1200
+  },
+  {
+    "type": "View: Move View",
+    "foreground": true
+  },
+  {
+    "wait": 2000
+  },
+  {
+    "key": "return",
+    "foreground": true
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "type": "Timeline",
+    "foreground": true
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "key": "return",
+    "foreground": true
+  },
+  {
+    "wait": 1500
+  },
+  {
+    "type": "Problems",
+    "foreground": true
+  },
+  {
+    "wait": 1000
+  },
+  {
+    "key": "return",
+    "foreground": true
+  },
+  {
+    "wait": 2500
+  },
+  {
+    "shot": "timeline-beside-problems"
   }
 ]

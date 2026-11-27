@@ -115,6 +115,7 @@ impl Workbench {
             state.set_collapse_state(EXPANDED);
         }
         self.sync_comment_widgets();
+        self.reveal_floating_comment_widget(controller, thread);
         window.focus(&self.editor_focus, cx);
         cx.notify();
     }

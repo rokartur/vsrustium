@@ -32,20 +32,21 @@ impl Workbench {
         let activity_bar_visible = self.is_part_visible(super::layout::Part::ActivityBar);
         let left = self.arrangement().side_bar == super::layout::Position::Left;
         let compact = self.compact_activity_bar_location();
-        div()
-            .flex_1()
-            .min_w_0()
-            .overflow_hidden()
-            .flex()
-            .flex_col()
-            .border_t_1()
-            .border_b_1()
-            .bg(self.color("sideBar.background"))
-            .border_color(self.color("surface.border"))
-            // The seam with the activity bar is the bar's border; the side bar keeps a transparent 1px edge there.
-            .when(activity_bar_visible && left, |card| card.border_r_1().pl(px(1.)).rounded_r(px(8.)))
-            .when(activity_bar_visible && !left, |card| card.border_l_1().pr(px(1.)).rounded_l(px(8.)))
-            .when(!activity_bar_visible, |card| card.border_l_1().border_r_1().rounded(px(8.)))
+        let card = div().flex_1().min_w_0().overflow_hidden().flex().flex_col().bg(self.color("sideBar.background"));
+        let card = if self.compact_density() {
+            // floatingPanels.css: a right rail draws the seam it shares with the side bar.
+            let edges = [false, !(activity_bar_visible && !left), true, self.part_at_left_edge(super::layout::Part::SideBar)];
+            card.border_1().border_color(gpui::transparent_black()).child(self.compact_card_strokes("surface.border", edges, true))
+        } else {
+            card.border_t_1()
+                .border_b_1()
+                .border_color(self.color("surface.border"))
+                // The seam with the activity bar is the bar's border; the side bar keeps a transparent 1px edge there.
+                .when(activity_bar_visible && left, |card| card.border_r_1().pl(px(1.)).rounded_r(px(8.)))
+                .when(activity_bar_visible && !left, |card| card.border_l_1().pr(px(1.)).rounded_l(px(8.)))
+                .when(!activity_bar_visible, |card| card.border_l_1().border_r_1().rounded(px(8.)))
+        };
+        card
             .when(compact == Some(false), |card| card.child(self.compact_activity_bar(false, cx)))
             .child(self.side_bar_view(window, cx))
             .when(compact == Some(true), |card| card.child(self.compact_activity_bar(true, cx)))
@@ -55,7 +56,8 @@ impl Workbench {
     /// background, the checked one in the side bar's color and connected to its content.
     fn compact_activity_bar(&self, footer: bool, cx: &mut Context<Self>) -> Div {
         let hover = HoverOptions::composite_bar(if footer { HoverPosition::Above } else { HoverPosition::Below });
-        let tabs = VIEW_CONTAINERS.map(|(_, icon, title, command, view)| {
+        let containers = VIEW_CONTAINERS.into_iter().filter(|(_, _, _, command, _)| !self.container_hidden_if_empty(command));
+        let tabs: Vec<_> = containers.map(|(_, icon, title, command, view)| {
             let active = view.is_some_and(|view| view == self.side_bar_view);
             let color = if active { self.color("activityBarTop.foreground") } else { self.color("activityBarTop.inactiveForeground") };
             self.icon(icon, 36., 16., color)
@@ -65,7 +67,7 @@ impl Workbench {
                 .when(active, |tab| tab.bg(self.color("sideBar.background")).when(footer, |tab| tab.rounded_b(px(7.))).when(!footer, |tab| tab.rounded_t(px(7.))))
                 .child(self.action_hover(title, command, hover))
                 .when(view.is_some(), |tab| tab.on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, command, event, window, cx))))
-        });
+        }).collect();
         div().h(px(32.)).flex_none().flex().bg(self.tab_strip_background()).children(tabs)
     }
 

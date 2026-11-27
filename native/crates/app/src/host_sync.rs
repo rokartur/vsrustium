@@ -173,7 +173,11 @@ impl HostSync {
                 let Some((editor, viewport)) = group.group_active(id) else { return Vec::new() };
                 // Every cell of a notebook editor is a code editor the host sees, the focused one first.
                 // shortcut: every cell, where the notebook list renders only the cells in view.
-                let cells = group.group_active_tab(id).map(|tab| crate::workbench::notebook_cells(&self.notebooks, group, tab)).unwrap_or_default();
+                let mut cells = group.group_active_tab(id).map(|tab| crate::workbench::notebook_cells(&self.notebooks, group, tab)).unwrap_or_default();
+                // The playground's snippet editors too (walkThroughPart.ts `CodeEditorWidget`s).
+                if group.group_active_tab(id).is_some_and(crate::workbench::walkthrough_part::is_playground_tab) {
+                    cells.extend(crate::workbench::walkthrough_part::snippet_models(group));
+                }
                 let editors = std::iter::once(editor).chain(cells);
                 editors.filter(|editor| is_text(editor)).map(|editor| (column, editor, viewport)).collect()
             })

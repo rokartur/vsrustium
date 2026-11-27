@@ -152,7 +152,8 @@ impl SearchView {
             focus: cx.focus_handle(),
             toggle_replace_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
-            replace_active: false,
+            // searchView.ts: `showReplace` without a stored state is true.
+            replace_active: true,
             details_visible: false,
             match_case: false,
             whole_word: false,
@@ -401,6 +402,11 @@ impl Workbench {
                 workbench.execute_command(command, Vec::new(), window, cx);
             }))
         })
+    }
+
+    pub(super) fn search_view_pane(&self, window: &Window, cx: &mut Context<Self>) -> super::view_panes::ViewPane {
+        let body = self.search_view(window, cx).into_any_element();
+        super::view_panes::ViewPane { id: super::view_locations::SEARCH_VIEW, title: "Search".into(), description: None, actions: Some(self.search_title_actions(cx).into_any_element()), show_actions: self.focused_movable_view(window) == Some(super::view_locations::SEARCH_VIEW), body }
     }
 
     /// The Search view's content below the title: the widgets, the message line and the results tree.
@@ -676,7 +682,7 @@ impl Workbench {
             })
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_search_context_menu(&key, event.position, window, cx)));
         // A uniform list sizes its items to their content; the wrapper takes the list's width.
-        div().w_full().h(px(22.)).px(px(4.)).flex().child(row).into_any_element()
+        div().w_full().h(px(22.)).px(px(self.pane_row_inset())).flex().child(row).into_any_element()
     }
 
     /// `FolderMatchRenderer`: the folder's icon, its name and its count badge.

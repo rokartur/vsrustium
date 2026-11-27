@@ -198,9 +198,9 @@ impl Workbench {
         let path = rows[index].path.clone();
         let list = self.explorer.scroll.bounds();
         let padding = if self.explorer.find.is_open() { px(30.) } else { px(0.) };
-        // The rows are 4px in from each side of the list.
-        let origin = gpui::point(list.left() + px(4.), list.top() + padding + ROW_HEIGHT * index as f32 + self.explorer.scroll.offset().y);
-        let bounds = gpui::Bounds::new(origin, gpui::size(list.size.width - px(8.), ROW_HEIGHT));
+        let inset = px(self.pane_row_inset());
+        let origin = gpui::point(list.left() + inset, list.top() + padding + ROW_HEIGHT * index as f32 + self.explorer.scroll.offset().y);
+        let bounds = gpui::Bounds::new(origin, gpui::size(list.size.width - inset * 2., ROW_HEIGHT));
         let content = super::hover::HoverContent::Text(crate::quick_input::path_label(&path, None));
         self.show_managed_hover(("explorer-hover", index), content, super::hover::HoverOptions::mouse(), bounds, window, cx);
     }

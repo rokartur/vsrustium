@@ -169,12 +169,14 @@ impl Workbench {
     }
 
     /// dirtyFilesIndicator.ts: the explorer's badge counts the dirty working copies, each resource once (a split
-    /// editor's copy in another group is the same working copy).
+    /// editor's copy in another group is the same working copy), notebooks included.
     pub(super) fn dirty_working_copy_count(&self) -> u64 {
-        let mut resources: Vec<_> = self.editors.all_editors().filter(|editor| editor.is_dirty()).map(|editor| (editor.document().scheme.clone(), editor.document().path.clone())).collect();
+        let text_editors = self.editors.all_editors().filter(|editor| editor.document().scheme != crate::notebook::NOTEBOOK_EDITOR_SCHEME);
+        let mut resources: Vec<_> = text_editors.filter(|editor| editor.is_dirty()).map(|editor| (editor.document().scheme.clone(), editor.document().path.clone())).collect();
         resources.sort_unstable();
         resources.dedup();
-        resources.len() as u64
+        let notebooks = self.host.notebooks.models.iter().filter(|model| model.dirty).count();
+        (resources.len() + notebooks) as u64
     }
 
     /// The active group's editors after its sticky ones (`getEditors(SEQUENTIAL, { excludeSticky: true })`).

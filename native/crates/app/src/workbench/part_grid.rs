@@ -15,9 +15,8 @@ use super::layout::{Alignment, Arrangement, Grid, Part, PartSizes, Position, Sas
 use crate::commands::Outcome;
 use crate::split_view::SashState;
 
-/// The title bar and status bar heights around the grid's middle row.
+/// The title bar height above the grid's middle row.
 const TITLE_BAR_HEIGHT: f32 = 35.;
-const STATUS_BAR_HEIGHT: f32 = 28.;
 /// `workbench.sash.hoverDelay` and `workbench.sash.size` defaults.
 const SASH_HOVER_DELAY: f64 = 300.;
 const SASH_SIZE: f32 = 4.;
@@ -84,6 +83,14 @@ impl Workbench {
         ] {
             self.commands.register(command, move |workbench, _, _, cx| {
                 workbench.update_setting("workbench.activityBar.location", json!(location));
+                cx.notify();
+                Outcome::done()
+            });
+        }
+        // layoutDensityActions.ts: the Layout Density options write `window.density.layout`.
+        for (command, density) in [("workbench.action.setLayoutDensity.default", "default"), ("workbench.action.setLayoutDensity.compact", "compact")] {
+            self.commands.register(command, move |workbench, _, _, cx| {
+                workbench.update_setting("window.density.layout", json!(density));
                 cx.notify();
                 Outcome::done()
             });
@@ -388,6 +395,50 @@ impl Workbench {
         Duration::from_millis(self.setting("workbench.sash.hoverDelay").as_f64().map_or(SASH_HOVER_DELAY, |delay| delay.clamp(0., 2000.)) as u64)
     }
 
+    /// layoutService.ts `isModernUICompact`: `window.density.layout` is `compact` (the modern UI is always on).
+    pub(super) fn compact_density(&self) -> bool {
+        self.setting("window.density.layout") == "compact"
+    }
+
+    /// floatingPanels.css `.floating-part-outer-left`: the part meets the window's left edge.
+    pub(super) fn part_at_left_edge(&self, part: Part) -> bool {
+        self.part_grid.grid.as_ref().and_then(|grid| grid.part_bounds(part)).is_some_and(|[x, ..]| x <= 0.5)
+    }
+
+    /// floatingPanels.css `.modern-ui-compact .part`: the card's border stays 1px and transparent, and each edge in
+    /// `edges` (top, right, bottom, left) takes a 1px stroke over it, as the part's background gradients do. A card
+    /// without a left border (the compact editor) passes `left_border` false.
+    pub(super) fn compact_card_strokes(&self, color: &str, [top, right, bottom, left]: [bool; 4], left_border: bool) -> Div {
+        let color = self.color(color);
+        let stroke = || div().absolute().bg(color);
+        div()
+            .absolute()
+            .top(px(-1.))
+            .right(px(-1.))
+            .bottom(px(-1.))
+            .left(px(if left_border { -1. } else { 0. }))
+            .when(top, |card| card.child(stroke().top_0().left_0().right_0().h(px(1.))))
+            .when(right, |card| card.child(stroke().top_0().bottom_0().right_0().w(px(1.))))
+            .when(bottom, |card| card.child(stroke().bottom_0().left_0().right_0().h(px(1.))))
+            .when(left, |card| card.child(stroke().top_0().bottom_0().left_0().w(px(1.))))
+    }
+
+    /// statusbarPart.ts: the 22px bar plus `FLOATING_BOTTOM_PADDING`, or `COMPACT_DENSITY_FLOATING_BOTTOM_PADDING`.
+    pub(super) fn status_bar_height(&self) -> f32 {
+        if self.compact_density() { 26. } else { 28. }
+    }
+
+    /// modernUI padding.css: a pane's list rows sit 4px in from its edges, 2px in compact density.
+    pub(super) fn pane_row_inset(&self) -> f32 {
+        if self.compact_density() { 2. } else { 4. }
+    }
+
+    /// A status bar label's margin and padding on each side: statusbarpart.css 3px and 5px, modernUI statusBar.css
+    /// 2px and 4px in compact density.
+    pub(super) fn status_item_spacing(&self) -> (f32, f32) {
+        if self.compact_density() { (2., 4.) } else { (3., 5.) }
+    }
+
     /// Forgets the laid out grid so the next render reads the folder's stored layout.
     pub(super) fn reset_part_grid(&mut self) {
         self.part_grid.grid = None;
@@ -428,7 +479,7 @@ impl Workbench {
     /// The grid's middle row for a window of `viewport`: every part where the grid puts it, inside its card margins,
     /// and the sashes. A changed `workbench.sideBar.location` moves the parts (`onDidChangeConfiguration`).
     pub(super) fn middle_section(&mut self, viewport: Size<Pixels>, editor: Div, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let status_bar_height = if self.is_status_bar_visible() { STATUS_BAR_HEIGHT } else { 0. };
+        let status_bar_height = if self.is_status_bar_visible() { self.status_bar_height() } else { 0. };
         let (width, height) = (f32::from(viewport.width), f32::from(viewport.height) - TITLE_BAR_HEIGHT - self.banner_height() - status_bar_height);
         let activity_bar_visible = self.is_part_visible(Part::ActivityBar);
         let stored = self.stored_arrangement();
@@ -445,7 +496,9 @@ impl Workbench {
             self.rearrange_parts(arrangement, panel_size);
         }
         let activity_bar_visible = self.is_part_visible(Part::ActivityBar);
+        let compact = self.compact_density();
         let grid = self.part_grid.grid.as_mut().expect("laid out above");
+        grid.set_compact(compact);
         grid.layout(width, height);
         grid.set_visible(Part::ActivityBar, activity_bar_visible);
         let arrangement = grid.arrangement();
@@ -453,13 +506,14 @@ impl Workbench {
         let sashes = grid.sashes();
         let dragging = grid.dragged_sash().is_some();
         if self.is_part_visible(Part::SideBar) {
-            self.layout_view_panes(parts.iter().find(|(part, _)| *part == Part::SideBar).map_or(height, |(_, [_, _, _, h])| *h) - super::layout::CARD_MARGIN, cx);
+            let bottom_gap = if compact { 0. } else { super::layout::CARD_MARGIN };
+            self.layout_view_panes(parts.iter().find(|(part, _)| *part == Part::SideBar).map_or(height, |(_, [_, _, _, h])| *h) - bottom_gap, cx);
         }
         self.sync_tree_views(cx);
         let mut editor = Some(editor);
         let mut section = div().relative().h(px(height)).flex_none();
         for &(part, rect) in &parts {
-            let [left, top, right, bottom] = card_margins(part, rect, &parts, arrangement, width, height, false);
+            let [left, top, right, bottom] = if compact { [0.; 4] } else { card_margins(part, rect, &parts, arrangement, width, height, false) };
             let content = match part {
                 Part::ActivityBar => self.activity_bar(window, cx),
                 Part::SideBar => {
@@ -551,7 +605,8 @@ impl Workbench {
         let active = self.part_grid.hovered == Some(sash) || grid.dragged_sash() == Some(sash);
         let hover_border = self.theme.color("sash.hoverBorder").unwrap_or(self.color("focusBorder"));
         // floatingPanels.css: a vertical sash's highlight stops `--modern-ui-floating-card-statusbar-margin` above the status bar.
-        let highlight_inset = if vertical { super::layout::CARD_MARGIN } else { 0. };
+        let compact = grid.is_compact();
+        let highlight_inset = if vertical && !compact { super::layout::CARD_MARGIN } else { 0. };
         let element = div()
             .id(id)
             .absolute()
@@ -559,7 +614,8 @@ impl Workbench {
             .top(px(y))
             .w(px(width))
             .h(px(height))
-            .when(!active && !self.part_grid.grippers_hidden, |element| element.child(self.sash_gripper(vertical, width, height)))
+            // sashHandles.css: compact cards meet edge to edge, without grips.
+            .when(!active && !compact && !self.part_grid.grippers_hidden, |element| element.child(self.sash_gripper(vertical, width, height)))
             .when(active, |sash| sash.child(div().absolute().top_0().left_0().right_0().bottom(px(highlight_inset)).bg(hover_border)));
         let cursor = match (vertical, state) {
             (true, SashState::AtMinimum) => CursorStyle::ResizeRight,

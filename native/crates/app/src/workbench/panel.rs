@@ -121,6 +121,12 @@ impl Workbench {
             workbench.hide_panel(cx);
             Outcome::done()
         });
+        for (command, source, destination) in [("workbench.action.movePanelToSecondarySideBar", Part::Panel, Part::AuxiliaryBar), ("workbench.action.moveSecondarySideBarToPanel", Part::AuxiliaryBar, Part::Panel)] {
+            self.commands.register(command, move |workbench, _, _, cx| {
+                workbench.move_views_between_panels(source, destination, cx);
+                Outcome::done()
+            });
+        }
         // panelActions.ts: maximizing needs a centered panel or one on a side.
         self.commands.register("workbench.action.toggleMaximizedPanel", |workbench, _, _, cx| {
             let arrangement = workbench.arrangement();
@@ -264,6 +270,34 @@ impl Workbench {
         self.editors_changed(cx);
     }
 
+    /// panelActions.ts `MoveViewsBetweenPanelsAction`: every container of `source` moves to `destination`, which shows,
+    /// and opens `source`'s active one when `destination` had none.
+    fn move_views_between_panels(&mut self, source: Part, destination: Part, cx: &mut Context<Self>) {
+        let moving = self.part_containers(source);
+        if moving.is_empty() {
+            return;
+        }
+        let active = self.is_part_visible(source).then(|| self.active_container_in(source)).flatten();
+        let destination_was_empty = self.part_containers(destination).is_empty();
+        let mut customizations = self.view_customizations();
+        let locations = customizations["viewContainerLocations"].as_object_mut().expect("normalized");
+        for tab in moving {
+            // Only moved containers keep an entry (`saveViewCustomizations` skips the default location).
+            match destination == Part::Panel && !is_generated_container(tab.id) {
+                true => drop(locations.remove(tab.id)),
+                false => drop(locations.insert(tab.id.to_owned(), json!(location_code(destination)))),
+            }
+        }
+        self.save_view_customizations(&customizations);
+        // paneCompositePart.ts: a part left without containers hides.
+        self.set_part_hidden(source, true, cx);
+        self.set_part_hidden(destination, false, cx);
+        match active.filter(|_| destination_was_empty) {
+            Some(id) => self.show_panel_container(id, cx),
+            None => self.editors_changed(cx),
+        }
+    }
+
     /// `getActivePaneComposite(ViewContainerLocation.Panel)`, while the panel shows.
     pub(super) fn active_panel_id(&self) -> Option<&'static str> {
         self.is_part_visible(Part::Panel).then(|| self.active_container_in(Part::Panel)).flatten()
@@ -367,7 +401,7 @@ impl Workbench {
             None => (self.empty_pane_message(drop_feedback).into_any_element(), None),
         };
         let content_bounds = self.composite_bar(part).content_bounds.clone();
-        self.pane_composite_card(background)
+        self.pane_composite_card(part, background)
             .on_drag_move(cx.listener(move |workbench, event: &DragMoveEvent<DraggedComposite>, _, cx| {
                 let over = event.bounds.contains(&event.event.position);
                 let target = if over { Some(part) } else { workbench.panel.drop_target.filter(|target| *target != part) };
@@ -394,10 +428,13 @@ impl Workbench {
             let pane = self.movable_view_pane(view, window, cx);
             return (pane.body, pane.actions);
         }
-        // shortcut: several views in a panel container stack vertically; upstream lays a bottom panel's panes side by side.
-        let height = f32::from(self.composite_bar(self.container_location(container)).content_bounds.get().size.height);
+        // viewPaneContainer.ts `orientation`: a top or bottom panel lays its panes side by side.
+        let part = self.container_location(container);
+        let horizontal = part == Part::Panel && self.arrangement().panel.is_horizontal();
+        let content = self.composite_bar(part).content_bounds.get().size;
+        let size = f32::from(if horizontal { content.width } else { content.height });
         let generated = super::view_panes::PaneContainer::Generated(container);
-        self.layout_panes(generated, height, views.iter().map(|&view| (view, false)).collect(), cx);
+        self.layout_panes(generated, size, views.iter().map(|&view| (view, false)).collect(), horizontal, cx);
         let panes = views.into_iter().map(|view| self.movable_view_pane(view, window, cx)).collect();
         let ordered = self.ordered_panes(&self.panes(generated).view.as_ref().expect("laid out above").ids(), panes, window, cx);
         (self.pane_view_element(generated, ordered, window, cx).into_any_element(), None)
@@ -410,8 +447,13 @@ impl Workbench {
         }
     }
 
-    fn pane_composite_card(&self, background: &str) -> Div {
-        div().flex_1().min_w_0().flex().flex_col().overflow_hidden().border_1().rounded(px(8.)).bg(self.color(background)).border_color(self.color("surface.border"))
+    fn pane_composite_card(&self, part: Part, background: &str) -> Div {
+        let card = div().flex_1().min_w_0().flex().flex_col().overflow_hidden().border_1().bg(self.color(background));
+        if !self.compact_density() {
+            return card.rounded(px(8.)).border_color(self.color("surface.border"));
+        }
+        let stroke = if part == Part::Panel { "modernPanel.border" } else { "surface.border" };
+        card.border_color(gpui::transparent_black()).child(self.compact_card_strokes(stroke, [false, true, true, self.part_at_left_edge(part)], true))
     }
 
     /// `.composite.title`: the tab strip's background with its bottom line, tabs on the left, then the active view's
@@ -487,6 +529,11 @@ impl Workbench {
             .child(div().flex_none().w(px(text_width(view.title, 13., window))).whitespace_nowrap().line_height(px(24.)).child(view.title))
             .children(badge)
             .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+            // compositeBar.ts: a view dropped on a tab moves into that container.
+            .on_drop(cx.listener(move |workbench, dragged: &super::view_panes::DraggedPane, _, cx| {
+                cx.stop_propagation();
+                workbench.drop_view_on_container(dragged.id, id, cx);
+            }))
             .on_click(cx.listener(move |workbench, _, window, cx| match workbench.panel.views.iter().find(|view| view.id == id) {
                 Some(view) => (view.open)(workbench, window, cx),
                 None => workbench.show_panel_container(id, cx),
@@ -533,14 +580,33 @@ impl Workbench {
     /// viewPane.ts `FilterViewPane.shouldShowFilterInHeader`: the filter leaves the title for the top of the view
     /// when the view is narrower than 600px and taller than 100px; before the first paint it is in the title.
     pub(super) fn view_filter_in_header(&self, container: &str) -> bool {
-        let size = self.composite_bar(self.view_container_part(container)).content_bounds.get().size;
+        let size = self.filter_view_size(container);
         !(size.width < px(600.) && size.height > px(100.))
     }
 
     /// viewFilter.ts `layout`: below 400px of view width the filter is `.small` and hides its badge.
     pub(super) fn view_filter_small(&self, container: &str) -> bool {
-        let width = self.composite_bar(self.view_container_part(container)).content_bounds.get().size.width;
+        let width = self.filter_view_size(container).width;
         width > px(0.) && width < px(400.)
+    }
+
+    /// The size of the panel container's view: the part's content, or its pane's share of it when the view lies
+    /// among other views of a panel container.
+    fn filter_view_size(&self, container: &str) -> gpui::Size<Pixels> {
+        let mut size = self.composite_bar(self.view_container_part(container)).content_bounds.get().size;
+        let Some(view) = self.panel.views.iter().find(|view| view.id == container).map(|view| view.view_id) else { return size };
+        let Some(holder) = self.movable_view(view).map(|movable| self.view_container(&movable)) else { return size };
+        if self.views_in(holder).iter().filter(|view| self.movable_view_shown(view)).count() < 2 {
+            return size;
+        }
+        let Some(panes) = self.generated_panes.get(holder).and_then(|panes| panes.view.as_ref()) else { return size };
+        let Some(index) = panes.ids().iter().position(|id| *id == view) else { return size };
+        let pane = panes.sizes()[index];
+        match panes.is_horizontal() {
+            true => size.width = px(pane),
+            false => size.height = px(pane - super::view_panes::HEADER_SIZE),
+        }
+        size
     }
 
     /// views.css `.viewpane-filter-container` in a panel title: 200px, and while focused up to 400px of the room the

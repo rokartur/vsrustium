@@ -35,6 +35,8 @@ pub enum MenuId {
     ActivityBarPositionMenu,
     PanelPositionMenu,
     PanelAlignmentMenu,
+    /// layoutDensityActions.ts `LayoutDensityMenu`.
+    LayoutDensityMenu,
     ThemesSubMenu,
     /// userDataProfile.ts `ProfilesMenu` and `OpenProfileMenu`.
     ProfilesMenu,
@@ -309,6 +311,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     // gettingStarted.contribution.ts and processExplorer.contribution.ts
     (MenuId::MenubarHelpMenu, None, "workbench.action.openWalkthrough", "Welcome", "1_welcome", 1., None, None),
     (MenuId::MenubarHelpMenu, None, "welcome.showAllWalkthroughs", "Open Walkthrough...", "1_welcome", 3., None, None),
+    // walkThrough.contribution.ts
+    (MenuId::MenubarHelpMenu, None, "workbench.action.showInteractivePlayground", "Editor Playgrou&&nd", "1_welcome", 3., None, None),
     (MenuId::MenubarHelpMenu, None, "workbench.action.openProcessExplorer", "Open &&Process Explorer", "5_tools", 2., None, None),
     // preferences.contribution.ts
     (MenuId::MenubarPreferencesMenu, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
@@ -321,6 +325,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::GlobalActivity, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
     (MenuId::GlobalActivity, None, "workbench.action.openSnippets", "Snippets", "2_configuration", 5., None, None),
     (MenuId::GlobalActivity, Some(MenuId::ThemesSubMenu), "", "Themes", "2_configuration", 7., None, None),
+    // modernUI.contribution.ts
+    (MenuId::GlobalActivity, Some(MenuId::LayoutDensityMenu), "", "Layout Density", "2_configuration", 8., Some("config.workbench.experimental.modernUI == true"), None),
     // clipboard.ts, editor.contribution.ts: the Copy As and Share submenus, shown once an extension fills them.
     (MenuId::MenubarEditMenu, Some(MenuId::MenubarCopy), "", "Copy As", "2_ccp", 3., None, None),
     (MenuId::MenubarFileMenu, Some(MenuId::MenubarShare), "", "Share", "45_share", 1., Some("!isSessionsWindow"), None),
@@ -519,7 +525,7 @@ const WORKBENCH_MENUS: &[Row] = &[
 /// windowActions.ts, layoutActions.ts, auxiliaryBarActions.ts, panelActions.ts, activitybarPart.ts, toggleMinimap.ts, stickyScrollActions.ts and
 /// toggleRenderControlCharacter.ts: the Appearance items the port has, checked by their `toggled`.
 type ToggleRow = (MenuId, &'static str, &'static str, &'static str, f64, &'static str, &'static str);
-const APPEARANCE_TOGGLES: [ToggleRow; 23] = [
+const APPEARANCE_TOGGLES: [ToggleRow; 25] = [
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleZenMode", "Zen Mode", "1_toggle_view", 2., "!isSessionsWindow", "inZenMode"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleCenteredLayout", "&&Centered Layout", "1_toggle_view", 3., "!isSessionsWindow", "isCenteredLayout"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleStatusbarVisibility", "S&&tatus Bar", "2_workbench_layout", 3., "!isSessionsWindow", "config.workbench.statusBar.visible == true"),
@@ -535,6 +541,9 @@ const APPEARANCE_TOGGLES: [ToggleRow; 23] = [
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleSidebarVisibility", "&&Primary Side Bar", "2_workbench_layout", 1., "!isSessionsWindow", "sideBarVisible"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.toggleAuxiliaryBar", "&&Secondary Side Bar", "2_workbench_layout", 2., "!isSessionsWindow", "secondarySideBarVisible"),
     (MenuId::MenubarAppearanceMenu, "workbench.action.togglePanel", "&&Panel", "2_workbench_layout", 5., "", "panelVisible"),
+    // layoutDensityActions.ts
+    (MenuId::LayoutDensityMenu, "workbench.action.setLayoutDensity.default", "Default", "", 1., "", "config.window.density.layout == 'default'"),
+    (MenuId::LayoutDensityMenu, "workbench.action.setLayoutDensity.compact", "Compact", "", 2., "", "config.window.density.layout == 'compact'"),
     (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.default", "&&Default", "", 1., "", "config.workbench.activityBar.location == 'default'"),
     (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.top", "&&Top", "", 2., "", "config.workbench.activityBar.location == 'top'"),
     (MenuId::ActivityBarPositionMenu, "workbench.action.activityBarLocation.bottom", "&&Bottom", "", 3., "", "config.workbench.activityBar.location == 'bottom'"),

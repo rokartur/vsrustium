@@ -13,15 +13,14 @@ use super::input_box_view::{InputId, InputLook};
 use crate::debug::session::{State, Variable};
 use crate::input_box::InputBox;
 
-/// The views of the container, in their order.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum Section {
-    Variables,
-    Watch,
-    CallStack,
-    Breakpoints,
-    LoadedScripts,
-}
+pub(super) const DEBUG_CONTAINER: &str = "workbench.view.debug";
+/// debug.ts view ids and welcomeView.ts `WelcomeView.ID`.
+pub(super) const VARIABLES_VIEW: &str = "workbench.debug.variablesView";
+pub(super) const WATCH_VIEW: &str = "workbench.debug.watchExpressionsView";
+pub(super) const CALL_STACK_VIEW: &str = "workbench.debug.callStackView";
+pub(super) const BREAKPOINTS_VIEW: &str = "workbench.debug.breakPointsView";
+pub(super) const LOADED_SCRIPTS_VIEW: &str = "workbench.debug.loadedScriptsView";
+pub(super) const DEBUG_WELCOME_VIEW: &str = "workbench.debug.welcome";
 
 /// The inline input of the Watch or Breakpoints view.
 #[derive(Clone, Debug, PartialEq)]
@@ -32,7 +31,6 @@ pub enum Editing {
 }
 
 pub struct DebugView {
-    pub collapsed: HashSet<Section>,
     /// Tree rows the user expanded, by their path (`<scope reference>/<name>/...`), and the call stack's sessions.
     pub expanded: HashSet<String>,
     pub collapsed_rows: HashSet<String>,
@@ -55,8 +53,6 @@ pub struct DebugView {
 impl DebugView {
     pub fn new(cx: &mut gpui::App) -> Self {
         DebugView {
-            // Loaded Scripts registers `collapsed: true`.
-            collapsed: HashSet::from([Section::LoadedScripts]),
             expanded: HashSet::new(),
             collapsed_rows: HashSet::new(),
             editing: None,
@@ -78,32 +74,46 @@ const ROW_HEIGHT: f32 = 22.;
 const INDENT: f32 = 8.;
 
 impl Workbench {
-    /// The Run and Debug container below the side bar title.
+    /// `CONTEXT_DEBUG_UX` `simple`: no session and no launch configuration, the welcome view instead of the debug views.
+    pub(super) fn debug_ux_simple(&self) -> bool {
+        self.debug.state() == State::Inactive && self.debug.sessions.is_empty() && !self.workspace_folders().iter().any(|folder| !self.folder_launch(folder).configurations.is_empty())
+    }
+
+    /// The container's own views whose `when` holds, in their `order`, with whether each starts collapsed.
+    pub(super) fn debug_views(&self) -> Vec<(&'static str, bool)> {
+        if self.debug_ux_simple() {
+            let mut views = vec![(DEBUG_WELCOME_VIEW, false)];
+            if !self.debug.model.breakpoints.is_empty() || !self.debug.model.function_breakpoints.is_empty() || !self.debug.model.exception_breakpoints.is_empty() {
+                views.push((BREAKPOINTS_VIEW, false));
+            }
+            return views;
+        }
+        let loaded = self.debug.focused_session().is_some_and(|session| session.capabilities["supportsLoadedSourcesRequest"] == true);
+        // debug.contribution.ts view `order`: Loaded Scripts (35, `collapsed: true`) sits between Call Stack and Breakpoints.
+        let mut views = vec![(VARIABLES_VIEW, false), (WATCH_VIEW, false), (CALL_STACK_VIEW, false), (BREAKPOINTS_VIEW, false)];
+        if loaded {
+            views.insert(3, (LOADED_SCRIPTS_VIEW, true));
+        }
+        views
+    }
+
+    /// The Run and Debug container: the title with the launch picker, then its panes; the welcome view alone merges
+    /// into the container.
     pub(super) fn debug_side_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let foreground = self.foreground_or("sideBar.foreground");
-        let simple = self.debug.state() == State::Inactive && self.debug.sessions.is_empty() && !self.workspace_folders().iter().any(|folder| !self.folder_launch(folder).configurations.is_empty());
         let mut title = self.side_bar_title("Run and Debug");
-        if !simple {
+        if !self.debug_ux_simple() {
             title = title.child(self.start_debug_item(cx));
         }
-        let mut body = div().flex_1().min_h_0().flex().flex_col();
-        if simple {
-            body = body.child(self.debug_welcome(window, cx));
-            if !self.debug.model.breakpoints.is_empty() || !self.debug.model.function_breakpoints.is_empty() || !self.debug.model.exception_breakpoints.is_empty() {
-                body = body.child(self.debug_section(Section::Breakpoints, "Breakpoints", false, window, cx));
-            }
-        } else {
-            let loaded = self.debug.focused_session().is_some_and(|session| session.capabilities["supportsLoadedSourcesRequest"] == true);
-            // debug.contribution.ts view `order`: Loaded Scripts (35) sits between Call Stack and Breakpoints.
-            let mut sections = vec![(Section::Variables, "Variables"), (Section::Watch, "Watch"), (Section::CallStack, "Call Stack"), (Section::Breakpoints, "Breakpoints")];
-            if loaded {
-                sections.insert(3, (Section::LoadedScripts, "Loaded Scripts"));
-            }
-            for (index, (section, title)) in sections.into_iter().enumerate() {
-                body = body.child(self.debug_section(section, title, index > 0, window, cx));
-            }
+        let frame = self.side_bar_frame().text_color(foreground).child(title);
+        let container = super::view_panes::PaneContainer::Debug;
+        let ids = self.panes(container).view.as_ref().expect("panes are laid out before they draw").ids().to_vec();
+        if ids == [DEBUG_WELCOME_VIEW] {
+            return frame.child(div().flex_1().min_h_0().flex().flex_col().child(self.debug_welcome(window, cx)));
         }
-        self.side_bar_frame().text_color(foreground).child(title).child(body)
+        let panes = ids.iter().filter(|id| self.debug_views().iter().any(|(view, _)| view == *id)).map(|&id| self.debug_view_pane(id, window, cx)).collect();
+        let ordered = self.ordered_panes(&ids, panes, window, cx);
+        frame.child(self.pane_view_element(container, ordered, window, cx)).child(div().h(px(5.)).flex_none())
     }
 
     /// welcomeView.ts contents with the debuggers' `viewsWelcome` for the `debug` view.
@@ -250,53 +260,37 @@ impl Workbench {
             .child(self.search_action("gear", "workbench.action.debug.configure", self.folder.is_some(), cx).text_color(foreground))
     }
 
-    /// A pane: its header with the view's actions while expanded, then its rows.
-    fn debug_section(&self, section: Section, title: &str, separated: bool, window: &Window, cx: &mut Context<Self>) -> Div {
-        let expanded = !self.debug_view.collapsed.contains(&section);
-        let actions = match section {
-            Section::Watch => vec![("add", "workbench.debug.viewlet.action.addWatchExpression", true), ("close-all", "workbench.debug.viewlet.action.removeAllWatchExpressions", !self.debug.model.watch_expressions.is_empty())],
-            Section::Breakpoints => vec![
-                ("add", "workbench.debug.viewlet.action.addFunctionBreakpointAction", true),
-                ("activate-breakpoints", "workbench.debug.viewlet.action.toggleBreakpointsActivatedAction", true),
-                ("close-all", "workbench.debug.viewlet.action.removeAllBreakpoints", !self.debug.model.breakpoints.is_empty() || !self.debug.model.function_breakpoints.is_empty()),
-            ],
-            _ => Vec::new(),
+    /// A view of the container as a pane: its name, its title actions and its rows.
+    pub(super) fn debug_view_pane(&self, id: &'static str, window: &Window, cx: &mut Context<Self>) -> super::view_panes::ViewPane {
+        let (title, actions) = match id {
+            WATCH_VIEW => ("Watch", vec![("add", "workbench.debug.viewlet.action.addWatchExpression", true), ("close-all", "workbench.debug.viewlet.action.removeAllWatchExpressions", !self.debug.model.watch_expressions.is_empty())]),
+            BREAKPOINTS_VIEW => (
+                "Breakpoints",
+                vec![
+                    ("add", "workbench.debug.viewlet.action.addFunctionBreakpointAction", true),
+                    ("activate-breakpoints", "workbench.debug.viewlet.action.toggleBreakpointsActivatedAction", true),
+                    ("close-all", "workbench.debug.viewlet.action.removeAllBreakpoints", !self.debug.model.breakpoints.is_empty() || !self.debug.model.function_breakpoints.is_empty()),
+                ],
+            ),
+            VARIABLES_VIEW => ("Variables", Vec::new()),
+            CALL_STACK_VIEW => ("Call Stack", Vec::new()),
+            LOADED_SCRIPTS_VIEW => ("Loaded Scripts", Vec::new()),
+            _ => ("Run", Vec::new()),
         };
-        let mut header = self.section_header(title, expanded, separated).id(("debug-section", section as usize)).on_click(cx.listener(move |workbench, _: &ClickEvent, _, cx| {
-            if !workbench.debug_view.collapsed.remove(&section) {
-                workbench.debug_view.collapsed.insert(section);
-            }
-            cx.notify();
-        }));
-        if expanded && !actions.is_empty() {
-            let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(2.));
-            for (icon, command, enabled) in actions {
-                bar = bar.child(self.search_action(icon, command, enabled, cx));
-            }
-            header = header.child(bar);
-        }
-        let mut pane = div().flex().flex_col().child(header.debug_selector(|| format!("debug-section-{}", section as usize)));
-        if expanded {
-            let rows = match section {
-                Section::Variables => self.variables_rows(cx),
-                Section::Watch => self.watch_rows(window, cx),
-                Section::CallStack => self.call_stack_rows(cx),
-                Section::Breakpoints => self.breakpoint_rows(window, cx),
-                Section::LoadedScripts => self.loaded_script_rows(),
-            };
-            // debug.contribution.ts view `weight`s share the container's height.
-            let weight = match section {
-                Section::Variables => 40.,
-                Section::Watch => 10.,
-                Section::CallStack => 30.,
-                Section::Breakpoints => 20.,
-                Section::LoadedScripts => 5.,
-            };
-            pane = pane.flex_1().min_h_0();
-            pane.style().flex_grow = Some(weight);
-            pane = pane.child(div().id(("debug-rows", section as usize)).flex_1().min_h_0().overflow_y_scroll().children(rows));
-        }
-        pane
+        let rows = match id {
+            VARIABLES_VIEW => self.variables_rows(cx),
+            WATCH_VIEW => self.watch_rows(window, cx),
+            CALL_STACK_VIEW => self.call_stack_rows(cx),
+            BREAKPOINTS_VIEW => self.breakpoint_rows(window, cx),
+            LOADED_SCRIPTS_VIEW => self.loaded_script_rows(),
+            _ => vec![self.debug_welcome(window, cx).into_any_element()],
+        };
+        let bar = (!actions.is_empty()).then(|| {
+            let bar = div().flex().gap(px(2.)).children(actions.into_iter().map(|(icon, command, enabled)| self.search_action(icon, command, enabled, cx)));
+            bar.into_any_element()
+        });
+        let body = div().id(id).flex_1().min_h_0().overflow_y_scroll().children(rows).into_any_element();
+        super::view_panes::ViewPane { id, title: title.into(), description: None, actions: bar, show_actions: false, body }
     }
 
     fn debug_row(&self, key: String, depth: usize, twistie: Option<bool>) -> gpui::Stateful<Div> {
@@ -305,7 +299,7 @@ impl Workbench {
         let mut row = div()
             .id(gpui::SharedString::from(key))
             .h(px(ROW_HEIGHT))
-            .mx(px(4.))
+            .mx(px(self.pane_row_inset()))
             .rounded(px(4.))
             .flex()
             .items_center()
@@ -746,7 +740,7 @@ mod tests {
         let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
-        let (_workbench, cx) = cx.add_window_view(|_, cx| {
+        let (workbench, cx) = cx.add_window_view(|_, cx| {
             let mut workbench = Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
             let mut session = crate::debug::session::Session::new("s".into(), 1, json!({ "name": "Launch", "type": "node", "request": "launch" }), json!({}), None, json!({}));
             session.capabilities = json!({ "supportsLoadedSourcesRequest": true });
@@ -761,10 +755,12 @@ mod tests {
             workbench
         });
         cx.run_until_parked();
-        for section in 0..4 {
-            let bounds = cx.debug_bounds(["debug-section-0", "debug-section-1", "debug-section-2", "debug-section-3"][section]);
-            assert!(bounds.is_some_and(|bounds| bounds.size.height > gpui::px(0.)), "section {section}: {bounds:?}");
-        }
+        let (ids, sizes) = workbench.read_with(cx, |workbench, _| {
+            let view = workbench.panes(super::super::view_panes::PaneContainer::Debug).view.as_ref().unwrap();
+            (view.ids().to_vec(), view.sizes())
+        });
+        assert_eq!(ids, [VARIABLES_VIEW, WATCH_VIEW, CALL_STACK_VIEW, LOADED_SCRIPTS_VIEW, BREAKPOINTS_VIEW]);
+        assert!(sizes.iter().all(|size| *size >= super::super::view_panes::HEADER_SIZE), "{sizes:?}");
     }
 
     #[test]

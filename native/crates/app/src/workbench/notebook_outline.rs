@@ -65,7 +65,7 @@ impl Workbench {
                     .flex()
                     .items_center()
                     .cursor_pointer()
-                    .mx(px(4.))
+                    .mx(px(self.pane_row_inset()))
                     .rounded(px(4.))
                     .pl(px(11. + indent * row.depth as f32))
                     .when(!is_selected, |row| row.hover(|row| row.bg(self.color("list.hoverBackground"))))
@@ -105,7 +105,7 @@ impl Workbench {
         let Some(editor) = self.host.notebooks.editors.iter_mut().find(|editor| editor.tab_model_id == tab) else { return };
         editor.focus = cell;
         editor.selections = vec![(cell, cell + 1)];
-        self.reveal_notebook_cells(tab, cell, cell + 1, CellReveal::Top);
+        self.reveal_notebook_cells(tab, cell, cell + 1, CellReveal::Top, cx);
         self.editors_changed(cx);
         cx.notify();
     }

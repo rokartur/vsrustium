@@ -40,6 +40,8 @@ pub struct Notebooks {
     pub most_recent_repl: Option<String>,
     /// `interactiveWindowOpen`: an interactive window or REPL editor opened once (never reset, as upstream).
     pub interactive_window_open: bool,
+    /// Renderer messages from the webviews (editor id, message) that wait for `onRenderer:<id>`, by renderer id.
+    pub renderer_messages: std::collections::HashMap<String, Vec<(String, Value)>>,
 }
 
 /// An interactive window's or REPL editor's input editor model and its history (interactiveHistoryService.ts).
@@ -282,6 +284,10 @@ pub struct NotebookModel {
     /// notebookEditorModelResolverServiceImpl.ts `isScratchpad`: changes never make it dirty (an interactive window
     /// without `interactiveWindow.promptToSaveOnClose`).
     pub scratchpad: bool,
+    /// Resolved by a REPL editor (repl.contribution.ts): its working copy and backups are `notebook/<type>/repl`.
+    pub repl_working_copy: bool,
+    /// Changed since it was created (`isModified`): a scratchpad is never dirty but still backs up when modified.
+    pub modified: bool,
     /// The serializer's `TransientOptions`: `transientOutputs`, `transientCellMetadata`, `transientDocumentMetadata`.
     pub transient: Value,
     /// Cell edits of the notebook editor to undo and redo; the cells' text edits are on their models' stacks, all
@@ -301,7 +307,7 @@ pub struct CellsUndo {
 impl NotebookModel {
     /// `NotebookTextModel` from `NotebookData` (a `NotebookDataDto`); the new cells' texts are returned with it.
     pub fn new(uri: Value, view_type: &str, data: &Value, transient: Value) -> (Self, Vec<NewCellText>) {
-        let mut model = NotebookModel { uri, view_type: view_type.to_owned(), metadata: object_or_empty(&data["metadata"]), cells: Vec::new(), version_id: 0, next_handle: 0, dirty: false, scratchpad: false, transient, undo: Vec::new(), redo: Vec::new() };
+        let mut model = NotebookModel { uri, view_type: view_type.to_owned(), metadata: object_or_empty(&data["metadata"]), cells: Vec::new(), version_id: 0, next_handle: 0, dirty: false, scratchpad: false, repl_working_copy: false, modified: false, transient, undo: Vec::new(), redo: Vec::new() };
         let cells = data["cells"].as_array().cloned().unwrap_or_default();
         let (cells, texts) = model.create_cells(&cells);
         model.cells = cells;
@@ -419,6 +425,7 @@ impl NotebookModel {
         }
         self.version_id += 1;
         self.dirty |= dirtying && !self.scratchpad;
+        self.modified |= dirtying;
         applied.event = Some(json!({ "rawEvents": events, "versionId": self.version_id }));
         Ok(applied)
     }
@@ -541,6 +548,7 @@ impl NotebookModel {
     pub fn cell_content_changed(&mut self, index: usize) -> Value {
         self.version_id += 1;
         self.dirty |= !self.scratchpad;
+        self.modified = true;
         json!({ "rawEvents": [{ "kind": change::CELL_CONTENT, "index": index }], "versionId": self.version_id })
     }
 
