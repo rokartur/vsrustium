@@ -32,6 +32,10 @@ for await (const file of new Glob('src/vs/**/*.ts').scan('.')) {
 let skipped = 0;
 for (const { id, target } of calls) {
 	const codicon = target.startsWith('Codicon.') ? codiconIds.get(target.slice('Codicon.'.length)) : variables.get(target);
+	// registerIcon over a codicon's own id returns the codicon (iconRegistry.ts `registerIcon` keeps an existing id).
+	if (codicon === id) {
+		continue;
+	}
 	if (codicon) {
 		defaults[id] = codicon;
 	} else {
