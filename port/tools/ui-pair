@@ -10,6 +10,9 @@
 //   {"scroll": [x, y], "amount": notches} (real wheel notches down, the pointer left there)  {"hover": [x, y]} (the real pointer, for hovers)  {"hotkey": ["cmd", "c"]}  {"type": "text"}  {"type": "Text", "foreground": true} (capitals as shift plus the letter)  {"wait": ms}  {"shot": "name"}  {"clipboard": "name"} (the pasteboard text, the folder path as <folder>)
 //   {"dragShot": [x1, y1, x2, y2], "shot": "name", "modifier": ["option"], "button": "middle"}: a slow drag, captured while held
 //   {"windows": "name"}: the titles, sizes and visibility of the app's windows, as <app>-<name>.json
+//   {"window": "auxiliary", ...}: the step acts on (or shoots) the app's other on-screen window, the first one that is not the main window
+//   {"frame": [x, y, width, height], "window": "auxiliary"}: moves and sizes that window, in points from the main window's top left
+//   {"dragShot": [...]} without "shot": the drag alone; with "window" and "shotMain": true, a drag from that window captured in the main one
 //   {"restart": true}: after the app quit (a Cmd+Q step), start it again on the same user data and folder
 //   {"launch": ["docs/guide.md"]}: start the app a second time with these paths (relative to the folder), as a command line would
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
@@ -18,10 +21,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 
-type Step = { click?: number[]; scroll?: number[]; amount?: number; hover?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; windows?: string; button?: string; restart?: boolean; launch?: string[] };
+type Step = { window?: string; frame?: number[]; shotMain?: boolean; click?: number[]; scroll?: number[]; amount?: number; hover?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; windows?: string; button?: string; restart?: boolean; launch?: string[] };
 
 const [outDir, stepsFile, themeName = 'dark'] = process.argv.slice(2);
 const steps: Step[] = JSON.parse(readFileSync(stepsFile, 'utf8'));
+/** Windows `otherWindow` found: never taken for a sheet. */
+const otherWindowIds = new Set<number>();
 const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
 const themes: Record<string, [string, string]> = {
 	dark: ['Default Dark Modern', 'Dark Modern'],
@@ -106,10 +111,14 @@ function startPort(paths: string[], userData: string) {
 }
 
 async function run(app: string, firstPid: number, folder: string, restart: () => Promise<number>, launch: (paths: string[]) => Promise<void>) {
-	let { window, target, scale } = await attach(app, firstPid);
+	let { window, target: main, scale } = await attach(app, firstPid);
 	const at = (point: number[]) => ({ x: point[0] * scale, y: point[1] * scale });
 	for (const step of steps) {
-		if (step.click) {
+		const target = step.window ? await otherWindow(main) : main;
+		if (step.frame) {
+			const [x, y, width, height] = step.frame;
+			await cua('set_window_frame', { ...target, x: window.bounds.x + x, y: window.bounds.y + y, width, height });
+		} else if (step.click) {
 			await cua('click', { ...target, ...at(step.click), modifier: step.modifier, delivery_mode: step.foreground ? 'foreground' : undefined });
 		} else if (step.scroll) {
 			// Electron drops background wheel events; both get the real pointer's.
@@ -150,15 +159,18 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 		} else if (step.launch) {
 			await launch(step.launch);
 		} else if (step.restart) {
-			({ window, target, scale } = await attach(app, await restart()));
+			({ window, target: main, scale } = await attach(app, await restart()));
 		} else if (step.dragShot) {
 			const [x1, y1, x2, y2] = step.dragShot;
 			// A background drag reaches only Electron's own drag and drop; GPUI needs the real pointer.
 			// `foreground: true` sends the reference's drag through the real pointer too (a sash, not a drag and drop).
 			const delivery_mode = app === 'port' || step.foreground ? 'foreground' : 'background';
 			const drag = cua('drag', { ...target, from_x: x1 * scale, from_y: y1 * scale, to_x: x2 * scale, to_y: y2 * scale, duration_ms: 4000, steps: 40, modifier: step.modifier, button: step.button, delivery_mode });
-			await Bun.sleep(3500);
-			await shot(app, target.pid, target.window_id, step.shot!);
+			if (step.shot) {
+				await Bun.sleep(3500);
+				const shotTarget = step.shotMain ? main : target;
+				await shot(app, shotTarget.pid, shotTarget.window_id, step.shot);
+			}
 			await drag;
 		} else if (step.shot) {
 			await shot(app, target.pid, target.window_id, step.shot);
@@ -200,13 +212,24 @@ async function attach(app: string, pid: number) {
 	return { window, target, scale };
 }
 
+/** The app's on-screen window other than `main` (an auxiliary window), at least 400 points wide. */
+async function otherWindow(main: { pid: number; window_id: number }) {
+	type Listed = { window_id: number; is_on_screen: boolean; bounds: { width: number } };
+	const other = await until(async () => {
+		const { windows } = await cua('list_windows', { pid: main.pid });
+		return windows.find((w: Listed) => w.is_on_screen && w.window_id !== main.window_id && w.bounds.width >= 400);
+	}, 10000);
+	otherWindowIds.add(other.window_id);
+	return { pid: main.pid, window_id: other.window_id };
+}
+
 /** The window, or the sheet over it when one is open. */
 async function shot(app: string, pid: number, windowId: number, name: string) {
 	type Listed = { window_id: number; is_on_screen: boolean; bounds: { width: number } };
 	const { windows } = await cua('list_windows', { pid });
 	// The port reopens its window when it enters a workspace: then the new 1024 wide window is the main one.
 	const main = windows.some((w: Listed) => w.window_id === windowId && w.is_on_screen) ? windowId : windows.find((w: Listed) => w.is_on_screen && w.bounds.width === 1024)?.window_id ?? windowId;
-	const sheet = windows.find((w: Listed) => w.is_on_screen && w.window_id !== main && w.bounds.width < 1024);
+	const sheet = windows.find((w: Listed) => w.is_on_screen && w.window_id !== main && w.bounds.width < 1024 && !otherWindowIds.has(w.window_id) && !otherWindowIds.has(main));
 	const file = resolve(outDir, `${app}-${name}.png`);
 	await cua('get_window_state', { pid, window_id: sheet?.window_id ?? main, include_accessibility_tree: false, max_image_dimension: 2048, screenshot_out_file: file });
 	console.log(`${app}-${name}.png${sheet ? ' (sheet)' : ''}`);
