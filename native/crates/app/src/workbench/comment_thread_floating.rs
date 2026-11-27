@@ -18,6 +18,7 @@ use super::comment_thread_floating_layout::{
 };
 use super::comment_thread_widget::{BODY_LINE, COMMENT_CHROME, EDIT_FORM, Place, REPLY_BUTTON_FORM, REPLY_EDITOR_FORM, ThreadWidget};
 use super::peek_view::UI_FONT;
+use crate::editor::injected_text::InjectionOwner;
 use crate::editor::{OpenEditor, VERTICAL_SCROLLBAR_WIDTH, Viewport, visible_column};
 use crate::menus::{MenuAction, MenuId, menu_actions};
 
@@ -190,9 +191,12 @@ impl CodeGeometry<'_> {
         }
     }
 
+    /// `getOffsetForColumn`: past the injected text before the column (inlay hints, color boxes); `usize::MAX` is the
+    /// line's end with the injections after its last char.
     fn offset(&self, line: usize, column: usize) -> f32 {
-        let text = &self.editor.document().lines[line];
-        visible_column(text, column.min(text.chars().count()), self.editor.document().indentation.tab_size) as f32 * self.viewport.char_width
+        let layout = self.editor.line_layout(line);
+        let x = if column == usize::MAX { layout.width() } else { layout.x(column) };
+        x * self.viewport.char_width
     }
 
     /// `getLineRects`: the commented lines in view, in editor coordinates, top to bottom without gaps; code running out
@@ -273,11 +277,20 @@ impl CodeGeometry<'_> {
             }
             let model_line = self.editor.model_line(view_line);
             let wrapped = self.line_bottom(model_line) - self.line_top(model_line) > self.viewport.line_height;
-            let width = if wrapped { self.viewport.width } else { self.offset(model_line, usize::MAX) };
+            let width = if wrapped { self.viewport.width } else { self.estimated_columns(model_line) * self.viewport.char_width };
             lines.push(Rect { top: line_top, left, width, height: self.viewport.line_height });
             view_line += 1;
         }
         lines
+    }
+
+    /// `visibleColumnFromColumn` of the view line's content, which holds injected text as chars: a color box's
+    /// injection is one no-break space (colorDetector.ts); the others are taken as wide as they draw.
+    fn estimated_columns(&self, line: usize) -> f32 {
+        let document = self.editor.document();
+        let text = &document.lines[line];
+        let injected: f32 = self.editor.injected_text_on(line).iter().map(|injection| if injection.owner == InjectionOwner::Color { 1. } else { injection.columns }).sum();
+        visible_column(text, text.chars().count(), document.indentation.tab_size) as f32 + injected
     }
 }
 
@@ -853,6 +866,7 @@ impl Workbench {
         let dragging = self.comments.floating.gesture.as_ref().is_some_and(|gesture| gesture.key == key && matches!(gesture.kind, GestureKind::Drag { .. }));
         let head = div()
             .id("comment-thread-floating-head")
+            .debug_selector(|| "comment-thread-floating-head".into())
             .flex_none()
             .rounded_t(px(CORNER_RADIUS - STROKE))
             .overflow_hidden()

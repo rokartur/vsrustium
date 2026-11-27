@@ -1,4 +1,4 @@
-use gpui::{Modifiers, MouseButton, MouseDownEvent, TestAppContext, VisualTestContext, point, px};
+use gpui::{Modifiers, MouseButton, TestAppContext, VisualTestContext, point, px};
 use serde_json::{Value, json};
 
 use super::*;
@@ -49,12 +49,12 @@ fn a_floating_thread_is_placed_by_its_code_and_keeps_where_the_user_moved_it(cx:
     assert_eq!(top, centered_top(19. * line_height, 20. * line_height, height));
     assert!(width >= 240. && layout.left + width <= viewport_width - VERTICAL_SCROLLBAR_WIDTH, "{layout:?} {width}");
 
-    let key = (1, 7, workbench.read_with(cx, |workbench, _| workbench.editors.active().unwrap().model_id));
-    workbench.update_in(cx, |workbench, window, cx| {
-        let down = MouseDownEvent { button: MouseButton::Left, position: point(px(500.), px(300.)), modifiers: Modifiers::default(), click_count: 1, first_mouse: false };
-        workbench.start_floating_drag(key, &down, cx);
-        workbench.move_floating_gesture(point(px(480.), px(340.)), true, window, cx);
-    });
+    let head = cx.debug_bounds("comment-thread-floating-head").expect("the title is drawn");
+    let grab = head.center();
+    cx.simulate_mouse_down(grab, MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_move(grab + point(px(-10.), px(20.)), MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_move(grab + point(px(-20.), px(40.)), MouseButton::Left, Modifiers::default());
+    cx.simulate_mouse_up(grab + point(px(-20.), px(40.)), MouseButton::Left, Modifiers::default());
     cx.run_until_parked();
     let (moved, moved_top, ..) = floating(&workbench, cx).unwrap();
     let moved = moved.unwrap();
