@@ -48,6 +48,7 @@ impl Workbench {
     pub(super) fn open_extension_editor(&mut self, extension: Extension, preview: bool, window: &mut Window, cx: &mut Context<Self>) {
         let id = extension.identifier().id;
         let path = PathBuf::from(format!("{}", id.to_lowercase()));
+        self.leave_locked_group(EXTENSION_EDITOR_SCHEME, &path);
         if let Some(index) = self.editors.editors.iter().position(|editor| editor.document().is(EXTENSION_EDITOR_SCHEME, &path)) {
             self.editors.activate(index);
         } else {

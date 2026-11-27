@@ -84,6 +84,7 @@ impl Workbench {
         if !self.editor_groups.drawing_inactive {
             self.schedule_unusual_line_terminators_check(editor, window, cx);
         }
+        let compact = self.drawing_compact_part();
         div()
             .flex_1()
             .min_w_0()
@@ -91,7 +92,7 @@ impl Workbench {
             .relative()
             .flex()
             .flex_col()
-            .child(self.tab_strip(window, cx))
+            .when(!compact, |part| part.child(self.tab_strip(window, cx)))
             .map(|part| match editor.document().scheme.as_str() {
                 // The playground's focused snippet is the active editor; the page draws it with the others.
                 _ if self.playground_active() => part.child(self.playground_body(window, cx)),
@@ -108,7 +109,7 @@ impl Workbench {
                 "untitled" => part,
                 // mergeEditor.ts: the merge editor has no breadcrumbs.
                 _ if self.editors.active_merge().is_some() => part,
-                _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
+                _ if compact || self.setting("breadcrumbs.enabled") == json!(false) => part,
                 _ => part.child(self.breadcrumbs(editor, cx).opacity(self.unfocused_editor_opacity(window))),
             })
             .map(|part| match self.editors.active_diff() {
@@ -162,6 +163,7 @@ impl Workbench {
                 actions.children(self.editor_title_actions(window, cx)).child(self.icon("split-horizontal", 22., 16., icon_color).id("split-editor").cursor_pointer().on_click(cx.listener(|workbench, _, window, cx| {
                     workbench.execute_command("workbench.action.splitEditor", Vec::new(), window, cx);
                 })))
+                .children(self.lock_group_action(self.editors.id, cx))
             })
             .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer().when(self.editors.active_merge().is_some(), |more| {
                 more.on_mouse_down(gpui::MouseButton::Left, cx.listener(|workbench, event: &gpui::MouseDownEvent, window, cx| workbench.show_merge_more_actions(event, window, cx)))

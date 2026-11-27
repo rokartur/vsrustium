@@ -148,6 +148,7 @@ impl Workbench {
         let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
         let language = self.untitled_language(language);
         let document = TextDocument::untitled(&path, "", language.as_deref(), &self.languages, &self.settings.lock().unwrap());
+        self.leave_locked_group("untitled", &path);
         self.editors.open(document, false);
         window.focus(&self.editor_focus, cx);
         self.editors_changed(cx);

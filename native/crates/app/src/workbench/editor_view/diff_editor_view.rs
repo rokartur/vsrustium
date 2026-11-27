@@ -170,6 +170,7 @@ impl Workbench {
             None => {
                 let id = self.editors.diffs.len() + self.editors.editors.len() + 1;
                 let entry = TextDocument::from_text(DIFF_EDITOR_SCHEME, Path::new(&format!("/{id}")), "", "utf8".into(), Some("plaintext"), &self.languages, &self.settings.lock().unwrap());
+                self.leave_locked_group(DIFF_EDITOR_SCHEME, &entry.path);
                 self.editors.open_diff(entry, DiffInput::new(original, modified, label), !pinned);
             }
         }

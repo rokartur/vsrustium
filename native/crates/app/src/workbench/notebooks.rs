@@ -723,8 +723,11 @@ impl Workbench {
     pub(super) fn show_notebook(&mut self, key: &str, options: &Value, window: &mut Window, cx: &mut Context<Self>) -> NotebookResult {
         self.activate_column(&options["position"]);
         let pinned = options["pinned"] != false;
-        let previous = self.editors.active_tab().map(|editor| editor.model_id);
         let path = Path::new(key);
+        if !options["position"].as_i64().is_some_and(|column| column >= 0) {
+            self.leave_locked_group(NOTEBOOK_EDITOR_SCHEME, path);
+        }
+        let previous = self.editors.active_tab().map(|editor| editor.model_id);
         match self.editors.editors.iter().position(|editor| editor.document().is(NOTEBOOK_EDITOR_SCHEME, path)) {
             Some(index) => {
                 self.editors.activate(index);

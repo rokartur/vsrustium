@@ -151,6 +151,7 @@ fn copies_into_split(scheme: &str) -> bool {
 
 impl Workbench {
     pub(super) fn register_editor_group_actions(&mut self) {
+        self.register_locked_group_commands();
         self.commands.register("workbench.action.closeEditorsInOtherGroups", |workbench, _, window, cx| {
             workbench.leave_panel_group();
             let keep = workbench.editors.id;
@@ -362,7 +363,7 @@ impl Workbench {
         context.insert("activeEditorGroupEmpty".into(), json!(self.editors.group_tabs(self.editor_group_id()).0.is_empty()));
         context.insert("activeEditorGroupIndex".into(), json!(index + 1));
         context.insert("activeEditorGroupLast".into(), json!(index + 1 == groups.len()));
-        context.insert("activeEditorGroupLocked".into(), json!(false));
+        context.insert("activeEditorGroupLocked".into(), json!(self.editors.locked.contains(&self.editor_group_id())));
         context.insert("groupEditorsCount".into(), json!(self.editors.group_tabs(self.editor_group_id()).0.len()));
     }
 
@@ -505,6 +506,11 @@ impl Workbench {
     }
 
     fn add_to_grid(&mut self, reference: u32, direction: Direction, group: u32) {
+        // auxiliaryEditorPart.ts `getAddGroupLocation`: a compact editor window adds groups to the main part.
+        if self.part_of_group(reference).is_some_and(|part| self.is_compact_part(part)) {
+            let main = self.part_active_group(MAIN_PART).expect("the main part has a group");
+            return self.in_part(MAIN_PART, |workbench| workbench.add_to_grid(main, direction, group));
+        }
         let sizing = self.split_sizing();
         let bounds = self.editor_groups.part_bounds.get();
         let grid = self.editor_groups.grid.get_or_insert_with(|| EditorGrid::new(reference, bounds.size.width, bounds.size.height));
@@ -777,7 +783,10 @@ impl Workbench {
             if self.editors.group_tabs(group).0.is_empty() {
                 let strokes = self.compact_density().then(|| self.part_top_border());
                 // editorDropTarget.ts: the empty part takes drops too.
-                let empty = div().flex_1().min_h_0().relative().flex().flex_col().items_center().justify_center().child(self.watermark(256.));
+                // A locked lone group's toolbar pushes the full-height watermark box down by its height.
+                let toolbar = self.empty_group_toolbar(group, cx);
+                let watermark = div().absolute().left_0().right_0().h_full().top(px(if toolbar.is_some() { 35. } else { 0. })).flex().flex_col().items_center().justify_center().child(self.watermark(256.));
+                let empty = div().flex_1().min_h_0().relative().overflow_hidden().child(watermark).children(toolbar);
                 return card.flex().flex_col().child(self.group_drop_area(group, empty, cx)).children(strokes);
             }
             let body = if group == self.editors.id { self.editor_group_body(window, cx) } else { self.inactive_group_body(group, window, cx) };
@@ -822,7 +831,8 @@ impl Workbench {
                 let secondary = self.side_by_side_secondary(window, cx);
                 self.text_editor_part(secondary, window, cx)
             }
-            None => div().size_full().flex().flex_col().items_center().justify_center().child(self.watermark(200.)),
+            // editorgroupview.css: the watermark box is 70px shorter than the group, below the toolbar, so it stays centered.
+            None => div().size_full().relative().flex().flex_col().items_center().justify_center().child(self.watermark(200.)).children(self.empty_group_toolbar(self.editors.id, cx)),
         }
     }
 
@@ -999,8 +1009,9 @@ impl Workbench {
         crate::recently_opened::add(&mut self.shared_storage.lock().unwrap(), entries);
         self.recently_opened_changed(window, cx);
         self.activate_group(target);
+        // The drop picked the group: a locked one takes the files too.
         for path in files {
-            self.open_file(path, true, window, cx);
+            self.open_file_in_active_group(path, true, window, cx);
         }
         window.focus(&self.editor_focus.clone(), cx);
         cx.notify();
@@ -1172,6 +1183,7 @@ fn opposite(direction: Direction) -> Direction {
     }
 }
 
+mod locked_groups;
 mod part_state;
 
 #[cfg(test)]

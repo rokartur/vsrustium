@@ -77,6 +77,7 @@ impl Workbench {
     /// trustedDomains.ts `openInEditor`: pinned, as jsonc, the caret on the first entry of the list.
     pub(super) fn open_trusted_domains(&mut self, configuring: Option<&Uri>, window: &mut Window, cx: &mut Context<Self>) {
         let path = PathBuf::from(TRUSTED_DOMAINS_PATH);
+        self.leave_locked_group(TRUSTED_DOMAINS_SCHEME, &path);
         if self.editors.model(TRUSTED_DOMAINS_SCHEME, &path).is_none() {
             let content = self.trusted_domains_content(configuring.map(|uri| uri.to_string(false)));
             let settings = self.settings.clone();

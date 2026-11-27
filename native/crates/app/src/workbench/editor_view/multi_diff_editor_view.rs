@@ -273,6 +273,7 @@ impl Workbench {
             None => {
                 let id = self.editors.multi_diffs.len() + self.editors.editors.len() + 1;
                 let entry = TextDocument::from_text(MULTI_DIFF_EDITOR_SCHEME, Path::new(&format!("/{id}")), "", "utf8".into(), Some("plaintext"), &self.languages, &self.settings.lock().unwrap());
+                self.leave_locked_group(MULTI_DIFF_EDITOR_SCHEME, &entry.path);
                 self.editors.open_multi_diff(entry, input, true);
             }
         }

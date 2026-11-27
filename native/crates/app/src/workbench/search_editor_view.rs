@@ -244,6 +244,7 @@ impl Workbench {
     fn open_search_editor(&mut self, config: SearchConfiguration, text: String, backing_file: Option<PathBuf>, preview: bool) -> PathBuf {
         let path = (1..).map(|n| PathBuf::from(format!("/{n}"))).find(|path| !self.search_editors.contains_key(path)).expect("a free name");
         let document = TextDocument::from_text(SEARCH_EDITOR_SCHEME, &path, &text, "utf8".into(), Some("search-result"), &self.languages, &self.settings.lock().unwrap());
+        self.leave_locked_group(SEARCH_EDITOR_SCHEME, &path);
         self.editors.open(document, preview);
         self.search_editors.insert(path.clone(), SearchEditor { config, match_ranges: Vec::new(), backing_file, cancellation: None, run: None });
         path

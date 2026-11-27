@@ -424,6 +424,7 @@ impl Workbench {
         let Ok((_, path)) = uri_parts(&self.local_history_entry_uri(file, entry)) else { return };
         let name = file.file_name().unwrap_or_default().to_string_lossy();
         let label = format!("{name} ({} \u{2022} {})", local_history::source_label(entry.source.as_deref()), local_history::date_label(entry.timestamp));
+        self.leave_locked_group(LOCAL_HISTORY_SCHEME, &path);
         match self.editors.editors.iter().position(|editor| editor.document().is(LOCAL_HISTORY_SCHEME, &path)) {
             Some(index) => self.editors.activate(index),
             None => {

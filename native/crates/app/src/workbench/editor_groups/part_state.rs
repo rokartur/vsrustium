@@ -107,7 +107,8 @@ impl Workbench {
         let mru: Vec<usize> = by_recency.iter().filter_map(|recent| editors.iter().position(|editor| editor.model_id == recent.model_id)).collect();
         let preview = editors.iter().position(|editor| editor.preview);
         let sticky = editors.iter().filter(|editor| editor.sticky).count().checked_sub(1);
-        json!({ "id": group, "editors": serialized, "mru": mru, "preview": preview, "sticky": sticky })
+        let locked = self.editors.locked.contains(&group).then_some(true);
+        json!({ "id": group, "editors": serialized, "mru": mru, "preview": preview, "sticky": sticky, "locked": locked })
     }
 
     /// The stored grid and its groups' file editors, in place of the one empty group a window starts with.
@@ -191,6 +192,11 @@ impl Workbench {
         let mru: Vec<usize> = mru.filter_map(|index| opened.iter().position(|opened| *opened as u64 == index)).collect();
         for index in mru.into_iter().rev() {
             self.editors.activate(index);
+        }
+        // A restored group locks as stored, not by `workbench.editor.autoLockGroups`.
+        self.editors.opened_first_editor = None;
+        if group["locked"] == true {
+            self.editors.locked.insert(self.editors.id);
         }
     }
 }
