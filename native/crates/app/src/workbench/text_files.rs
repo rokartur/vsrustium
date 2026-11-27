@@ -912,6 +912,7 @@ impl Workbench {
         let stored = self.workspace_storage.lock().unwrap().get(view_state::STORAGE_KEY).map(str::to_owned);
         self.editors.view_states = stored.map(|raw| ViewStates::from_memento(&raw)).unwrap_or_default();
         self.load_notebook_view_states();
+        self.load_playground_view_states();
     }
 
     /// `saveState` on shutdown: the open file editors' view states, then the memento.
@@ -924,5 +925,6 @@ impl Workbench {
         let memento = self.editors.view_states.to_memento();
         self.workspace_storage.lock().unwrap().set(view_state::STORAGE_KEY, memento);
         self.store_notebook_view_states();
+        self.store_playground_view_states();
     }
 }

@@ -163,3 +163,21 @@ fn card_margins_follow_the_floating_layout() {
     assert_eq!(margins(&grid, Part::Editor), [CARD_MARGIN, CARD_MARGIN, 0., CARD_MARGIN]);
     assert_eq!(margins(&grid, Part::Panel), [CARD_MARGIN, 0., 0., 0.]);
 }
+
+/// activitybarPart.ts with `window.density.layout: compact`: a 40px rail, and sashes centered on the seams.
+#[test]
+fn compact_density_narrows_the_rail_and_centers_the_sashes() {
+    let mut grid = Grid::new(1024., 707., PartSizes::defaults(1024., 768., Position::Bottom), Arrangement::default(), |_| true);
+    grid.set_compact(true);
+    assert_eq!(bounds(&grid, Part::ActivityBar), [0., 0., 40., 707.]);
+    let [x, ..] = bounds(&grid, Part::Editor);
+    let sashes = grid.sashes();
+    assert_eq!(sashes[1].2, [x - 2., 0., 4., 707.]);
+    let [_, y, width, _] = bounds(&grid, Part::Panel);
+    assert_eq!(sashes[3].2, [x, y - 2., width, 4.]);
+    let mut grid = Grid::new(1024., 707., PartSizes::defaults(1024., 768., Position::Bottom), arrangement(Position::Right, Position::Bottom, Alignment::Center), |part| part != Part::SideBar);
+    grid.set_compact(true);
+    assert_eq!(bounds(&grid, Part::ActivityBar)[2], 40., "compact density never adds the right rail's leading gap");
+    grid.set_compact(false);
+    assert_eq!(bounds(&grid, Part::ActivityBar)[2], 52.);
+}

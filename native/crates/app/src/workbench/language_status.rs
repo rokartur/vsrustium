@@ -219,14 +219,16 @@ impl Workbench {
         let content = HoverContent::LanguageStatus;
         let bounds = state.bounds.clone();
         let anchor = state.bounds.clone();
+        // statusbarpart.css `.compact-right`: `compact: true` next to the language entry; modernUI statusBar.css in
+        // compact density: 2px margin and 4px padding.
+        let (margin, padding) = if self.compact_density() { self.status_item_spacing() } else { (5., 3.) };
         let item = div()
             .id(ID)
             .relative()
             .h_full()
             .flex_none()
-            // statusbarpart.css `.compact-right`: `compact: true` next to the language entry.
-            .ml(px(5.))
-            .px(px(3.))
+            .ml(px(margin))
+            .px(px(padding))
             .flex()
             .items_center()
             .cursor_pointer()

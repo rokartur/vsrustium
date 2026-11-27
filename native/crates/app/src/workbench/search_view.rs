@@ -682,7 +682,7 @@ impl Workbench {
             })
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_search_context_menu(&key, event.position, window, cx)));
         // A uniform list sizes its items to their content; the wrapper takes the list's width.
-        div().w_full().h(px(22.)).px(px(4.)).flex().child(row).into_any_element()
+        div().w_full().h(px(22.)).px(px(self.pane_row_inset())).flex().child(row).into_any_element()
     }
 
     /// `FolderMatchRenderer`: the folder's icon, its name and its count badge.

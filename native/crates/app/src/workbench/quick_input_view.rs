@@ -523,10 +523,10 @@ impl Workbench {
             .bg(self.color("quickInputTitle.background"))
             .cursor_grab()
             .on_mouse_down(MouseButton::Left, cx.listener(Self::quick_input_drag_start))
-            // The action bars are not drag areas (excludeNodes).
-            .child(div().absolute().left(px(4.)).occlude().flex().children(left.into_iter().map(|button| self.quick_input_button(button, 20., cx))))
+            // The action bars are not drag areas (excludeNodes); in the flex row the back button moves the title right.
+            .child(div().ml(px(4.)).occlude().flex().children(left.into_iter().map(|button| self.quick_input_button(button, 20., cx))))
             .child(div().flex_1().py(px(3.)).text_center().child(if title.is_empty() { "\u{a0}".to_owned() } else { title }))
-            .child(div().absolute().right(px(4.)).occlude().flex().gap(px(4.)).children(right.into_iter().map(|button| self.quick_input_button(button, 20., cx))))
+            .child(div().mr(px(4.)).occlude().flex().gap(px(4.)).children(right.into_iter().map(|button| self.quick_input_button(button, 20., cx))))
     }
 
     /// A title, inline or input button: a 16px codicon in a `size` box, or the toggle's checked look.

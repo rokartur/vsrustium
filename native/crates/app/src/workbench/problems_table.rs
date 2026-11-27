@@ -160,8 +160,8 @@ impl Workbench {
             .h(px(ROW_HEIGHT))
             .flex_none()
             .flex()
-            // The modern list's rows sit 4px in from the view's edges, their cells keep the header's widths.
-            .mx(px(4.))
+            // The modern list's rows sit in from the view's edges, their cells keep the header's widths.
+            .mx(px(self.pane_row_inset()))
             .rounded(px(4.))
             .overflow_hidden()
             .cursor_pointer()

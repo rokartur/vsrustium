@@ -10,6 +10,8 @@ use crate::split_view::{Priority, SashState, SplitView, View};
 pub const CARD_MARGIN: f32 = 4.;
 /// The activity bar's 44px card and its outer margin.
 pub const ACTIVITY_BAR_WIDTH: f32 = 48.;
+/// activitybarPart.ts with `window.density.layout: compact`: the 36px items and the 4px lane, without an outer margin.
+pub const COMPACT_ACTIVITY_BAR_WIDTH: f32 = 40.;
 /// sidebarPart.ts and auxiliaryBarPart.ts `minimumWidth`.
 const SIDE_BAR_MINIMUM_WIDTH: f32 = 170.;
 /// panelPart.ts `minimumWidth` and `minimumHeight`.
@@ -166,6 +168,8 @@ pub struct Grid {
     width: f32,
     height: f32,
     dragged: Option<usize>,
+    /// `window.density.layout: compact` (layoutService.ts `isModernUICompact`): the cards meet without gaps.
+    compact: bool,
 }
 
 impl Grid {
@@ -239,7 +243,7 @@ impl Grid {
         }
         let (children, views) = row.into_iter().unzip();
         let root = Branch { split: SplitView::with_priorities(width, views), children };
-        let mut grid = Grid { root, arrangement, width, height, dragged: None };
+        let mut grid = Grid { root, arrangement, width, height, dragged: None, compact: false };
         grid.refresh();
         grid
     }
@@ -250,6 +254,18 @@ impl Grid {
 
     pub fn arrangement(&self) -> Arrangement {
         self.arrangement
+    }
+
+    pub fn is_compact(&self) -> bool {
+        self.compact
+    }
+
+    /// A changed `window.density.layout` resizes the activity bar (`ModernUIContribution` relayouts).
+    pub fn set_compact(&mut self, compact: bool) {
+        if self.compact != compact {
+            self.compact = compact;
+            self.refresh();
+        }
     }
 
     pub fn layout(&mut self, width: f32, height: f32) {
@@ -300,10 +316,11 @@ impl Grid {
     }
 
     /// The sashes with their states and bounds within the middle section. In the floating layout a sash fills the
-    /// 4px gap after its boundary (`workbench-sash-start-at-gap`); a horizontal one starts half a gap in.
+    /// 4px gap after its boundary (`workbench-sash-start-at-gap`); a horizontal one starts half a gap in. Compact cards
+    /// meet without a gap, so the sash is splitview's own, centered on the boundary.
     pub fn sashes(&self) -> Vec<(Sash, SashState, [f32; 4])> {
         let mut sashes = Vec::new();
-        self.root.sashes(true, [0., 0., self.width, self.height], &mut 0, &mut sashes);
+        self.root.sashes(true, [0., 0., self.width, self.height], self.compact, &mut 0, &mut sashes);
         sashes
     }
 
@@ -349,6 +366,9 @@ impl Grid {
 
     /// activitybarPart.ts `floatingHorizontalGutter`: a right rail with no side bar before it adds the gap it needs.
     fn activity_bar_width(&self) -> f32 {
+        if self.compact {
+            return COMPACT_ACTIVITY_BAR_WIDTH;
+        }
         let leading_gap = self.arrangement.side_bar == Position::Right && !self.is_visible(Part::SideBar);
         ACTIVITY_BAR_WIDTH + if leading_gap { CARD_MARGIN } else { 0. }
     }
@@ -545,14 +565,19 @@ impl Branch {
         }
     }
 
-    fn sashes(&self, horizontal: bool, [x, y, width, height]: [f32; 4], counter: &mut usize, out: &mut Vec<(Sash, SashState, [f32; 4])>) {
+    fn sashes(&self, horizontal: bool, [x, y, width, height]: [f32; 4], compact: bool, counter: &mut usize, out: &mut Vec<(Sash, SashState, [f32; 4])>) {
         let id = *counter;
         *counter += 1;
         let sizes = self.split.sizes();
         let mut offset = 0.;
         for (index, state) in self.split.sash_states().into_iter().enumerate() {
             offset += sizes[index];
-            let rect = if horizontal { [x + offset, y, CARD_MARGIN, height] } else { [x + CARD_MARGIN / 2., y + offset, width - CARD_MARGIN / 2., CARD_MARGIN] };
+            let rect = match (horizontal, compact) {
+                (true, false) => [x + offset, y, CARD_MARGIN, height],
+                (false, false) => [x + CARD_MARGIN / 2., y + offset, width - CARD_MARGIN / 2., CARD_MARGIN],
+                (true, true) => [x + offset - CARD_MARGIN / 2., y, CARD_MARGIN, height],
+                (false, true) => [x, y + offset - CARD_MARGIN / 2., width, CARD_MARGIN],
+            };
             out.push((Sash { branch: id, index, vertical: horizontal }, state, rect));
         }
         let mut offset = 0.;
@@ -560,7 +585,7 @@ impl Branch {
             let rect = if horizontal { [x + offset, y, size, height] } else { [x, y + offset, width, size] };
             offset += size;
             if let Node::Branch(branch) = child {
-                branch.sashes(!horizontal, rect, counter, out);
+                branch.sashes(!horizontal, rect, compact, counter, out);
             }
         }
     }

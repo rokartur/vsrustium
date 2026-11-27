@@ -755,8 +755,12 @@ impl Workbench {
             .min_w_0()
             .min_h_0()
             .relative()
-            .when(floating, |card| card.border_1().rounded(px(8.)).border_color(self.color("surface.border")))
             .bg(self.color("editor.background"))
+            .when(floating, |card| match self.compact_density() {
+                // editorBorder.css: a compact editor has no left border unless it meets the window's left edge.
+                true => card.border_t_1().border_r_1().border_b_1().when(self.part_at_left_edge(super::layout::Part::Editor), |card| card.border_l_1()).border_color(gpui::transparent_black()),
+                false => card.border_1().rounded(px(8.)).border_color(self.color("surface.border")),
+            })
             .pl(px(left))
             .pr(px(right))
             .child(measure)
@@ -767,7 +771,8 @@ impl Workbench {
             // The modal part's group draws in the modal; the part shows the group active before it.
             let group = self.part_groups(self.editor_groups.part)[0];
             if self.editors.group_tabs(group).0.is_empty() {
-                return card.flex().flex_col().items_center().justify_center().child(self.watermark(256.));
+                let strokes = self.compact_density().then(|| self.part_top_border());
+                return card.flex().flex_col().items_center().justify_center().child(self.watermark(256.)).children(strokes);
             }
             let body = if group == self.editors.id { self.editor_group_body(window, cx) } else { self.inactive_group_body(group, window, cx) };
             let area = self.group_drop_area(group, div().flex_1().min_h_0().relative().flex().flex_col().child(body), cx);

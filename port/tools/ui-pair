@@ -17,11 +17,25 @@
 //   {"launch": ["docs/guide.md"]}: start the app a second time with these paths (relative to the folder), as a command line would
 // Shots land in <out-dir>/<reference|port>-<name>.png at 2x; a sheet on the window is captured as its own window.
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dlopen, FFIType } from 'bun:ffi';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { referenceArgs, referenceUserData } from './ref-user-data.ts';
 
 type Step = { window?: string; frame?: number[]; shotMain?: boolean; click?: number[]; scroll?: number[]; amount?: number; hover?: number[]; doubleClick?: number[]; rightClick?: number[]; modifier?: string[]; key?: string; hotkey?: string[]; type?: string; wait?: number; shot?: string; dragShot?: number[]; foreground?: boolean; clipboard?: string; windows?: string; button?: string; restart?: boolean; launch?: string[] };
+
+// Index = virtual key code (HIToolbox Events.h, kVK_ANSI_*); '' where the code is no character key.
+const usKeyCodes = ['a', 's', 'd', 'f', 'h', 'g', 'z', 'x', 'c', 'v', '', 'b', 'q', 'w', 'e', 'r', 'y', 't', '1', '2', '3', '4', '6', '5', '=', '9', '7', '-', '8', '0', ']', 'o', 'u', '[', 'i', 'p', '\n', 'l', 'j', "'", 'k', ';', '\\', ',', '/', 'n', 'm', '.', '\t', ' ', '`'];
+const shiftedKeys: Record<string, string> = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0', '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
+const coreGraphics = dlopen('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics', {
+	CGEventCreateKeyboardEvent: { args: [FFIType.ptr, FFIType.u16, FFIType.bool], returns: FFIType.ptr },
+	CGEventSetFlags: { args: [FFIType.ptr, FFIType.u64], returns: FFIType.void },
+	CGEventPostToPid: { args: [FFIType.i32, FFIType.ptr], returns: FFIType.void },
+	CGEventPost: { args: [FFIType.u32, FFIType.ptr], returns: FFIType.void },
+});
+const coreFoundation = dlopen('/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation', {
+	CFRelease: { args: [FFIType.ptr], returns: FFIType.void },
+});
 
 const [outDir, stepsFile, themeName = 'dark'] = process.argv.slice(2);
 const steps: Step[] = JSON.parse(readFileSync(stepsFile, 'utf8'));
@@ -139,21 +153,10 @@ async function run(app: string, firstPid: number, folder: string, restart: () =>
 			const delivery_mode = step.foreground ? 'foreground' : undefined;
 			await (step.key ? cua('press_key', { ...target, key: step.key, delivery_mode }) : cua('hotkey', { ...target, keys: step.hotkey, delivery_mode }));
 		} else if (step.type) {
-			// Key by key: type_text refuses windows without an accessible text field, as GPUI's.
-			// press_key knows no shifted symbols: they go as shift plus the US layout's base key.
-			const shifted: Record<string, string> = { '!': '1', '@': '2', '#': '3', '$': '4', '%': '5', '^': '6', '&': '7', '*': '8', '(': '9', ')': '0', '_': '-', '+': '=', '{': '[', '}': ']', '|': '\\', ':': ';', '"': "'", '<': ',', '>': '.', '?': '/', '~': '`' };
 			if (step.foreground) {
 				await bringToFront(target);
 			}
-			const delivery_mode = step.foreground ? 'foreground' : undefined;
-			for (const key of step.type) {
-				const upper = key !== key.toLowerCase();
-				if (shifted[key] || upper) {
-					await cua('press_key', { ...target, key: shifted[key] ?? key.toLowerCase(), modifiers: ['shift'], delivery_mode });
-				} else {
-					await cua('press_key', { ...target, key: key === ' ' ? 'space' : key, delivery_mode });
-				}
-			}
+			await typeText(target.pid, step.type, step.foreground);
 		} else if (step.wait) {
 			await Bun.sleep(step.wait);
 		} else if (step.launch) {
@@ -242,6 +245,35 @@ async function bringToFront(target: object) {
 			throw error;
 		}
 	});
+}
+
+/**
+ * Types the text as US layout key events posted to the app (background) or to the HID tap (foreground, the app in
+ * front). cua-driver's press_key spends 0.4 s (reference) to 1.4 s (port) per key reading the focused element back
+ * over AX, and type_text refuses windows without an accessible text field, as GPUI's.
+ */
+async function typeText(pid: number, text: string, foreground = false) {
+	const shift = 0x20000; // kCGEventFlagMaskShift
+	for (const char of text) {
+		const lower = char.toLowerCase();
+		const base = shiftedKeys[char] ?? lower;
+		const keyCode = usKeyCodes.indexOf(base);
+		if (keyCode < 0) {
+			throw new Error(`ui-pair: no US key for ${JSON.stringify(char)}`);
+		}
+		const flags = shiftedKeys[char] || char !== lower ? shift : 0;
+		for (const down of [true, false]) {
+			const event = coreGraphics.symbols.CGEventCreateKeyboardEvent(null, keyCode, down);
+			coreGraphics.symbols.CGEventSetFlags(event, flags);
+			if (foreground) {
+				coreGraphics.symbols.CGEventPost(0, event); // kCGHIDEventTap
+			} else {
+				coreGraphics.symbols.CGEventPostToPid(pid, event);
+			}
+			coreFoundation.symbols.CFRelease(event);
+		}
+		await Bun.sleep(20);
+	}
 }
 
 async function cua(tool: string, args: object) {

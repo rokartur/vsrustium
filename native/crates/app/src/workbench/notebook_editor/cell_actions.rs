@@ -272,14 +272,14 @@ impl Workbench {
             workbench.delete_notebook_cell(tab, cell, window, cx);
             Outcome::done()
         });
-        self.commands.register("notebook.section.runCells", |workbench, args, _, cx| {
+        self.commands.register("notebook.section.runCells", |workbench, args, window, cx| {
             let Some((key, handle)) = workbench.cell_from_args(&args) else { return Outcome::done() };
             let model = workbench.host.notebooks.model(&key).expect("found above");
             let index = model.index_of_handle(handle).expect("found above");
             let ranges = workbench.notebook_folding_ranges(model);
             let Some((start, end)) = outline::section_of(&ranges, index) else { return Outcome::done() };
             let handles = model.cells[start..=end].iter().filter(|cell| cell.kind == CODE).map(|cell| cell.handle).collect();
-            workbench.execute_notebook_cells(&key, handles, cx)
+            workbench.execute_notebook_cells(&key, handles, window, cx)
         });
         for (id, above) in [("notebook.cell.executeCellsAbove", true), ("notebook.cell.executeCellAndBelow", false)] {
             self.commands.register(id, move |workbench, args, window, cx| {
@@ -291,7 +291,7 @@ impl Workbench {
                 if let Some(tab) = workbench.host.notebooks.editors.iter().find(|editor| editor.notebook == key).map(|editor| editor.tab_model_id) {
                     workbench.focus_notebook_cell(tab, handle, false, window, cx);
                 }
-                workbench.execute_notebook_cells(&key, handles, cx)
+                workbench.execute_notebook_cells(&key, handles, window, cx)
             });
         }
         self.commands.register("notebook.cell.split", |workbench, args, window, cx| {

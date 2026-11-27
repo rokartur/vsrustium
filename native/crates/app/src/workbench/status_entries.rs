@@ -49,13 +49,14 @@ impl Workbench {
             label = div().flex().items_center().child(spinner).child(label);
         }
         let command = entry.command.clone();
+        let (margin, padding) = self.status_item_spacing();
         let item = div()
             .id(gpui::SharedString::from(format!("status-entry-{}", entry.entry_id)))
             .relative()
             .h_full()
             .flex_none()
-            .mx(px(3.))
-            .px(px(5.))
+            .mx(px(margin))
+            .px(px(padding))
             .flex()
             .items_center()
             .whitespace_nowrap()

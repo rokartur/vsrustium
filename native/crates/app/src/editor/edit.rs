@@ -196,8 +196,8 @@ impl OpenEditor {
         if self.document().scheme == "untitled" {
             return self.text_model().associated_file || self.document().lines != [""];
         }
-        // A notebook cell's text is no working copy: its notebook is the one dirty.
-        if matches!(self.document().scheme.as_str(), crate::notebook::CELL_SCHEME | crate::workbench::interactive::INPUT_SCHEME) {
+        // A notebook cell's text is no working copy: its notebook is the one dirty. Nor is a playground snippet's.
+        if matches!(self.document().scheme.as_str(), crate::notebook::CELL_SCHEME | crate::workbench::interactive::INPUT_SCHEME | crate::workbench::walkthrough_part::SNIPPET_SCHEME) {
             return false;
         }
         if self.document().scheme == crate::workbench::webview_panels::WEBVIEW_PANEL_SCHEME {

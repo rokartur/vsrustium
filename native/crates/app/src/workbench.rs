@@ -81,6 +81,7 @@ mod user_activity;
 mod process_explorer;
 mod views_welcome;
 mod welcome_page;
+pub mod walkthrough_part;
 mod hover;
 pub(crate) mod host_requests;
 mod input_box_view;
@@ -108,6 +109,7 @@ mod middle_scroll;
 mod minimap_view;
 pub mod logs_actions;
 pub mod interactive;
+mod kernel_picker;
 mod notebook_editor;
 mod repl_notebook;
 mod notebook_outline;
@@ -177,6 +179,8 @@ mod outline_actions;
 mod inlay_hints_accessibility;
 mod comment_navigation;
 mod comment_node;
+mod comment_thread_floating;
+mod comment_thread_floating_layout;
 mod comment_thread_widget;
 mod comments;
 mod comments_view;
@@ -308,6 +312,7 @@ pub struct Workbench {
     relauncher: relauncher::Relauncher,
     user_activity: user_activity::UserActivity,
     welcome: welcome_page::WelcomePage,
+    playground: walkthrough_part::Playground,
     /// Context keys set with the `setContext` command.
     context_keys: HashMap<String, Value>,
     pub output: crate::output::Output,
@@ -500,6 +505,7 @@ impl Render for Workbench {
         self.follow_marker_navigation_cursor();
         self.follow_references_peek_editor();
         self.follow_hierarchy_peek_editor(window, cx);
+        self.lay_out_floating_comment_widgets(window);
         self.follow_symbol_navigation();
         self.follow_definition_link(cx);
         self.refresh_selection_highlights(window);
@@ -632,6 +638,7 @@ impl Workbench {
             relauncher: Default::default(),
             user_activity: Default::default(),
             welcome: Default::default(),
+            playground: Default::default(),
             context_keys: HashMap::new(),
             output: Default::default(),
             output_view: output_view::OutputView::new(cx),
@@ -907,6 +914,7 @@ impl Workbench {
         workbench.register_localization_commands();
         workbench.register_new_file_commands();
         workbench.register_welcome_page_commands();
+        workbench.register_playground_commands();
         workbench.register_process_explorer_commands();
         workbench.register_auxiliary_window_commands();
         workbench.register_debug_commands();
@@ -1023,7 +1031,9 @@ impl Workbench {
         self.open_editors_focused_row = None;
         self.reveal_active_file();
         self.record_editor_history();
+        self.capture_notebook_status_editor();
         self.drop_closed_search_editors();
+        self.drop_closed_playground();
         self.load_search_editor_widget();
         self.find_editor_changed();
         self.schedule_keybinding_marks(cx);
@@ -1254,25 +1264,32 @@ impl Workbench {
                     }))
                 })
         }).collect();
+        // floatingPanels.css and activitybarPart.ts: compact density narrows the lane to 4px and the item gap to 4px.
+        let compact = self.compact_density();
         div()
-            .w(px(44.))
+            .w(px(if compact { 40. } else { 44. }))
             .flex()
             .flex_col()
             .items_center()
             .justify_between()
-            .py(px(3.))
+            .py(px(if compact { 1. } else { 3. }))
             .border_1()
-            .when(self.side_bar_visible() && left, |bar| bar.rounded_l(px(8.)))
-            .when(self.side_bar_visible() && !left, |bar| bar.rounded_r(px(8.)))
-            .when(!self.side_bar_visible(), |bar| bar.rounded(px(8.)))
             // activitybarPart.ts `updateStyles` with the modern UI: the inactive background while the window is not focused.
             .bg(self.color(if window.is_window_active() { "modernActivityBar.background" } else { "modernActivityBar.inactiveBackground" }))
-            .border_color(self.color("modernActivityBar.border"))
+            .map(|bar| match compact {
+                // A left rail and a right rail after the side bar draw the seam beside them.
+                true => bar.border_color(gpui::transparent_black()).child(self.compact_card_strokes("modernActivityBar.border", [true, true, true, left || self.side_bar_visible()], true)),
+                false => bar
+                    .border_color(self.color("modernActivityBar.border"))
+                    .when(self.side_bar_visible() && left, |bar| bar.rounded_l(px(8.)))
+                    .when(self.side_bar_visible() && !left, |bar| bar.rounded_r(px(8.)))
+                    .when(!self.side_bar_visible(), |bar| bar.rounded(px(8.))),
+            })
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap(px(8.))
+                    .gap(px(if compact { 4. } else { 8. }))
                     .children(items)
                     .children(self.testing_activity_item(hover, inactive, cx))
                     .children(self.contributed_activity_items(hover, inactive, cx))
@@ -1477,7 +1494,7 @@ impl Workbench {
                 .relative()
                 .when(!row.is_new && !is_edited, |row| row.child(hover))
                 .h(px(22.))
-                .mx(px(4.))
+                .mx(px(self.pane_row_inset()))
                 .flex()
                 .items_center()
                 .rounded(px(4.))
@@ -1654,15 +1671,18 @@ impl Workbench {
         };
         // statusbarpart.css: pointer only on items with a command; status.message has none.
         let problems = self.problems_status_item(foreground, cx);
+        let height = self.status_bar_height();
+        // floatingPanels.css: the edge labels' padding is 6px, 4px in compact density, around the 16px icon.
+        let edge_item = if self.compact_density() { 24. } else { 28. };
         div()
             .relative()
-            .h(px(28.))
+            .h(px(height))
             .flex_none()
             .track_focus(&self.status_bar_focus)
             .flex()
             .justify_between()
             .items_center()
-            .px(px(12.))
+            .px(px(if self.compact_density() { 8. } else { 12. }))
             .bg(background)
             .text_color(foreground)
             .text_size(px(12.))
@@ -1673,14 +1693,15 @@ impl Workbench {
                 let radius = px(if is_tahoe_or_newer() { 16. } else { 10. });
                 bar.child(div().absolute().inset_0().border_1().rounded_bl(radius).rounded_br(radius).border_color(border))
             })
-            .child(div().h(px(24.)).flex().child(self.icon("remote", 28., 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.restricted_mode_status_item(foreground, cx)).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))).children(self.terminal_recording_status_entry().map(|entry| self.extension_status_item(&entry, foreground, cx))))
-            .child(div().h(px(24.)).flex().child(self.extension_status_items(false, |priority| priority > EDITOR_STATUS_PRIORITY, foreground, cx)).child(self.editor_status_items(foreground, window, cx)).child(self.extension_status_items(false, |priority| priority <= EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.notifications_status_item(false, foreground, cx)))
+            .child(div().h(px(height - 4.)).flex().child(self.icon("remote", edge_item, 16., foreground).h_full().cursor_pointer().child(self.hover_target("status.host", HoverContent::Text("Open a Remote Window".into()), HoverOptions::status_bar()))).children(self.restricted_mode_status_item(foreground, cx)).children(self.notifications_status_item(true, foreground, cx)).child(self.extension_status_items(true, |priority| priority > PROBLEMS_PRIORITY, foreground, cx)).child(problems).child(self.extension_status_items(true, |priority| priority <= PROBLEMS_PRIORITY, foreground, cx)).children(self.status_bar_message()).children(self.window_progress_entry(cx.background_executor().now()).map(|entry| self.extension_status_item(&entry, foreground, cx))).children(self.terminal_recording_status_entry().map(|entry| self.extension_status_item(&entry, foreground, cx))))
+            .child(div().h(px(height - 4.)).flex().child(self.extension_status_items(false, |priority| priority > EDITOR_STATUS_PRIORITY, foreground, cx)).child(self.editor_status_items(foreground, window, cx)).child(self.extension_status_items(false, |priority| priority <= EDITOR_STATUS_PRIORITY, foreground, cx)).children(self.notifications_status_item(false, foreground, cx)))
     }
 
     /// The `status.message` entry: multi-chord mode, else the latest status message (notificationsStatus.ts).
     fn status_bar_message(&self) -> Option<Div> {
         let message = self.chord_status().or_else(|| self.status_message.as_ref().map(|(message, _)| message.clone()))?;
-        Some(div().h_full().ml(px(3.)).px(px(5.)).flex().items_center().child(message))
+        let (margin, padding) = self.status_item_spacing();
+        Some(div().h_full().ml(px(margin)).px(px(padding)).flex().items_center().child(message))
     }
 
     /// A codicon centered in a square box, or the product icon theme's glyph for it. Drawn as SVG: Wu's text system
