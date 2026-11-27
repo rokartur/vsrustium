@@ -1753,6 +1753,19 @@ impl Workbench {
         }
     }
 
+    /// A press for the active editor drawn by `embedded_code_editor` with its text box at `origin`: the line and
+    /// column under the pointer take it as the line's own press would.
+    pub(super) fn click_active_editor_at(&mut self, origin: gpui::Point<Pixels>, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editors.active() else { return };
+        let metrics = self.editor_metrics(editor, window);
+        let last_line = editor.view_line_count() - 1;
+        let view_line = ((f32::from(event.position.y - origin.y) + editor.scroll.top) / metrics.line_height).max(0.) as usize;
+        let line = editor.model_line(view_line.min(last_line));
+        let x = ((f32::from(event.position.x - origin.x) - metrics.content_left() + editor.scroll.left) / metrics.char_width).max(0.);
+        let visible = editor.line_layout(line).model_visible(x);
+        self.click_text(line, visible, event.modifiers, event.modifiers.shift, event.click_count, cx);
+        cx.notify();
+    }
     pub(super) fn click_text(&mut self, line: usize, visible: f32, modifiers: gpui::Modifiers, select: bool, click_count: usize, cx: &mut Context<Self>) {
         let column_selection = self.setting("editor.columnSelection") == json!(true);
         // viewController.ts `_hasMulticursorModifier` and `_hasNonMulticursorModifier`; `ctrlCmd` is Cmd on macOS.

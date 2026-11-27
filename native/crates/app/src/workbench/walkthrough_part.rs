@@ -409,15 +409,7 @@ impl Workbench {
         let Some(child) = snippet_block_index(&parse(CONTENT), snippet) else { return };
         // Child 0 is the spacer before the blocks; layout bounds leave out the scroll offset.
         let Some(bounds) = self.playground.scroll.bounds_for_item(child + 1) else { return };
-        let origin = bounds.origin + self.playground.scroll.offset();
-        let metrics = self.editor_metrics(editor, window);
-        let last_line = editor.view_line_count() - 1;
-        let view_line = ((f32::from(event.position.y - origin.y) + editor.scroll.top) / metrics.line_height).max(0.) as usize;
-        let line = editor.model_line(view_line.min(last_line));
-        let x = ((f32::from(event.position.x - origin.x) - metrics.content_left() + editor.scroll.left) / metrics.char_width).max(0.);
-        let visible = editor.line_layout(line).model_visible(x);
-        self.click_text(line, visible, event.modifiers, event.modifiers.shift, event.click_count, cx);
-        cx.notify();
+        self.click_active_editor_at(bounds.origin + self.playground.scroll.offset(), event, window, cx);
     }
 
     /// A paragraph's runs in `weight`: `code` and `.shortcut` in the monospace font in `textPreformat` colors, links in

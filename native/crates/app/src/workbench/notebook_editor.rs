@@ -1308,16 +1308,27 @@ impl Workbench {
         // 1px further left.
         div().absolute().left(px(-1.)).right_0().top(px(layout::EDITOR_TOP_PADDING - 1.)).h(px(text_height)).flex().overflow_hidden()
             .debug_selector(move || format!("notebook-cell-editor-{handle}"))
-            // The lines of an inactive cell editor act on the active editor: the cell takes the focus first, in the capture phase,
-            // so the line's own press places the cursor in this cell.
-            .when(inactive, |area| {
-                area.capture_any_mouse_down(cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
-                    if event.button == MouseButton::Left {
-                        workbench.focus_notebook_cell(tab, handle, true, window, cx);
-                    }
-                }))
-            })
             .child(self.embedded_code_editor(editor, window, cx))
+            // The lines of an inactive cell editor act on the active editor's model (a hover over a line the focused
+            // cell lacks panicked), so a cover takes the mouse: a press focuses the cell and places the cursor there.
+            .when(inactive, |area| {
+                let bounds = Rc::new(std::cell::Cell::new(Bounds::default()));
+                let painted = bounds.clone();
+                let cover = div()
+                    .absolute()
+                    .inset_0()
+                    .block_mouse_except_scroll()
+                    .child(canvas(move |area, _, _| painted.set(area), |_, _, _, _| {}).size_full())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            workbench.focus_notebook_cell(tab, handle, true, window, cx);
+                            workbench.click_active_editor_at(bounds.get().origin, event, window, cx);
+                        }),
+                    );
+                area.child(cover)
+            })
     }
 
     /// cellExecution.ts and the run toolbar: the run button over the gutter of a focused cell, the execution order

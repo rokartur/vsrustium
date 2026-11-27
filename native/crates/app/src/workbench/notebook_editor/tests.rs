@@ -135,6 +135,27 @@ fn a_click_on_the_text_of_another_code_cell_edits_that_cell(cx: &mut TestAppCont
 }
 
 #[gpui::test]
+fn the_mouse_over_a_longer_unfocused_cell_reaches_that_cell(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "a = 1", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "b = 2\nc = 3\nd = 4", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let handle = workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].cells[1].handle);
+    let bounds = cx.debug_bounds(Box::leak(format!("notebook-cell-editor-{handle}").into_boxed_str())).unwrap();
+    let line_height = workbench.read_with(cx, |workbench, _| workbench.notebook_line_height());
+    // Line 3 of the second cell, past the focused cell's only line.
+    let third_line = bounds.origin + gpui::point(gpui::px(60.), gpui::px(line_height * 2.5));
+    cx.simulate_mouse_move(third_line, None, gpui::Modifiers::default());
+    cx.run_until_parked();
+    cx.simulate_click(third_line, gpui::Modifiers::default());
+    workbench.update_in(cx, |workbench, _, _| {
+        assert_eq!(workbench.active_notebook_editor().unwrap().focus, 1);
+        assert_eq!(workbench.editors.active().unwrap().selection().head.line, 2);
+    });
+}
+
+#[gpui::test]
 fn notebook_find_goes_through_the_matches_of_all_cells_and_replaces_them(cx: &mut TestAppContext) {
     let cells = json!([
         { "cellKind": 2, "language": "python", "source": "x = 1\nx", "outputs": [], "metadata": {} },
