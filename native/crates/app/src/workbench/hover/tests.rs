@@ -269,6 +269,33 @@ fn a_target_under_a_closing_context_menu_gets_its_hover(cx: &mut TestAppContext)
     assert_eq!(shown(&workbench, cx).as_deref(), Some("Toggle Panel (⌘J)"));
 }
 
+/// The tab's Unpin Editor after its context menu closes by Escape: the right click hid the hover, the menu left
+/// the target, and the still pointer gets the hover again.
+#[gpui::test]
+fn a_right_clicked_target_gets_its_hover_after_the_menu_closes(cx: &mut TestAppContext) {
+    let (workbench, cx) = open_workbench("hover-right-click", cx);
+    let width = cx.update(|window, _| window.viewport_size().width);
+    let panel = point(width - px(49.), px(18.5));
+    cx.simulate_mouse_move(panel, None, Modifiers::none());
+    wait(cx, 500);
+    cx.simulate_mouse_down(panel, MouseButton::Right, Modifiers::none());
+    workbench.update_in(cx, |workbench, window, cx| {
+        let actions = vec![crate::menus::MenuAction::Command { id: "workbench.action.closeAllEditors".into(), title: "Close All".into(), enabled: true, checked: false, alt: None }];
+        workbench.show_context_menu_actions(actions, &Default::default(), Bounds::new(panel, size(px(0.), px(0.))), Vec::new(), window, cx);
+    });
+    cx.simulate_mouse_up(panel, MouseButton::Right, Modifiers::none());
+    wait(cx, 1500);
+    workbench.update_in(cx, |workbench, window, cx| workbench.hide_context_menu(window, cx));
+    for _ in 0..2 {
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+            drop(window.draw(cx));
+        });
+    }
+    wait(cx, 1500);
+    assert_eq!(shown(&workbench, cx).as_deref(), Some("Toggle Panel (⌘J)"));
+}
+
 /// A `---` paragraph is a 1px rule, 8px below the paragraph before it and 4px above the one after it.
 #[test]
 fn a_rule_paragraph_collapses_its_margins() {
