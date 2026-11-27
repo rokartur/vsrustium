@@ -4,7 +4,7 @@
 # runs `git clean` there (drops files deleted here), then copies only the files that differ: the mirror's modified files
 # (changed by the new commits, or dirty in an earlier run) and this checkout's files that differ from HEAD or are untracked.
 # Ignored files on the Studio (node_modules, out, native/target) survive between runs.
-# Each linked worktree gets its own mirror (port-src-<worktree>), first seeded as an APFS clone of port-src.
+# Each linked worktree gets its own mirror (port-src-<worktree>), first seeded as an APFS clone of port-src-integrate (else port-src).
 # Mirrors borrow git.git's objects through objects/info/alternates; git.git was cloned once from GitHub on the Studio.
 set -euo pipefail
 root=$(git -C "$(dirname "$0")" rev-parse --show-toplevel)
@@ -13,7 +13,8 @@ work=Developer/vscode-gpui-work
 name=port-src
 if [[ $(git rev-parse --absolute-git-dir) != $(cd "$(git rev-parse --git-common-dir)" && pwd) ]]; then
   name=$name-$(basename "$root")
-  ssh studio "cd ~/$work && test -d $name || cp -cR port-src $name"
+  # Seed from the integration mirror when it exists: its native/target is the freshest, so a new worktree's first build reuses its dependencies.
+  ssh studio "cd ~/$work && test -d $name || { seed=port-src-integrate; test -d \$seed || seed=port-src; cp -cR \$seed $name; }"
 fi
 head=$(git rev-parse HEAD)
 # The Studio repo has no LFS server; the two LFS files are copied below like any other file.
