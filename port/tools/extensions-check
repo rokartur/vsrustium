@@ -10,7 +10,7 @@ for fixture in port/fixtures/extensions/vsix-*; do
   (cd "$out/pack" && zip -qr "$out/$(basename "$fixture").vsix" extension)
 done
 (cd native && cargo build --release -q -p app)
-source port/tools/gui-lock.sh
+port_gui_shared=1 source port/tools/gui-lock.sh
 tests=$PWD/port/fixtures/extensions/install-tests
 code=0
 PORT_VSIX_DIR=$out VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 120 native/target/release/vsrustium --user-data-dir "$out/user-data" \

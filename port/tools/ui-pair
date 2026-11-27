@@ -223,7 +223,7 @@ async function bringToFront(target: object) {
 
 async function cua(tool: string, args: object) {
 	// One session for every call: the pixel actions use the screenshot space of the session's last read.
-	const child = Bun.spawn(['cua-driver', 'call', tool, JSON.stringify({ session: 'ui-pair', ...args })], { stderr: 'pipe' });
+	const child = Bun.spawn(['cua-driver', 'call', tool, JSON.stringify({ session: `ui-pair-${process.pid}`, ...args })], { stderr: 'pipe' });
 	const [stdout, stderr, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
 	if (code !== 0) {
 		throw new Error(`cua-driver ${tool}: ${stderr}${stdout}`);
@@ -233,7 +233,7 @@ async function cua(tool: string, args: object) {
 
 /** gui-lock.sh's lock: windows of parallel sessions take turns. */
 async function takeGuiLock() {
-	const lock = '/tmp/port-gui.lock';
+	const lock = process.env.PORT_GUI_LOCK ?? '/tmp/port-gui.lock';
 	while (true) {
 		try {
 			mkdirSync(lock);

@@ -6,7 +6,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 REF=${REF:-$HOME/Developer/vscode-ref}
 out=$(mktemp -d)
-source port/tools/gui-lock.sh
+port_gui_shared=1 source port/tools/gui-lock.sh
 tests=$PWD/port/fixtures/extensions/privacy-tests
 code=0
 for runtime in bun node; do

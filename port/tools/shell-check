@@ -5,7 +5,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 REF=${REF:-$HOME/Developer/vscode-ref}
 out=$(mktemp -d)
-source port/tools/gui-lock.sh
+port_gui_shared=1 source port/tools/gui-lock.sh
 tests=$PWD/port/fixtures/extensions/shell-tests
 SHELL_TESTS_ROOT=$PWD VSCODE_GPUI_EXTENSIONS=$REF/extensions timeout 120 native/target/release/vsrustium --user-data-dir "$out/user-data" --skip-welcome \
   --extensionDevelopmentPath="$tests" --extensionTestsPath="$tests/tests" >"$out/log" 2>&1
