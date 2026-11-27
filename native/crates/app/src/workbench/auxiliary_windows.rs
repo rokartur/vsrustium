@@ -50,6 +50,15 @@ struct AuxiliaryWindowState {
     handle: Option<WindowHandle<AuxiliaryWindow>>,
     /// The window's screen bounds as last drawn, for the parts state.
     bounds: Rc<Cell<Bounds<Pixels>>>,
+    /// Compact mode (auxiliaryEditorPart.ts `updateCompact`) and the part's active editor it last saw.
+    compact: Option<Option<u32>>,
+}
+
+/// What the title bar of an editor window shows of the window's state.
+#[derive(Clone, Copy)]
+pub(super) struct EditorWindowTitle {
+    pub(super) always_on_top: bool,
+    pub(super) compact: bool,
 }
 
 impl AuxiliaryWindows {
@@ -132,6 +141,51 @@ impl Workbench {
             }
             Outcome::done()
         });
+        // auxiliaryEditorPart.ts: Toggle Window Compact Mode and the title bar's Turn On/Off Compact Mode.
+        let compacts = [
+            ("workbench.action.toggleCompactAuxiliaryWindow", None),
+            ("workbench.action.enableCompactAuxiliaryWindow", Some(true)),
+            ("workbench.action.disableCompactAuxiliaryWindow", Some(false)),
+        ];
+        for (id, compact) in compacts {
+            self.commands.register(id, move |workbench, _, window, cx| {
+                let Some(part) = workbench.auxiliary_part_of_window(window) else { return Outcome::done() };
+                let compact = compact.unwrap_or(!workbench.is_compact_part(part));
+                workbench.set_compact(part, compact);
+                cx.notify();
+                Outcome::done()
+            });
+        }
+    }
+
+    pub(super) fn is_compact_part(&self, part: u32) -> bool {
+        self.auxiliary_windows.windows.iter().any(|window| window.part == part && window.compact.is_some())
+    }
+
+    /// The group being drawn is in a compact editor window: no tabs and no breadcrumbs (`showTabs: none`,
+    /// `showBreadcrumbs: false`).
+    pub(super) fn drawing_compact_part(&self) -> bool {
+        self.part_of_group(self.editors.id).is_some_and(|part| self.is_compact_part(part))
+    }
+
+    fn set_compact(&mut self, part: u32, compact: bool) {
+        let active_editor = self.part_active_group(part).and_then(|group| self.editors.group_active_tab(group)).map(|editor| editor.model_id);
+        let Some(state) = self.auxiliary_windows.windows.iter_mut().find(|window| window.part == part) else { return };
+        state.compact = compact.then_some(active_editor);
+    }
+
+    /// auxiliaryEditorPart.ts: a compact window leaves compact mode when its part gets a second group, or its group
+    /// shows another editor while it has more than one.
+    pub(super) fn leave_compact_mode(&mut self) {
+        let compact: Vec<(u32, Option<u32>)> = self.auxiliary_windows.windows.iter().filter_map(|window| Some((window.part, window.compact?))).collect();
+        for (part, seen) in compact {
+            let groups = self.part_groups(part);
+            let (editors, active) = self.editors.group_tabs(groups[0]);
+            let active = active.map(|index| editors[index].model_id);
+            let leave = groups.len() > 1 || (active != seen && editors.len() > 1);
+            let state = self.auxiliary_windows.windows.iter_mut().find(|window| window.part == part).expect("listed above");
+            state.compact = (!leave).then_some(active);
+        }
     }
 
     /// `transferToNewWindow`: a new part with one group in a new window, the editor or the group moved or copied
@@ -189,7 +243,7 @@ impl Workbench {
         let group = self.editors.add_group(false);
         let layout = PartLayout::auxiliary(group, f32::from(bounds.size.width), f32::from(bounds.size.height));
         self.editor_groups.parked.push((part, layout));
-        self.auxiliary_windows.windows.push(AuxiliaryWindowState { part, handle: None, bounds: Rc::new(Cell::new(bounds)) });
+        self.auxiliary_windows.windows.push(AuxiliaryWindowState { part, handle: None, bounds: Rc::new(Cell::new(bounds)), compact: None });
         self.auxiliary_windows.active = Some(part);
         self.open_auxiliary_window(part, bounds, cx);
         group
@@ -354,7 +408,9 @@ impl Workbench {
         let title = self.with_group(group, |workbench| workbench.window_title());
         window.set_window_title(&title);
         let always_on_top = crate::dialog::app_kit_window(window).is_some_and(|ns_window| ns_window.level() == objc2_app_kit::NSFloatingWindowLevel);
-        let title_bar = self.with_group(group, |workbench| workbench.title_bar(f32::from(viewport.width), active, Some(always_on_top), cx));
+        let compact = self.is_compact_part(part);
+        let editor_window = EditorWindowTitle { always_on_top, compact };
+        let title_bar = self.with_group(group, |workbench| workbench.title_bar(f32::from(viewport.width), active, Some(editor_window), cx));
         let editor = self.in_part(part, |workbench| workbench.editor_groups_part(window, cx));
         let status_bar = self.with_group(group, |workbench| workbench.auxiliary_status_bar(window, cx));
         let overlays = match self.auxiliary_windows.active == Some(part) {
@@ -372,23 +428,31 @@ impl Workbench {
             .text_size(px(13.))
             .child(title_bar)
             .child(editor)
-            .when(self.is_status_bar_visible(), |root| root.child(status_bar))
+            .when(self.is_status_bar_visible() && !compact, |root| root.child(status_bar))
             .children(overlays)
             .child(self.cross_window_drag(cx))
             .into_any_element()
     }
 
-    /// windowActions.ts `EnableWindowAlwaysOnTopAction`/`DisableWindowAlwaysOnTopAction` in `MenuId.LayoutControlMenu`.
-    pub(super) fn always_on_top_title_action(&self, always_on_top: bool, foreground: Rgba, cx: &mut Context<Self>) -> impl IntoElement + use<> {
-        let (icon, title, command) = match always_on_top {
+    /// An editor window's `MenuId.LayoutControlMenu` items: Turn On/Off Compact Mode (auxiliaryEditorPart.ts, order 0)
+    /// and Turn On/Off Always on Top (windowActions.ts, order 1).
+    pub(super) fn editor_window_title_actions(&self, state: EditorWindowTitle, foreground: Rgba, cx: &mut Context<Self>) -> [AnyElement; 2] {
+        let compact = match state.compact {
+            true => ("screen-normal", "Turn Off Compact Mode", "workbench.action.disableCompactAuxiliaryWindow"),
+            false => ("screen-full", "Turn On Compact Mode", "workbench.action.enableCompactAuxiliaryWindow"),
+        };
+        let always_on_top = match state.always_on_top {
             true => ("pinned", "Turn Off Always on Top", "workbench.action.disableWindowAlwaysOnTop"),
             false => ("pin", "Turn On Always on Top", "workbench.action.enableWindowAlwaysOnTop"),
         };
-        self.icon(icon, 22., 16., foreground)
-            .id(command)
-            .cursor_pointer()
-            .on_click(cx.listener(move |workbench, _, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx))))
-            .child(self.action_hover(title, command, HoverOptions::instant()))
+        [compact, always_on_top].map(|(icon, title, command)| {
+            self.icon(icon, 22., 16., foreground)
+                .id(command)
+                .cursor_pointer()
+                .on_click(cx.listener(move |workbench, _, window, cx| drop(workbench.execute_command(command, Vec::new(), window, cx))))
+                .child(self.action_hover(title, command, HoverOptions::instant()))
+                .into_any_element()
+        })
     }
 
     /// auxiliaryEditorPart.ts `statusbarPart`: the part's editor status items only.
@@ -442,6 +506,7 @@ impl Workbench {
                 "state": state,
                 "bounds": { "x": value(bounds.origin.x), "y": value(bounds.origin.y), "width": value(bounds.size.width), "height": value(bounds.size.height) },
                 "zoomLevel": 0,
+                "compact": self.is_compact_part(*part),
             }));
         }
         // `mostRecentActiveParts` as indexes into the persistable parts, the main part 0.
@@ -469,9 +534,10 @@ impl Workbench {
             let part = self.auxiliary_windows.last_part;
             let group = self.editors.add_group(false);
             self.editor_groups.parked.push((part, PartLayout::auxiliary(group, f32::from(bounds.size.width), f32::from(bounds.size.height))));
-            self.auxiliary_windows.windows.push(AuxiliaryWindowState { part, handle: None, bounds: Rc::new(Cell::new(bounds)) });
+            self.auxiliary_windows.windows.push(AuxiliaryWindowState { part, handle: None, bounds: Rc::new(Cell::new(bounds)), compact: None });
             self.activate_group(group);
             self.restore_part_state(part, &stored["state"]);
+            self.set_compact(part, stored["compact"] == true);
             self.open_auxiliary_window(part, bounds, cx);
         }
         // The most recent part's active group is the active group, the main part's when it was.

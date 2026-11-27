@@ -123,3 +123,33 @@ fn editor_windows_come_back_with_their_editors(cx: &mut TestAppContext) {
     assert_eq!(parts(&restored, cx)[1], vec![vec!["b.txt".to_string()], vec!["b.txt".to_string()]]);
     assert_ne!(restored.read_with(cx, |workbench, _| workbench.editor_groups.active_part()), MAIN_PART);
 }
+
+fn run_in(handle: AnyWindowHandle, workbench: &gpui::Entity<Workbench>, command: &str, cx: &mut VisualTestContext) {
+    handle.update(cx, |_, window, cx| workbench.update(cx, |workbench, cx| drop(workbench.execute_command(command, vec![], window, cx)))).unwrap();
+    cx.run_until_parked();
+}
+
+#[gpui::test]
+fn a_compact_editor_window_splits_into_the_main_window_and_leaves_compact_mode_for_a_second_editor(cx: &mut TestAppContext) {
+    let (dir, workbench, cx) = workbench_with("compact", &["a.txt", "b.txt"], cx);
+    run(&workbench, "workbench.action.moveEditorToNewWindow", cx);
+    let handle = editor_window(&workbench, cx);
+    let part = workbench.read_with(cx, |workbench, _| workbench.auxiliary_windows.part_ids().next().unwrap());
+    let compact = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.is_compact_part(part));
+    run_in(handle, &workbench, "workbench.action.toggleCompactAuxiliaryWindow", cx);
+    assert!(compact(cx));
+    assert_eq!(workbench.update(cx, |workbench, _| workbench.auxiliary_parts_state()).unwrap()["auxiliary"][0]["compact"], true);
+    // `getAddGroupLocation`: the split's group goes beside the main part's active group.
+    run_in(handle, &workbench, "workbench.action.splitEditorRight", cx);
+    assert_eq!(parts(&workbench, cx), vec![vec![vec!["a.txt".to_string()], vec!["b.txt".to_string()]], vec![vec!["b.txt".to_string()]]]);
+    assert!(compact(cx));
+    // A second editor shown in the window's group ends compact mode.
+    workbench.update_in(cx, |workbench, window, cx| {
+        let group = workbench.part_active_group(part).unwrap();
+        workbench.focus_group(group, window, cx);
+        workbench.open_file(dir.join("a.txt"), true, window, cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(parts(&workbench, cx)[1], vec![vec!["b.txt".to_string(), "a.txt".to_string()]]);
+    assert!(!compact(cx));
+}

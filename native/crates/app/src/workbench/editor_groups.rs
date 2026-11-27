@@ -501,6 +501,11 @@ impl Workbench {
     }
 
     fn add_to_grid(&mut self, reference: u32, direction: Direction, group: u32) {
+        // auxiliaryEditorPart.ts `getAddGroupLocation`: a compact editor window adds groups to the main part.
+        if self.part_of_group(reference).is_some_and(|part| self.is_compact_part(part)) {
+            let main = self.part_active_group(MAIN_PART).expect("the main part has a group");
+            return self.in_part(MAIN_PART, |workbench| workbench.add_to_grid(main, direction, group));
+        }
         let sizing = self.split_sizing();
         let bounds = self.editor_groups.part_bounds.get();
         let grid = self.editor_groups.grid.get_or_insert_with(|| EditorGrid::new(reference, bounds.size.width, bounds.size.height));

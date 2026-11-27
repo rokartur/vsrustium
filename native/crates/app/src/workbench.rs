@@ -1054,6 +1054,7 @@ impl Workbench {
         self.sync_webview_panels();
         self.sync_editor_insets();
         self.text_files_editors_changed();
+        self.leave_compact_mode();
         self.save_editor_part_state();
         self.close_auxiliary_windows_of_closed_parts(cx);
         self.show_editor_if_hidden(cx);
@@ -1087,10 +1088,11 @@ impl Workbench {
             .child(self.action_hover(title, command, HoverOptions::instant()))
     }
 
-    /// The window's title bar; an editor window's (`always_on_top` is its state) has the always on top toggle in
-    /// place of the layout controls, and its border.
-    fn title_bar(&self, viewport_width: f32, active: bool, always_on_top: Option<bool>, cx: &mut Context<Self>) -> Div {
-        let auxiliary = always_on_top.is_some();
+    /// The window's title bar; an editor window's has its compact mode and always on top toggles in place of the
+    /// layout controls, and its border. A compact one has no command center and shows the editor actions.
+    fn title_bar(&self, viewport_width: f32, active: bool, editor_window: Option<auxiliary_windows::EditorWindowTitle>, cx: &mut Context<Self>) -> Div {
+        let auxiliary = editor_window.is_some();
+        let compact = editor_window.is_some_and(|state| state.compact);
         // titlebarPart.ts `updateStyles` and titlebarpart.css `.inactive`: inactive colors, the contents at 0.6 opacity.
         let foreground = match active {
             true => self.color("titleBar.activeForeground"),
@@ -1098,7 +1100,7 @@ impl Workbench {
         };
         let background = self.theme.opaque_on_workbench(if active { "titleBar.activeBackground" } else { "titleBar.inactiveBackground" }).or_else(|| self.theme.opaque_on_workbench("titleBar.activeBackground"));
         let opacity = if active { 1. } else { 0.6 };
-        let command_center_visible = self.setting("window.commandCenter") != Value::Bool(false);
+        let command_center_visible = !compact && self.setting("window.commandCenter") != Value::Bool(false);
         let layout_control_enabled = self.setting("workbench.layoutControl.enabled") != Value::Bool(false);
         // Disabled codicon actions take disabledForeground (actionbar.css .disabled .action-label:not(.icon)).
         let disabled = self.color("disabledForeground");
@@ -1172,7 +1174,10 @@ impl Workbench {
             .gap(px(4.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .when(!auxiliary, |right| right.children(self.notifications_title_bar_item(foreground, cx)))
-            .when_some(always_on_top.filter(|_| layout_control_enabled), |right, always_on_top| right.child(self.always_on_top_title_action(always_on_top, foreground, cx)))
+            // titlebarPart.ts: a compact editor window shows `MenuId.CompactWindowEditorTitle` (a diff's Previous and
+            // Next Change).
+            .when(compact, |right| right.children(self.diff_title_actions(cx).into_iter().filter(|(order, _)| *order < 12.).map(|(_, action)| action)))
+            .when_some(editor_window.filter(|_| layout_control_enabled), |right, state| right.children(self.editor_window_title_actions(state, foreground, cx)))
             .when(!auxiliary && layout_control_enabled, |right| right.children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())))))
             // titlebarPart.ts: with the activity bar on top or bottom, its global Manage action moves to the title bar.
             .when(!auxiliary && self.compact_activity_bar_location().is_some(), |right| right.child(self.icon("settings-gear", 22., 16., foreground).cursor_pointer().child(self.hover_target("manage-title", HoverContent::Text("Manage".into()), HoverOptions::instant()))));

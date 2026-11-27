@@ -395,7 +395,7 @@ impl Workbench {
             // breadcrumbsControl.ts `update`: every editor with a resource has breadcrumbs but untitled and merge editors.
             let breadcrumbs_possible = editor.document().scheme != "untitled" && self.editors.active_merge().is_none();
             context.insert("breadcrumbsPossible".into(), json!(breadcrumbs_possible));
-            context.insert("breadcrumbsVisible".into(), json!(breadcrumbs_possible && self.setting("breadcrumbs.enabled") != json!(false)));
+            context.insert("breadcrumbsVisible".into(), json!(breadcrumbs_possible && !self.drawing_compact_part() && self.setting("breadcrumbs.enabled") != json!(false)));
             context.insert("breadcrumbsHasSymbols".into(), json!(breadcrumbs_possible && !self.breadcrumb_symbols(editor).is_empty()));
             let pane = match editor.document().scheme.as_str() {
                 _ if self.playground_active() => "workbench.editor.walkThroughPart",

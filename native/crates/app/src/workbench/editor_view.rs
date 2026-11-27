@@ -82,6 +82,7 @@ impl Workbench {
         if !self.editor_groups.drawing_inactive {
             self.schedule_unusual_line_terminators_check(editor, window, cx);
         }
+        let compact = self.drawing_compact_part();
         div()
             .flex_1()
             .min_w_0()
@@ -89,7 +90,7 @@ impl Workbench {
             .relative()
             .flex()
             .flex_col()
-            .child(self.tab_strip(window, cx))
+            .when(!compact, |part| part.child(self.tab_strip(window, cx)))
             .map(|part| match editor.document().scheme.as_str() {
                 // The playground's focused snippet is the active editor; the page draws it with the others.
                 _ if self.playground_active() => part.child(self.playground_body(window, cx)),
@@ -106,7 +107,7 @@ impl Workbench {
                 "untitled" => part,
                 // mergeEditor.ts: the merge editor has no breadcrumbs.
                 _ if self.editors.active_merge().is_some() => part,
-                _ if self.setting("breadcrumbs.enabled") == json!(false) => part,
+                _ if compact || self.setting("breadcrumbs.enabled") == json!(false) => part,
                 _ => part.child(self.breadcrumbs(editor, cx).opacity(self.unfocused_editor_opacity(window))),
             })
             .map(|part| match self.editors.active_diff() {
