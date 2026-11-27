@@ -1,0 +1,21 @@
+[
+	{ "wait": 15000 },
+	{ "hotkey": ["cmd", "p"] },
+	{ "wait": 800 },
+	{ "type": "sample.ipynb" },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 30000 },
+	{ "hover": [700, 480] },
+	{ "wait": 1000 },
+	{ "shot": "hover" },
+	{ "scroll": [700, 480], "amount": 2 },
+	{ "wait": 200 },
+	{ "shot": "scrolled" },
+	{ "scroll": [380, 300], "amount": 2 },
+	{ "wait": 200 },
+	{ "shot": "scrolled-webview" },
+	{ "hover": [150, 400] },
+	{ "wait": 2000 },
+	{ "shot": "faded" }
+]
