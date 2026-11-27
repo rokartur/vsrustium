@@ -242,7 +242,7 @@ impl Workbench {
             self.with_group(target, |workbench| {
                 let len = workbench.editors.editors.len() as i64;
                 let index = if index < 0 || index > len { len } else { index };
-                workbench.editors.insert_moved(editor);
+                workbench.insert_moved_editor(editor);
                 // `moveEditor(..., { index })`: the moved tab lands at the host's index, not after the active one.
                 // A sticky editor stays sticky (`sticky: isSticky` of the move), at most last among the sticky ones.
                 if let Some(at) = workbench.editors.editors.iter().position(|open| open.model_id == model) {

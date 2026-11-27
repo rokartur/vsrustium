@@ -707,7 +707,7 @@ impl Workbench {
         let group = gpui::SharedString::from("problems-tree");
         let guides = self.tree_guides_in_group(group.clone(), depths, &active);
         // `.monaco-tl-row` starts at the rows' 4px margin, its guides 16px further (TreeGuides adds 3px to the inset).
-        let rows = rows.into_iter().enumerate().map(|(index, (row, _, _))| div().relative().flex_none().child(row).children(guides.row(index, 1.)));
+        let rows = rows.into_iter().enumerate().map(|(index, (row, _, _))| div().relative().flex_none().child(row).children(guides.row(index, 4.)));
         div().flex_1().min_h_0().flex().flex_col().child(list.group(group).children(rows))
     }
 

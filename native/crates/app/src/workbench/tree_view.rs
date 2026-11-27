@@ -368,7 +368,7 @@ impl Workbench {
         let group = gpui::SharedString::from(format!("tree-body-{id}"));
         let guides = self.tree_guides_in_group(group.clone(), depths, &active);
         // `.monaco-tl-row` starts at the 4px row margin, its guides 16px further (TreeGuides adds 3px to the inset).
-        let rows: Vec<AnyElement> = tree_rows.into_iter().enumerate().map(|(index, (item, depth))| div().relative().child(self.tree_row(id, tree, item, depth, index, focused, window, cx)).children(guides.row(index, 1.)).into_any_element()).collect();
+        let rows: Vec<AnyElement> = tree_rows.into_iter().enumerate().map(|(index, (item, depth))| div().relative().child(self.tree_row(id, tree, item, depth, index, focused, window, cx)).children(guides.row(index, 4.)).into_any_element()).collect();
         let body = div()
             .id(id)
             .group(group)

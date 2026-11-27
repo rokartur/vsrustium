@@ -119,6 +119,9 @@ impl Workbench {
         // The title bar, the shell and the activity bar draw the inactive look.
         cx.observe_window_activation(window, |workbench, window, cx| {
             workbench.host.send("ExtHostWindow", "$onDidChangeWindowFocus", vec![json!(window.is_window_active())]);
+            if window.is_window_active() {
+                workbench.window_activated(None, cx);
+            }
             cx.notify();
         })
         .detach();

@@ -195,6 +195,13 @@ impl Workbench {
         self.editor_type_controls.borrow_mut().insert(self.editors.id, (key, None));
     }
 
+    /// `Editors::insert_moved` into the active group: the moved editor opens a new pane there, whose control
+    /// breadcrumbsControl.ts computes anew.
+    pub(super) fn insert_moved_editor(&mut self, editor: crate::editor::OpenEditor) {
+        self.editor_type_controls.borrow_mut().remove(&self.editors.id);
+        self.editors.insert_moved(editor);
+    }
+
     /// Every group's restored editor, also opened before the extensions registered their editors.
     pub fn set_restored_editor_type_controls(&mut self) {
         for group in self.groups_in_grid_order() {

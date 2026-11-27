@@ -187,7 +187,7 @@ impl Workbench {
                 return;
             }
             let editor = workbench.with_group(group, |workbench| workbench.editors.take_editor(index));
-            workbench.editors.insert_moved(editor);
+            workbench.insert_moved_editor(editor);
         });
         if target != group {
             self.close_group_if_empty(group);

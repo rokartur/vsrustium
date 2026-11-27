@@ -237,6 +237,9 @@ impl Workbench {
                 None => window.blur(cx),
             }
         }
+        // The menu's context view covered the pointer, so the reference left the hover target under it (and dropped
+        // the right click's hide): the move below enters it again and its hover shows after the delay.
+        self.leave_hover_target(cx);
         // Chromium's fake mouse move after layout: what the closed menu uncovers under a still pointer gets its hover.
         // Next-frame callbacks run before that frame's draw, so the move waits one more frame for the menu-less hit test.
         window.on_next_frame(|window, _| {

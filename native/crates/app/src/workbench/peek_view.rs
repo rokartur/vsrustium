@@ -359,7 +359,9 @@ impl Workbench {
         let line_height = self.editors.viewport.line_height;
         let lines = &document.lines;
         let tab_size = document.indentation.tab_size;
-        let content_left = self.preview_content_left(lines.len(), window);
+        // EmbeddedCodeEditorWidget: the preview takes its parent editor's options, `lineNumbers` among them.
+        let line_numbers = self.editors.active().map_or(super::editor_view::LineNumbers::On, |editor| self.line_numbers(editor));
+        let content_left = self.preview_content_left(lines.len(), line_numbers, window);
         let first = (scroll / line_height).floor() as usize;
         let last = (((scroll + height) / line_height).ceil() as usize).min(lines.len());
         let match_background = self.theme.color("peekViewEditor.matchHighlightBackground");
@@ -397,7 +399,7 @@ impl Workbench {
                     .top(px(index as f32 * line_height - scroll))
                     .h(px(line_height))
                     .when(index == cursor_line, |row| row.child(div().absolute().top_0().bottom_0().left(px(content_left)).right_0().border_2().border_color(line_border)))
-                    .child(number)
+                    .when(line_numbers != super::editor_view::LineNumbers::Off, |row| row.child(number))
                     .child(content),
             );
         }
@@ -411,8 +413,8 @@ impl Workbench {
     }
 
     /// The embedded editor's gutter takes the editor's options: the glyph margin, the line numbers and the folding.
-    fn preview_content_left(&self, line_count: usize, window: &Window) -> f32 {
-        let metrics = super::editor_view::EditorMetrics::measure(window, line_count, super::editor_view::LineNumbers::On, self.editor_zoom.multiplier());
+    fn preview_content_left(&self, line_count: usize, line_numbers: super::editor_view::LineNumbers, window: &Window) -> f32 {
+        let metrics = super::editor_view::EditorMetrics::measure(window, line_count, line_numbers, self.editor_zoom.multiplier());
         metrics.content_left()
     }
 }

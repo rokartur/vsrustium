@@ -43,6 +43,13 @@ impl Workbench {
             ns_window.setLevel(level);
             Outcome::done()
         });
+        // `EnableWindowAlwaysOnTopAction` and `DisableWindowAlwaysOnTopAction`, an editor window's title actions.
+        for (id, level) in [("workbench.action.enableWindowAlwaysOnTop", NSFloatingWindowLevel), ("workbench.action.disableWindowAlwaysOnTop", NSNormalWindowLevel)] {
+            self.commands.register(id, move |_, _, window, _| {
+                crate::dialog::ns_window(window).setLevel(level);
+                Outcome::done()
+            });
+        }
         self.commands.register("workbench.action.switchWindow", |workbench, _, window, cx| {
             workbench.show_switch_window(window, cx);
             Outcome::done()
@@ -93,6 +100,7 @@ impl Workbench {
             let profile = if reason == ShutdownReason::Reload { workbench.cli_profile.clone() } else { Default::default() };
             let request = WindowRequest { workspace: folder.map(config::workspace::Workspace::open), backup_folder, ui: Some(crate::windows_state::ui_state(window, cx)), profile, ..WindowRequest::default() };
             workbench.lifecycle.window_closed = true;
+            workbench.remove_auxiliary_windows(cx);
             window.remove_window();
             cx.spawn(async move |_, cx| {
                 if let Some(ended) = ended {
