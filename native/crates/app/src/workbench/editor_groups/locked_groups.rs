@@ -88,7 +88,8 @@ impl Workbench {
     }
 
     /// editorGroupView.ts `createContainerToolbar` (`MenuId.EmptyEditorGroup`): an empty group shows Lock or Unlock
-    /// Group and Close Group when it is locked, in an editor window or one of several groups (editorgroupview.css).
+    /// Group and Close Group at its top right when it is locked, in an editor window or one of several groups
+    /// (editorgroupview.css), over the group's top 35px.
     pub(in crate::workbench) fn empty_group_toolbar(&self, group: u32, cx: &mut Context<Self>) -> Option<Div> {
         let part = self.part_of_group(group)?;
         let closable = part != super::MAIN_PART || self.part_groups(part).len() > 1;
@@ -97,7 +98,7 @@ impl Workbench {
         }
         let close = closable.then(|| self.group_action("close", "Close Group", "workbench.action.closeGroup", false, cx));
         let actions = self.lock_group_action(group, cx).into_iter().chain(close);
-        Some(div().flex_none().h(px(35.)).flex().items_center().justify_end().children(actions.map(|action| div().mr(px(4.)).child(action))))
+        Some(div().absolute().top_0().left_0().right_0().h(px(35.)).flex().items_center().justify_end().children(actions.map(|action| div().mr(px(4.)).child(action))))
     }
 
     fn group_action(&self, icon: &str, title: &'static str, command: &'static str, toggled: bool, cx: &mut Context<Self>) -> AnyElement {

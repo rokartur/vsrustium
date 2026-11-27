@@ -783,8 +783,10 @@ impl Workbench {
             if self.editors.group_tabs(group).0.is_empty() {
                 let strokes = self.compact_density().then(|| self.part_top_border());
                 // editorDropTarget.ts: the empty part takes drops too.
-                let watermark = div().flex_1().min_h_0().flex().flex_col().items_center().justify_center().child(self.watermark(256.));
-                let empty = div().flex_1().min_h_0().relative().flex().flex_col().children(self.empty_group_toolbar(group, cx)).child(watermark);
+                // A locked lone group's toolbar pushes the full-height watermark box down by its height.
+                let toolbar = self.empty_group_toolbar(group, cx);
+                let watermark = div().absolute().left_0().right_0().h_full().top(px(if toolbar.is_some() { 35. } else { 0. })).flex().flex_col().items_center().justify_center().child(self.watermark(256.));
+                let empty = div().flex_1().min_h_0().relative().overflow_hidden().child(watermark).children(toolbar);
                 return card.flex().flex_col().child(self.group_drop_area(group, empty, cx)).children(strokes);
             }
             let body = if group == self.editors.id { self.editor_group_body(window, cx) } else { self.inactive_group_body(group, window, cx) };
@@ -829,10 +831,8 @@ impl Workbench {
                 let secondary = self.side_by_side_secondary(window, cx);
                 self.text_editor_part(secondary, window, cx)
             }
-            None => {
-                let watermark = div().flex_1().min_h_0().flex().flex_col().items_center().justify_center().child(self.watermark(200.));
-                div().size_full().flex().flex_col().children(self.empty_group_toolbar(self.editors.id, cx)).child(watermark)
-            }
+            // editorgroupview.css: the watermark box is 70px shorter than the group, below the toolbar, so it stays centered.
+            None => div().size_full().relative().flex().flex_col().items_center().justify_center().child(self.watermark(200.)).children(self.empty_group_toolbar(self.editors.id, cx)),
         }
     }
 
