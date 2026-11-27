@@ -80,7 +80,7 @@ pub enum Owner {
     Debug(Option<futures::channel::oneshot::Sender<Option<String>>>),
     /// A task picker (run, build, test, terminate, restart).
     Tasks(crate::workbench::task_quick_pick::TaskPicker),
-    /// The tasks.json template picker of the folder.
+    /// The template picker of a tasks.json file (a folder's or the profile's).
     TaskTemplates(std::path::PathBuf),
 }
 

@@ -163,6 +163,9 @@ pub enum MenuAction {
 /// The workbench's registrations of the features the port has: menu, submenu or command id, title, group, order,
 /// `when`, and the command's precondition.
 type Row = (MenuId, Option<MenuId>, &'static str, &'static str, &'static str, f64, Option<&'static str>, Option<&'static str>);
+/// taskService.ts `TaskExecutionSupportedContext`.
+const TASK_EXECUTION_SUPPORTED: &str = "shellExecutionSupported && processExecutionSupported || customExecutionSupported";
+
 const WORKBENCH_MENUS: &[Row] = &[
     // menubar.contribution.ts
     (MenuId::MenubarMainMenu, Some(MenuId::MenubarFileMenu), "", "&&File", "", 1., None, None),
@@ -320,13 +323,22 @@ const WORKBENCH_MENUS: &[Row] = &[
     (MenuId::MenubarPreferencesMenu, None, "workbench.action.openSnippets", "Configure Snippets", "2_configuration", 5., None, None),
     // themes.contribution.ts
     (MenuId::MenubarPreferencesMenu, Some(MenuId::ThemesSubMenu), "", "&&Themes", "2_configuration", 7., None, None),
-    // The activity bar's Manage menu (quickAccess, preferences and themes contributions).
+    // task.contribution.ts `UserTasksGlobalActionContribution`, `TaskExecutionSupportedContext`.
+    (MenuId::MenubarPreferencesMenu, None, "workbench.action.tasks.openUserTasks", "Tasks", "2_configuration", 6., Some(TASK_EXECUTION_SUPPORTED), None),
+    // The activity bar's Manage menu (quickAccess, preferences, extensions, tasks and themes contributions).
     (MenuId::GlobalActivity, None, "workbench.action.showCommands", "Command Palette...", "1_command", 1., None, None),
+    (MenuId::GlobalActivity, None, "workbench.action.openSettings", "Settings", "2_configuration", 2., None, None),
+    (MenuId::GlobalActivity, None, "workbench.view.extensions", "Extensions", "2_configuration", 3., None, None),
+    (MenuId::GlobalActivity, None, "workbench.action.tasks.openUserTasks", "Tasks", "2_configuration", 6., Some(TASK_EXECUTION_SUPPORTED), None),
     (MenuId::GlobalActivity, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),
     (MenuId::GlobalActivity, None, "workbench.action.openSnippets", "Snippets", "2_configuration", 5., None, None),
     (MenuId::GlobalActivity, Some(MenuId::ThemesSubMenu), "", "Themes", "2_configuration", 7., None, None),
     // modernUI.contribution.ts
     (MenuId::GlobalActivity, Some(MenuId::LayoutDensityMenu), "", "Layout Density", "2_configuration", 8., Some("config.workbench.experimental.modernUI == true"), None),
+    // update.ts `appendUpdateMenuItems`: the states the port's update service reaches (workbench/update.rs).
+    (MenuId::GlobalActivity, None, "update.check", "Check for Updates...", "7_update", 0., Some("updateState == 'idle'"), None),
+    (MenuId::GlobalActivity, None, "update.checking", "Checking for Updates...", "7_update", 0., Some("updateState == 'checking for updates'"), Some("false")),
+    (MenuId::GlobalActivity, None, "update.downloadNow", "Download Update (1)", "7_update", 0., Some("updateState == 'available for download'"), None),
     // clipboard.ts, editor.contribution.ts: the Copy As and Share submenus, shown once an extension fills them.
     (MenuId::MenubarEditMenu, Some(MenuId::MenubarCopy), "", "Copy As", "2_ccp", 3., None, None),
     (MenuId::MenubarFileMenu, Some(MenuId::MenubarShare), "", "Share", "45_share", 1., Some("!isSessionsWindow"), None),

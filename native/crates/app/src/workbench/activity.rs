@@ -108,7 +108,11 @@ impl Workbench {
     /// activityaction.css `.badge .badge-content` (16px high, 9px semibold) at the Modern UI place (activityBar.css:
     /// 18px from the top, 3px from the right); the progress badge is a 16px circle with the sync glyph.
     pub(super) fn container_activity_badge(&self, container: &str) -> Option<Div> {
-        let content = visible_badge(&self.container_badges(container))?;
+        Some(self.activity_badge(visible_badge(&self.container_badges(container))?))
+    }
+
+    /// A number badge, or the progress badge for `None`.
+    pub(super) fn activity_badge(&self, content: Option<String>) -> Div {
         let foreground = self.color("activityBarBadge.foreground");
         let badge = div()
             .absolute()
@@ -122,10 +126,10 @@ impl Workbench {
             .bg(self.color("activityBarBadge.background"))
             .text_color(foreground)
             .when_some(self.theme.color("contrastBorder"), |badge, border| badge.border_1().border_color(border));
-        Some(match content {
+        match content {
             Some(text) => badge.min_w(px(16.)).px(px(4.)).text_size(px(9.)).font_weight(gpui::FontWeight::SEMIBOLD).line_height(px(16.)).child(text),
             None => badge.w(px(16.)).child(svg().external_path(progress_icon_path()).size(px(13.)).text_color(foreground).into_any_element()),
-        })
+        }
     }
 
     /// `showOnActivityBar` for `$startProgress` at a view container or view location (Explorer, Source Control,

@@ -437,6 +437,7 @@ pub struct Workbench {
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
     /// The activity bar's Manage button, the anchor of its menu.
     manage_bounds: Rc<Cell<gpui::Bounds<gpui::Pixels>>>,
+    update_state: update::UpdateState,
     context_menus_shown: usize,
     pub(crate) notifications: notifications_view::NotificationsUi,
     /// Extension status bar entries, in statusbarModel.ts order.
@@ -729,6 +730,7 @@ impl Workbench {
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             manage_bounds: Rc::default(),
+            update_state: Default::default(),
             context_menus_shown: 0,
             notifications: notifications_view::NotificationsUi::new(cx),
             status_entries: Vec::new(),
@@ -1153,7 +1155,20 @@ impl Workbench {
             .children(self.notifications_title_bar_item(foreground, cx))
             .when(layout_control_enabled, |right| right.children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())))))
             // titlebarPart.ts: with the activity bar on top or bottom, its global Manage action moves to the title bar.
-            .when(self.compact_activity_bar_location().is_some(), |right| right.child(self.icon("settings-gear", 22., 16., foreground).cursor_pointer().child(self.hover_target("manage-title", HoverContent::Text("Manage".into()), HoverOptions::instant()))));
+            // globalCompositeBar.ts `SimpleGlobalActivityActionViewItem`: a left mouse down opens MenuId.GlobalActivity below it.
+            .when(self.compact_activity_bar_location().is_some(), |right| {
+                right.child(
+                    self.icon("settings-gear", 22., 16., foreground)
+                        .cursor_pointer()
+                        .child(output_view::bounds_tracker(self.manage_bounds.clone()))
+                        .child(self.hover_target("manage-title", HoverContent::Text("Manage".into()), HoverOptions::instant()))
+                        .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| {
+                            let context = workbench.key_context(window);
+                            let actions = crate::menus::menu_actions(&workbench.menus, MenuId::GlobalActivity, &context);
+                            workbench.show_context_menu_actions(actions, &context, workbench.manage_bounds.get(), Vec::new(), window, cx);
+                        })),
+                )
+            });
         // NativeTitlebarPart.minimumHeight: DEFAULT_CUSTOM_TITLEBAR_HEIGHT with the command center, else macTitlebarSize.
         let height = match (command_center_visible, is_tahoe_or_newer()) {
             (true, _) => 35.,
@@ -1275,7 +1290,7 @@ impl Workbench {
             .child(
                 self.icon(self.manage_activity_icon(), 36., 24., inactive)
                     .cursor_pointer()
-                    .children(self.profile_badge())
+                    .children(self.manage_activity_badge())
                     .child(output_view::bounds_tracker(self.manage_bounds.clone()))
                     .child(self.hover_target("manage", HoverContent::Text(self.manage_activity_title()), hover))
                     // globalCompositeBar.ts: a left mouse down opens MenuId.GlobalActivity beside the button.
