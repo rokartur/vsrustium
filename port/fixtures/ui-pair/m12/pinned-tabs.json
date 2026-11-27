@@ -1,5 +1,6 @@
 [
 	{ "wait": 3000 },
+	{ "hover": [600, 400] },
 	{ "hotkey": ["cmd", "p"], "foreground": true },
 	{ "wait": 800 },
 	{ "type": "main.ts", "foreground": true },

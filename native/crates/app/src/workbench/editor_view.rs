@@ -395,7 +395,8 @@ impl Workbench {
             .hover(|action| action.bg(self.color("toolbar.hoverBackground")))
             .child(self.icon(rest_icon, 20., 16., action_foreground).group_hover(action_group.clone(), |icon| icon.invisible()))
             .child(self.icon(action_icon, 20., 16., action_foreground).absolute().top_0().left_0().invisible().group_hover(action_group, |icon| icon.visible()))
-            .when(sticky, |close| close.child(self.hover_target(("tab-unpin-hover", index), super::hover::HoverContent::Text("Unpin Editor".into()), super::hover::HoverOptions::mouse())))
+            // The tab's ActionBar has no hover delegate, so it makes an instant one (actionbar.ts).
+            .when(sticky, |close| close.child(self.hover_target(("tab-unpin-hover", index), super::hover::HoverContent::Text("Unpin Editor".into()), super::hover::HoverOptions::managed())))
             .on_click(cx.listener(move |workbench, _, window, cx| {
                 cx.stop_propagation();
                 match sticky {
