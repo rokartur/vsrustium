@@ -782,7 +782,8 @@ impl Workbench {
             self.restore_notebook_view_state(tab);
         }
         let notebooks = &mut self.host.notebooks;
-        self.editors.stacked_editors.clear();
+        // The playground's focused snippet stays (walkthrough_part.rs).
+        self.editors.stacked_editors.retain(|_, side| side.scheme == super::walkthrough_part::SNIPPET_SCHEME);
         for editor in &notebooks.editors {
             let Some(model) = notebooks.model(&editor.notebook) else { continue };
             // An interactive window's or REPL editor's input editor, when it has the focus or the list has no cell.

@@ -309,6 +309,8 @@ const WORKBENCH_MENUS: &[Row] = &[
     // gettingStarted.contribution.ts and processExplorer.contribution.ts
     (MenuId::MenubarHelpMenu, None, "workbench.action.openWalkthrough", "Welcome", "1_welcome", 1., None, None),
     (MenuId::MenubarHelpMenu, None, "welcome.showAllWalkthroughs", "Open Walkthrough...", "1_welcome", 3., None, None),
+    // walkThrough.contribution.ts
+    (MenuId::MenubarHelpMenu, None, "workbench.action.showInteractivePlayground", "Editor Playgrou&&nd", "1_welcome", 3., None, None),
     (MenuId::MenubarHelpMenu, None, "workbench.action.openProcessExplorer", "Open &&Process Explorer", "5_tools", 2., None, None),
     // preferences.contribution.ts
     (MenuId::MenubarPreferencesMenu, None, "workbench.action.openGlobalKeybindings", "Keyboard Shortcuts", "2_configuration", 4., None, None),

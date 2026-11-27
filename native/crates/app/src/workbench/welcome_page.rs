@@ -238,6 +238,10 @@ impl Workbench {
 
     /// `GettingStartedInput.getName`.
     pub(super) fn walkthrough_editor_name(&self, path: &Path) -> String {
+        // editorWalkThrough.ts `inputOptions.name`.
+        if path == self.playground_path() {
+            return "Editor Playground".into();
+        }
         if path != Path::new(GETTING_STARTED_PATH) {
             return path.to_string_lossy().into_owned();
         }
