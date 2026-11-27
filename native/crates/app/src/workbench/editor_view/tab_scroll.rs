@@ -230,7 +230,7 @@ mod tests {
 
     /// 30 files open as tabs, the last one active, with `settings`.
     fn thirty_tabs<'a>(name: &str, settings: serde_json::Value, cx: &'a mut TestAppContext) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-tab-scroll-{name}-{}", std::process::id()));
