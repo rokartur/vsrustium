@@ -27,7 +27,7 @@ fn scratch() -> PathBuf {
 
 /// A window on `<dir>/folder` with its backups in `<dir>/user` and the `test.edit` provider registered.
 fn open<'a>(cx: &'a mut TestAppContext, dir: &Path) -> (gpui::Entity<Workbench>, Receiver<HostMessage>, &'a mut VisualTestContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let workspace = config::workspace::Workspace::folder(dir.join("folder"));

@@ -84,7 +84,7 @@ fn indent_levels_and_keybindings_of_kinds() {
 
 /// A folder with `a.ts` holding `text`, open with the cursor at its start, with one code action provider.
 fn open<'a>(text: &str, cx: &'a mut TestAppContext) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext, Receiver<HostMessage>) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-code-actions-{}", std::process::id()));

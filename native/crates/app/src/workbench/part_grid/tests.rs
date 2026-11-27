@@ -18,7 +18,7 @@ struct Stores {
 }
 
 fn open<'a>(folder: Option<PathBuf>, stores: &Stores, cx: &'a mut TestAppContext) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let (profile, workspace) = (stores.profile.clone(), stores.workspace.clone());
     let (workbench, cx) = cx.add_window_view(|_, cx| {

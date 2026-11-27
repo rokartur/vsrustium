@@ -6,7 +6,7 @@ Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Cod
 
 Mouse cursors are part of the look (Artur): every element gets the cursor the reference CSS gives it (`rg 'cursor:' src/vs --glob '*.css'`): `pointer` on clickable items (activity bar, tabs, list rows, status bar items with a command, buttons, links), `text` over editor text and input fields, the resize cursors on sashes, `default` elsewhere. GPUI: `.cursor_pointer()`, `.cursor_text()`, `.cursor_ew_resize()` and the like on the element, never a window-wide cursor.
 
-Ledger today: 93 verified, 115 ported, 51 stub, 213 todo, 104 removed, 17 n/a (of 593 rows).
+Ledger today: 423 verified, 12 ported, 0 stub, 4 todo, 126 removed, 28 n/a (of 593 rows).
 
 ## Done
 
@@ -158,45 +158,50 @@ Done when: `port/tools/api-tests` gives 318/28/0 (folder) and 4/0/0 (workspace):
 
 ## 21. Uplift to VS Code 1.148.0
 
-Starts after milestones 11 to 20 close on 1.147.0; until then every reference, baseline and ui-pair stays on 1.147.0.
+Starts after milestones 11 to 20 close on 1.147.0 and after milestone 22 (the split); until then every reference, baseline and ui-pair stays on 1.147.0.
 
-Plan: `port/plans/uplift-1.147.0-to-1.148.0.md` (`bun port/tools/uplift-diff.ts 1.148.0`, every change triaged).
+Plan: `port/plans/uplift-1.147.0-to-1.148.0.md` (`bun port/tools/uplift-diff.ts 1.148.0`, every change triaged; refreshed against the ledger with 17 rows still open).
 
-Scope: of about 209,000 changed upstream lines, about 6,800 are ported. About 4,100 of those are Rust work. The rest is 1,265 lines of grammar data, about 1,400 that arrive with the merge or the reference's extensions, and the 1,022-line empty-editor hint rewrite, which goes in with that stub row's own work. About 98,900 lines are skipped: AI, chat, sessions, agent host, remote, GitHub sign-in, experiments, telemetry and the integrated browser. The largest items:
+Scope: of about 209,000 changed upstream lines, 6,548 are ported. About 3,500 of those are Rust work. The rest is 1,977 lines of grammar data and colorize fixtures, about 770 that arrive with upstream or the reference's extensions, and 308 of the floating comment style, a gap older than the uplift. 100,284 lines are skipped: AI, chat, sessions, agent host, remote, GitHub sign-in, experiments, telemetry and the integrated browser. The empty-editor hint rewrite is a move with no visible change. The largest items:
 - SCM providers hidden and shown at runtime: the new `$setSourceControlsHidden`, used by the git extension through `scmProviderOptions`.
 - `$getWorkspaceFolderLocations` for the git extension's `workspaceFolderLocations` proposal (primary locations only).
 - The add-tab menu and wrapped tabs.
 - The comment widgets.
 - The multi diff file list as a split button.
 - Folder merge on drop in the Explorer.
+- The remove-folder vetoes (workspace editing, tasks, debug).
 - Named pipes in the disk provider.
 - Debug Console completion ranges.
 - Theme and modern UI color changes.
 
 Steps:
-1. Session 1 does the setup and milestones 7 to 11. Setup: the 1.148.0 reference on the Studio, `git merge 1.148.0`, the extension host rebuilt, `gen-proxy-ids.ts` (the ids move after the new `MainThreadRemoteAgentHosts`), the reference dumps, the baselines and the version bump.
-2. Session 2 does milestones 12 and 14: files, workspace and SCM.
+1. Session 1 does the setup and milestones 7 to 11. Setup: the 1.148.0 reference on the Studio; `upstream/` moved to the tag with `git -C upstream reset --hard 1.148.0` (1.148.0 does not descend from 1.147.0, so no fast-forward); the 9 upstream patches checked with `git apply --check` (1.148.0 does not touch those files); the extension host rebuilt; `gen-proxy-ids.ts` (the ids move after the new `MainThreadRemoteAgentHosts`); the reference dumps, the baselines and the version bump.
+2. Session 2 does milestones 12 and 14: files, workspace, the remove-folder vetoes and SCM.
 3. Session 3 does milestones 13 and 15 to 19.
 Sessions 2 and 3 can run in parallel after session 1.
 
-Done when: the ledger names 1.148.0. Every row the diff touches is `verified`, `removed` or `n/a` again, or keeps its 1.147.0 status where the gap is older than the uplift (the empty-editor hint, floating comments, workspace editing, the action widget view). The full check passes against the 1.148.0 reference.
+Done when: the ledger names 1.148.0. Every row the diff touches is `verified`, `removed` or `n/a` again, or keeps its 1.147.0 status where the gap is older than the uplift (the floating comment style). The full check passes against the 1.148.0 reference.
 
 ## 22. Split the port from the VS Code tree
 
-Artur: in the end the repository holds two code bases apart, `main` with the Rust port only and a `vscode` branch with upstream VS Code. Order: milestones 11 to 20 finish, everything lands on `main` (after its full check), then this split, then milestone 21, which becomes moving `vscode` to the new tag.
+Artur: in the end `main` holds the Rust port only and upstream VS Code is a plain checkout of an upstream tag beside it. Order: milestones 11 to 20 finish, everything lands on `main` (after its full check), then this split, then milestone 21, which becomes moving `upstream/` to the new tag.
 
 Today the port reads upstream from the same tree: the extension host is built from `src/` (`port/tools/build-exthost`) with 11 upstream files edited (288 lines: `src/bootstrap-exthost.ts`, `extHostExtensionService.ts`, `extensionHostProcess.ts`, `extHostInertModules.ts`, `extHostRequireInterceptor.ts`, `proxyResolver.ts`, `ipc.net.ts`, `product.json`, `extensions/configuration-editing/package.json`); the built-in extensions come from `extensions/`; `native/crates/app/build.rs` builds the NLS index from `src/vs`; `port/tools/package-app` copies media from `src/vs`; the tools (`gen-ledger.ts`, `gen-proxy-ids.ts`, `uplift-diff.ts`, `api-tests`, `extension-tests`, `ref-*`, `dump-settings`, `privacy-check`, `shipped-files.ts`) read `src/`, `extensions/` and `product.json`.
 
 Target:
-- `vscode`: upstream at the followed tag (1.147.0), never edited, updated by fast-forward to the next tag.
-- `main`: `native/`, `port/`, the port's skills, README and licenses. It checks out `vscode` as a git worktree at `upstream/` (ignored), or the path in `VSCODE_SRC`; every build step and tool reads upstream from there.
-- The 11 upstream edits move to `port/patches/*.patch`, applied to a build copy of `upstream/` by `build-exthost` and `package-app`, never committed to `vscode`; `product.json` changes become an overlay in `port/`.
+- `upstream/` (ignored): upstream VS Code checked out detached at the followed tag (`git -C upstream checkout 1.147.0`), never edited; an uplift moves it with `git -C upstream checkout 1.148.0`. No `vscode` branch.
+- `main`: `native/`, `port/`, the port's skills, README and licenses. Every build step and tool reads upstream from `upstream/`, or the path in `VSCODE_SRC`.
+- The 11 upstream edits move to `port/patches/*.patch`, applied to a build copy by `build-exthost` and `package-app`, never committed to upstream; `product.json` changes become an overlay in `port/`.
 
-Steps: 1) route every upstream path through one setting (`VSCODE_SRC`, default `upstream/`) in build.rs, the tools and the app's dev paths, in today's tree, with the full check green; 2) turn the 11 edits into patches applied at build time, full check green; 3) create `vscode` at the 1.147.0 tag and the new `main` (decision below), add the `upstream/` worktree, rebuild the Studio mirrors and `vscode-ref`; 4) a clean clone builds, tests, packages and passes the full check.
+Steps: 1) route every upstream path through one setting (`VSCODE_SRC`, default `upstream/`, the repo root while the tree is not split) in build.rs, the tools and the app's dev paths, in today's tree, with the full check green; 2) turn the 11 edits into patches applied at build time, full check green; 3) create the new `main` (decision below), check out `upstream/` at 1.147.0, rebuild the Studio mirrors and `vscode-ref`; 4) a clean clone builds, tests, packages and passes the full check.
 
-Decision for Artur: keep the port's history on the new `main` (`git filter-repo` to `native/`, `port/`, skills: every commit hash changes) or start `main` from one commit with today's tree (history stays readable on the old `gpui` branch).
+Decision (Artur): the new `main` starts from one commit with today's port tree, without `git filter-repo`; the port's history stays readable on the old branch.
 
-Done when: `main` holds no upstream file; `git worktree add upstream vscode` plus the documented build gives the same app, unit tests, api-tests and pixel-check as before the split.
+Done: steps 1 and 2 (branch `port-m22-split`). `VSCODE_SRC` is resolved by `native/vscode_src.rs` (build scripts of app, diff, files; `env!("VSCODE_SRC")`), `port/tools/vscode-src.sh` and `port/tools/vscode-src.ts`; the dev app root is `VSCODE_SRC` (runtime env over the build's value), the host bundle stays in the checkout's `out-exthost/`. The edits are `port/patches/src-*.patch` (build-exthost, on a copy in `out-exthost/build`, product and package inlined) and `extensions-*.patch` (package-app), `port/product.json` is the overlay; the VS Code files in the tree equal the 1.147.0 tag except `.gitignore` (the port's two lines, gone with step 3).
+
+Port version after the split: the followed VS Code version is `package.json`'s `version` in `VSCODE_SRC` (upstream's, at the checked-out tag), which `uplift-diff.ts` reads as its default `from`; no port-side version file.
+
+Done when: `main` holds no upstream file; checking out `upstream/` at the tag plus the documented build gives the same app, unit tests, api-tests and pixel-check as before the split.
 
 ## Decisions (Artur)
 

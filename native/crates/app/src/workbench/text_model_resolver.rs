@@ -66,7 +66,7 @@ mod tests {
     }
 
     fn workbench(cx: &mut TestAppContext) -> (gpui::Entity<Workbench>, &mut VisualTestContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx))

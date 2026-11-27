@@ -678,7 +678,7 @@ mod tests {
 
     #[gpui::test]
     fn errors_are_announced_on_a_new_line_and_at_each_position_on_them(cx: &mut gpui::TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-line-signals-{}", std::process::id()));

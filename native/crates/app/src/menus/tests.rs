@@ -231,7 +231,7 @@ fn extension_submenus() {
 /// Explorer and editor context menus; Copy As stays hidden while nothing fills it.
 #[test]
 fn the_github_share_items_fill_the_share_submenus() {
-    let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let app_root = std::path::Path::new(env!("VSCODE_SRC")).to_path_buf();
     let github = exthost::scan::scan_extension(&app_root.join("extensions/github"), true).unwrap();
     let mut registry = workbench_menus();
     registry.extend(extension_menus(&[github]));

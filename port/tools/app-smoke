@@ -5,6 +5,7 @@
 # port/fixtures/extensions/encoding-guess-tests in it with files.autoGuessEncoding on. Run on the Studio.
 set -uo pipefail
 repo=$PWD
+source port/tools/vscode-src.sh
 APP=${APP:-$PWD/native/target/VSRustium.app}
 source port/tools/gui-lock.sh
 dir=$(mktemp -d)
@@ -21,7 +22,7 @@ kill "$pid"; wait "$pid" 2>/dev/null
 grep -E "eager extensions activated|failed|error" "$dir/log" | head -5
 grep -q "eager extensions activated: .*vscode.git" "$dir/log" && code=0 || code=1
 
-fixtures=$repo/src/vs/workbench/services/textfile/test/node/encoding/fixtures
+fixtures=$VSCODE_SRC/src/vs/workbench/services/textfile/test/node/encoding/fixtures
 cp "$fixtures/some.shiftjis.txt" "$fixtures/some.cp1252.txt" "$dir/workspace/"
 echo '{"workbench.startupEditor":"none","files.autoGuessEncoding":true}' >"$dir/user-data/User/settings.json"
 tests=$repo/port/fixtures/extensions/encoding-guess-tests

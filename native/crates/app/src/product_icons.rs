@@ -134,8 +134,7 @@ mod tests {
 
     #[test]
     fn the_fixture_theme_draws_its_glyphs_for_codicon_ids() {
-        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
-        let fixture = exthost::scan::scan_extension(&app_root.join("port/fixtures/extensions/product-icons"), false).unwrap();
+        let fixture = exthost::scan::scan_extension(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../port/fixtures/extensions/product-icons"), false).unwrap();
         let extensions = [fixture];
         assert_eq!(product_icon_themes(&extensions).iter().map(|theme| theme.label.as_str()).collect::<Vec<_>>(), ["Fixture Icons"]);
         let theme = ProductIconTheme::load(&extensions, "fixture-icons").unwrap();

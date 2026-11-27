@@ -16,7 +16,7 @@ use crate::workbench::Workbench;
 
 #[gpui::test]
 fn string_arguments_resolve_against_the_active_file_and_its_folder(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark 2026").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-resolver-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -66,7 +66,7 @@ fn accept_quick_input(workbench: &gpui::Entity<Workbench>, cx: &mut gpui::Visual
 
 #[gpui::test]
 fn interactive_variables_ask_in_order_and_remember_the_last_values(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark 2026").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-interactive-{}", std::process::id()));
     std::fs::create_dir_all(dir.join("User")).unwrap();

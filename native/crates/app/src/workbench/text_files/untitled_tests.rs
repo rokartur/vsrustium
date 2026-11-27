@@ -24,7 +24,7 @@ struct Untitled<'a> {
 
 /// A workbench knowing TypeScript and JavaScript over a temp folder whose user settings are `user_settings`.
 fn untitled<'a>(name: &str, user_settings: &str, cx: &'a mut TestAppContext) -> Untitled<'a> {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let languages = ["typescript-basics", "javascript"].map(|name| scan_extension(&app_root.join("extensions").join(name), true).unwrap());

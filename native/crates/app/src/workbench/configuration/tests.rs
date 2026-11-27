@@ -14,7 +14,7 @@ use crate::workbench::Workbench;
 
 #[gpui::test]
 fn an_edit_of_settings_json_on_disk_reaches_the_host_the_theme_and_the_models(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = ["theme-defaults", "theme-abyss"].map(|name| scan_extension(&app_root.join("extensions").join(name), true).unwrap());
     let theme = load_theme(&themes, "Dark 2026").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-configuration-{}", std::process::id()));

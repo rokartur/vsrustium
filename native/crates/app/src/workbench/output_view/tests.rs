@@ -23,7 +23,7 @@ fn open(cx: &mut TestAppContext) -> (gpui::Entity<Workbench>, &mut VisualTestCon
 
 /// `open`, with the temporary folder as the workspace's folder when `as_folder`.
 fn open_in(cx: &mut TestAppContext, as_folder: bool) -> (gpui::Entity<Workbench>, &mut VisualTestContext, Receiver<HostMessage>, PathBuf) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     static OPENED: AtomicUsize = AtomicUsize::new(0);

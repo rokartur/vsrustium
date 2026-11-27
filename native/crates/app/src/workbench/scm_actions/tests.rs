@@ -10,7 +10,7 @@ use crate::menus::{MenuAction, MenuId};
 use crate::workbench::Workbench;
 
 fn workbench_in<'a>(name: &str, cx: &'a mut TestAppContext) -> (gpui::Entity<Workbench>, Receiver<HostMessage>, &'a mut VisualTestContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-{name}-{}", std::process::id()));

@@ -43,7 +43,7 @@ fn input_text(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext) -
 /// it back, and closing the tab lets the input go in the host.
 #[gpui::test]
 fn the_interactive_window_executes_its_input_as_cells(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("vsrustium-interactive-{}", std::process::id()));

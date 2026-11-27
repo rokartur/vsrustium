@@ -665,7 +665,7 @@ mod tests {
 
     #[gpui::test]
     fn go_back_rebuilds_the_top_level_in_the_same_picker(cx: &mut gpui::TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));

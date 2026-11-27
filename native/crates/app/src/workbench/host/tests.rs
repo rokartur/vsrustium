@@ -13,7 +13,7 @@ use crate::theme::load_theme;
 use crate::workbench::Workbench;
 
 fn empty_window(cx: &mut TestAppContext) -> (gpui::Entity<Workbench>, gpui::AnyWindowHandle) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), std::env::temp_dir().join("vsrustium-switch-window-user"), None)));
