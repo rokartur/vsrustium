@@ -186,7 +186,10 @@ impl Workbench {
         if let Some(handle) = selected {
             input.set_active_items(&[handle]);
         }
+        // `setTimeout(() => quickInputService.focus(), 0)`: after the frame, where a shown panel may have focused its
+        // new terminal.
         window.focus(&self.quick_inputs.focus, cx);
+        cx.on_next_frame(window, |workbench, window, cx| window.focus(&workbench.quick_inputs.focus, cx));
         self.flush_quick_input_events(window, cx);
     }
 

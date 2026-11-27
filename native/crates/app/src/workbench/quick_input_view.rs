@@ -391,7 +391,8 @@ impl Workbench {
             })
             .child(self.quick_input_header(&input, interactive, window, cx))
             .children(input.message().map(|message| self.quick_input_message(&input, message)))
-            .child(self.quick_input_progress(&input))
+            // quickInput.ts `QuickPick.update`: no progress bar with a hidden input and no description.
+            .when(input.kind != Kind::QuickPick || !input.hide_input || input.description.as_ref().is_some_and(|description| !description.is_empty()), |widget| widget.child(self.quick_input_progress(&input)))
             .when(input.kind == Kind::QuickPick, |widget| widget.child(self.quick_input_list(&input, interactive, window, cx)));
         // quickInput.css: the open and close animations are `.modern-ui.monaco-enable-motion` ones.
         if frosted || self.is_motion_reduced() {
@@ -562,7 +563,8 @@ impl Workbench {
             .on_mouse_down(MouseButton::Left, cx.listener(Self::quick_input_drag_start))
             // The action bars are not drag areas (excludeNodes); in the flex row the back button moves the title right.
             .child(div().ml(px(4.)).occlude().flex().children(left.into_iter().map(|button| self.quick_input_button(button, 20., cx))))
-            .child(div().flex_1().py(px(3.)).text_center().child(if title.is_empty() { "\u{a0}".to_owned() } else { title }))
+            // The widget's line-height, 1.4 of its 13px font.
+            .child(div().flex_1().py(px(3.)).line_height(px(18.2)).text_center().child(if title.is_empty() { "\u{a0}".to_owned() } else { title }))
             .child(div().mr(px(4.)).occlude().flex().gap(px(4.)).children(right.into_iter().map(|button| self.quick_input_button(button, 20., cx))))
     }
 
@@ -767,7 +769,7 @@ impl Workbench {
     }
 
     /// A `.quick-input-list-entry`.
-    fn quick_input_row(&mut self, position: usize, interactive: bool, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn quick_input_row(&mut self, position: usize, interactive: bool, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let input = match (self.quick_inputs.current(), self.quick_inputs.closing.as_ref()) {
             (Some(input), _) if interactive => input,
             (_, Some((input, _))) => input,
@@ -845,7 +847,7 @@ impl Workbench {
                 )
             })
             .child(label_box)
-            .when(!row.item.keybinding.is_empty(), |entry| entry.child(self.keybinding_label(&row.item.keybinding, focused || hovered)))
+            .when(!row.item.keybinding.is_empty(), |entry| entry.child(self.keybinding_label(&row.item.keybinding, focused, hovered)))
             // The entry's right padding is 4px on 1.147, so the separator label ends 4px from the row edge.
             .children(separator.map(|label| div().flex().items_center().ml(px(4.)).mr(px(2.)).text_size(px(11.)).text_color(separator_color).child(label)))
             .when(row.item.buttons.iter().any(|button| buttons_shown || button.always_visible), |entry| {
@@ -869,7 +871,13 @@ impl Workbench {
         let background = if focused { self.theme.color("quickInputList.focusBackground") } else if hovered { self.theme.color("list.hoverBackground") } else { None };
         // listWidget.ts: the focused row of the unfocused list gets a 1px dotted listInactiveFocusOutline (activeContrastBorder).
         // shortcut: dashed, GPUI has no dotted border.
-        let outline = self.theme.color("contrastActiveBorder").filter(|_| focused).map(|color| div().absolute().inset_0().rounded(px(3.)).border_1().border_dashed().border_color(color));
+        // quickInput.ts `update`: with the input box hidden the list has the DOM focus, and quickInput.css outlines
+        // its focused row 1px solid list.focusOutline, inside the row.
+        let list_focused = input.hide_input && self.quick_inputs.focus.is_focused(window);
+        let outline = match list_focused {
+            true => self.theme.color("list.focusOutline").filter(|_| focused).map(|color| div().absolute().inset_0().rounded(px(3.)).border_1().border_color(color)),
+            false => self.theme.color("contrastActiveBorder").filter(|_| focused).map(|color| div().absolute().inset_0().rounded(px(3.)).border_1().border_dashed().border_color(color)),
+        };
         let header = row.header.clone();
         let row_element = div()
             .id(("quick-input-row", row_index))
@@ -983,8 +991,19 @@ impl Workbench {
     }
 
     /// The `.monaco-keybinding` of a row: a box per key, chords apart.
-    fn keybinding_label(&self, chords: &[Vec<String>], row_active: bool) -> Div {
-        div().flex().items_center().children(chords.iter().enumerate().map(|(index, chord)| div().flex().when(index > 0, |chord| chord.ml(px(5.))).children(chord.iter().map(|label| self.key_cap(label, row_active)))))
+    /// quickInput.css: a focused row's keys take the row's color (`color: inherit`); on a focused or hovered row
+    /// their border is that color at 30% outside high contrast themes.
+    fn keybinding_label(&self, chords: &[Vec<String>], focused: bool, hovered: bool) -> Div {
+        let row_color = self.theme.color("quickInputList.focusForeground").filter(|_| focused).unwrap_or_else(|| self.foreground_or(if focused { "quickInput.foreground" } else { "keybindingLabel.foreground" }));
+        let mut border = row_color;
+        border.a *= 0.3;
+        let mixed_border = (focused || hovered) && !self.theme.kind.is_high_contrast();
+        let key = |label: &String| {
+            self.key_cap(label, focused || hovered)
+                .when(focused, |key| key.text_color(row_color))
+                .when(mixed_border, |key| key.border_color(border))
+        };
+        div().flex().items_center().children(chords.iter().enumerate().map(|(index, chord)| div().flex().when(index > 0, |chord| chord.ml(px(5.))).children(chord.iter().map(key))))
     }
 
     /// keybindingLabel.css `.monaco-keybinding-key`.
