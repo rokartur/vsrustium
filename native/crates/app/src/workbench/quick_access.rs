@@ -416,9 +416,16 @@ impl Workbench {
                     (None, accept) => self.accept_quick_access_pick(accept, in_background, window, cx),
                 }
             }
-            Event::TriggerItemButton(handle, _, _) if matches!(self.quick_access_pick(id, handle), Some(Accept::File { .. })) => {
-                // `TriggerAction.REMOVE_ITEM` of "Remove from Recently Opened".
+            Event::TriggerItemButton(handle, button, _) if matches!(self.quick_access_pick(id, handle), Some(Accept::File { .. })) => {
                 let Some(Accept::File { path, .. }) = self.quick_access_pick(id, handle) else { return };
+                if button == 0 {
+                    // `forceOpenSideBySide`: SIDE_GROUP, then `TriggerAction.CLOSE_PICKER`.
+                    self.hide_quick_input_by_id(id, window, cx);
+                    self.activate_column(&Value::from(super::webview_panels::SIDE_GROUP));
+                    self.open_file_pick(path, false, window, cx);
+                    return;
+                }
+                // `TriggerAction.REMOVE_ITEM` of "Remove from Recently Opened".
                 self.remove_from_editor_history(&path);
                 if let Some(input) = self.quick_inputs.get_mut(id) {
                     input.remove_item(handle);

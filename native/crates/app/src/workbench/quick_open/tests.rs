@@ -8,6 +8,7 @@ use gpui::TestAppContext;
 use crate::editor::{Position, Selection};
 use crate::host_sync::HostSync;
 use crate::languages::Languages;
+use crate::quick_input::Event;
 use crate::theme::load_theme;
 use crate::workbench::Workbench;
 use storage::Storage;
@@ -156,4 +157,14 @@ fn quick_open_lists_history_and_files_and_opens_at_the_line(cx: &mut TestAppCont
     cx.simulate_input("gui");
     cx.run_until_parked();
     assert_eq!(workbench.read_with(cx, labels), ["--recently opened--guide.md"], "history entries are not repeated as file results");
+
+    // The row's first button, Open to the Side: guide.md opens in a new group beside the active one.
+    workbench.update_in(cx, |workbench, window, cx| {
+        let handle = *workbench.quick_inputs.current().unwrap().active_handles().first().unwrap();
+        workbench.with_current_quick_input(window, cx, |input| input.events.push(Event::TriggerItemButton(handle, 0, None)));
+    });
+    cx.run_until_parked();
+    let (groups, path) = workbench.read_with(cx, |workbench, _| (workbench.groups_in_grid_order().len(), workbench.editors.active().unwrap().document().path.clone()));
+    assert_eq!((groups, path), (2, folder.join("docs/guide.md")));
+    assert!(workbench.read_with(cx, |workbench, _| workbench.quick_inputs.current().is_none()), "the button closes the picker");
 }

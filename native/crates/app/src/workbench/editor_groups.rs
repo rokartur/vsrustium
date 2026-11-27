@@ -640,11 +640,12 @@ impl Workbench {
             let area = div().absolute().left(px(rect.x)).top(px(rect.y)).w(px(rect.width)).h(px(rect.height)).overflow_hidden().flex().flex_col().child(body);
             groups.push(self.group_drop_area(group, area, cx));
         }
+        // splitview.css: the separator is the 1px `::before` at the start of the view after the sash.
         let separators = sashes.iter().map(|sash| {
             let line = div().absolute().bg(separator);
             match sash.orientation {
-                Orientation::Horizontal => line.left(px(sash.rect.x + sash.rect.width / 2. - 0.5)).top(px(sash.rect.y)).w(px(1.)).h(px(sash.rect.height)),
-                Orientation::Vertical => line.top(px(sash.rect.y + sash.rect.height / 2. - 0.5)).left(px(sash.rect.x)).h(px(1.)).w(px(sash.rect.width)),
+                Orientation::Horizontal => line.left(px(sash.rect.x + sash.rect.width / 2.)).top(px(sash.rect.y)).w(px(1.)).h(px(sash.rect.height)),
+                Orientation::Vertical => line.top(px(sash.rect.y + sash.rect.height / 2.)).left(px(sash.rect.x)).h(px(1.)).w(px(sash.rect.width)),
             }
         });
         let separators: Vec<Div> = separators.collect();

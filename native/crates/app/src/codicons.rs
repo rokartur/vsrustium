@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 /// codicons.ts: the icons the workbench registers as another codicon's glyph.
 const DERIVED: [(&str, &str); 18] = [
@@ -34,6 +34,17 @@ pub fn svg_path(app_root: &Path, name: &str) -> PathBuf {
     icons.join(format!("{}.svg", aliases.get(name).map_or(name, String::as_str)))
 }
 
+/// iconRegistry.ts `_resolveIconDefinition`'s walk: `id`, then each registered default after it, ending at a codicon
+/// with a font character. The defaults come from port/tools/gen-icon-registry.ts.
+pub fn icon_ids(id: &str) -> Vec<&str> {
+    static DEFAULTS: LazyLock<HashMap<String, String>> = LazyLock::new(|| serde_json::from_str(include_str!("icon_registry.json")).expect("icon_registry.json is a map of ids"));
+    let mut ids = vec![id];
+    while let Some(default) = DEFAULTS.get(*ids.last().expect("starts with id")) {
+        ids.push(default);
+    }
+    ids
+}
+
 fn read_aliases(mapping: &Path, icons: &Path) -> HashMap<String, String> {
     let Ok(text) = std::fs::read_to_string(mapping) else { return HashMap::new() };
     let groups: HashMap<String, Vec<String>> = serde_json::from_str(&text).expect("codicons mapping.json is a map of code points to names");
@@ -60,5 +71,12 @@ mod tests {
         assert!(super::svg_path(&app_root, "gear").ends_with("gear.svg"));
         assert!(super::svg_path(&app_root, "git-fetch").ends_with("repo-fetch.svg"));
         assert!(super::svg_path(&app_root, "toolbar-more").ends_with("ellipsis.svg"));
+    }
+
+    #[test]
+    fn a_registered_icon_resolves_through_its_defaults() {
+        assert_eq!(super::icon_ids("explorer-view-icon"), ["explorer-view-icon", "files"]);
+        assert_eq!(super::icon_ids("folding-manual-collapsed"), ["folding-manual-collapsed", "folding-collapsed", "chevron-right"]);
+        assert_eq!(super::icon_ids("gear"), ["gear"]);
     }
 }

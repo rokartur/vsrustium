@@ -8,7 +8,7 @@ use anyhow::Context as _;
 use exthost::scan::ScannedExtension;
 use serde_json::Value;
 
-use crate::file_icons::{font_character, glyph_outline, woff_to_sfnt};
+use crate::file_icons::{font_character, glyph_outline};
 
 /// `ThemeSettingDefaults.PRODUCT_ICON_THEME`: the codicons, no contributed theme.
 pub const DEFAULT_PRODUCT_ICON_THEME: &str = "Default";
@@ -71,9 +71,9 @@ impl ProductIconTheme {
             let data = font["src"].as_array().into_iter().flatten().find_map(|source| {
                 let data = std::fs::read(folder.join(source["path"].as_str()?)).ok()?;
                 match source["format"].as_str()? {
-                    "woff" => woff_to_sfnt(&data).ok(),
+                    "woff" => wuff::decompress_woff1(&data).ok(),
+                    "woff2" => wuff::decompress_woff2(&data).ok(),
                     "truetype" | "opentype" => Some(data),
-                    // shortcut: woff2 needs a Brotli and glyf transform decoder the port does not ship; such a source is skipped.
                     _ => None,
                 }
             });
@@ -94,11 +94,11 @@ impl ProductIconTheme {
         Ok(ProductIconTheme { settings_id: settings_id.to_string(), glyphs })
     }
 
-    /// The SVG of icon `id` in a `size` square, as the glyph sits in a `.codicon` box of `font-size: size` and
-    /// `line-height: 1`: centered on its advance, the baseline where the half-leading puts it. `None` when the theme
-    /// does not define the icon.
-    pub fn svg(&self, id: &str, size: f32) -> Option<String> {
-        let glyph = self.glyphs.get(id)?;
+    /// The SVG of the first of `ids` the theme defines (`_resolveIconDefinition`: an icon, then its defaults) in a
+    /// `size` square, as the glyph sits in a `.codicon` box of `font-size: size` and `line-height: 1`: centered on its
+    /// advance, the baseline where the half-leading puts it. `None` when the theme defines none.
+    pub fn svg(&self, ids: &[&str], size: f32) -> Option<String> {
+        let glyph = ids.iter().find_map(|id| self.glyphs.get(*id))?;
         let scale = size / glyph.units_per_em;
         let x = (size - glyph.advance * scale) / 2.;
         let baseline = (size - (glyph.ascender - glyph.descender) * scale) / 2. + glyph.ascender * scale;
@@ -139,10 +139,15 @@ mod tests {
         let extensions = [fixture];
         assert_eq!(product_icon_themes(&extensions).iter().map(|theme| theme.label.as_str()).collect::<Vec<_>>(), ["Fixture Icons"]);
         let theme = ProductIconTheme::load(&extensions, "fixture-icons").unwrap();
-        let files = theme.svg("files", 16.).unwrap();
+        let files = theme.svg(&["files"], 16.).unwrap();
         assert!(files.starts_with(r#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16""#));
         assert!(files.contains(r#"d="M"#));
-        assert_ne!(files, theme.svg("search", 16.).unwrap());
-        assert!(theme.svg("gear", 16.).is_none());
+        assert_ne!(files, theme.svg(&["search"], 16.).unwrap());
+        assert!(theme.svg(&["gear"], 16.).is_none());
+        let explorer = theme.svg(&crate::codicons::icon_ids("explorer-view-icon"), 16.).unwrap();
+        assert_ne!(explorer, files);
+        assert_eq!(theme.svg(&crate::codicons::icon_ids("open-editors-view-icon"), 16.), None);
+        assert_eq!(theme.svg(&crate::codicons::icon_ids("search-view-icon"), 16.), None);
+        assert_eq!(theme.svg(&crate::codicons::icon_ids("run-view-icon"), 16.), theme.svg(&["debug-alt"], 16.));
     }
 }
