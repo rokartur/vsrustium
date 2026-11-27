@@ -451,13 +451,15 @@ impl Workbench {
         let surface = self.color("editor.background");
         let border = self.connected_tab_border();
         let radius = px(7.);
+        // connectedEditorTabs.css: the first tab's top left corner is the part's, square in compact density.
+        let square_corner = row == TabRow::Main { first: true } && self.compact_density();
         let shoulder = |piece: Div| piece.absolute().bottom_0().size(radius).bg(surface);
         let strip_corner = || div().size_full().bg(self.tab_strip_background()).border_b_1().border_color(border);
         div()
             .h_full()
             .flex_none()
             .relative()
-            .child(div().absolute().top(px(-1.)).left_0().right_0().h(px(TAB_STRIP_HEIGHT + 1.)).bg(surface).border_t_1().border_r_1().rounded_t(radius).border_color(border))
+            .child(div().absolute().top(px(-1.)).left_0().right_0().h(px(TAB_STRIP_HEIGHT + 1.)).bg(surface).border_t_1().border_r_1().rounded_tr(radius).border_color(border).when(!square_corner, |fill| fill.rounded_tl(radius)))
             .when_some(self.theme.color("tab.activeBorder"), |tab, color| tab.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
             // The first tab meets the part's own rounded corner, so it has no left shoulder.
             .when(row == TabRow::Main { first: false }, |tab| tab.child(shoulder(div().left(-radius)).child(strip_corner().border_r_1().rounded_br(radius))))
