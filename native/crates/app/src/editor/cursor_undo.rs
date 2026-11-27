@@ -79,6 +79,19 @@ mod tests {
     }
 
     #[test]
+    fn the_cursor_counts_as_changed_after_a_move_or_an_edit_only() {
+        let mut moved = editor("ab", "\n");
+        assert!(!moved.cursor_changed);
+        moved.set_selections(caret(0));
+        assert!(!moved.cursor_changed, "the same caret is no change");
+        moved.move_horizontally(true, false);
+        assert!(moved.cursor_changed);
+        let mut typed = editor("ab", "\n");
+        typed.type_text("c");
+        assert!(typed.cursor_changed);
+    }
+
+    #[test]
     fn issue_82535_edge_case_with_cursor_undo_reverse() {
         let mut editor = editor("", "\n");
         editor.type_text("hell");

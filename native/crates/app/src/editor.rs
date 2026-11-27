@@ -91,6 +91,21 @@ pub struct TextDocument {
     pub tokens: Tokenization,
     /// `TextModel.isTooLargeForTokenization`, decided at creation: no tokens, folding, word highlights or sticky scroll.
     pub too_large_for_tokenization: bool,
+    /// Why the file editor shows the editor placeholder in place of this empty model.
+    pub open_error: Option<OpenError>,
+}
+
+/// The errors textFileEditor.ts `handleSetInputError` turns into an editor placeholder.
+#[derive(Clone, Debug, PartialEq)]
+pub enum OpenError {
+    /// `FILE_IS_BINARY` with the file's size in bytes: binaryEditor.ts.
+    Binary(u64),
+    /// `FILE_TOO_LARGE` with the file's size in bytes, over `workbench.editorLargeFileConfirmation`.
+    TooLarge(u64),
+    /// `FILE_NOT_FOUND`.
+    NotFound,
+    /// Any other read error.
+    Failed,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -119,7 +134,6 @@ impl TextDocument {
 
     /// A document of any scheme from its bytes, decoded as `TextFileService.readStream` does: in the `requested`
     /// encoding, else the one its BOM or zero bytes show, else `files.encoding`.
-    // shortcut: binary files open as text; upstream refuses them (FILE_IS_BINARY) and shows the binary editor.
     pub fn from_bytes(scheme: &str, path: &Path, bytes: &[u8], requested: Option<&str>, languages: &Languages, settings: &Settings) -> Self {
         let resource = (scheme == "file").then_some(path);
         let detected = crate::encoding_guess::detect(bytes, settings, resource, false);
@@ -147,7 +161,7 @@ impl TextDocument {
         let eol = found_eol.unwrap_or_else(|| default_eol(settings, path, &language_id));
         let too_large_for_tokenization = too_large_for_tokenization(text, lines.len(), settings, path, &language_id);
         let tokens = Tokenization::new(languages.grammars.grammar(&language_id).filter(|_| !too_large_for_tokenization));
-        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment, tokens, too_large_for_tokenization }
+        TextDocument { scheme: scheme.to_string(), path: path.to_path_buf(), lines, eol, encoding, language_id, indentation, off_side, folding_markers, block_comment, tokens, too_large_for_tokenization, open_error: None }
     }
 
     pub fn uri_string(&self) -> String {
@@ -369,6 +383,29 @@ fn spaces_diff(a: &[u16], a_length: usize, b: &[u16], b_length: usize) -> Spaces
     none
 }
 
+/// `getActiveIndentGuide` (guidesTextModelPart.ts) over the levels of `indent_guides`: the lines and level of the
+/// guide around 0-based `line`; a line that opens a block (the next line one level deeper) takes that block's guide.
+pub fn active_indent_guide(levels: &[usize], line: usize) -> (Range<usize>, usize) {
+    let initial = levels[line];
+    // (start, end, indent, whether to grow up, whether to grow down)
+    let (mut start, mut end, indent, up, down) = if levels.get(line + 1) == Some(&(initial + 1)) {
+        (line + 1, line + 1, initial + 1, false, true)
+    } else if line > 0 && levels[line - 1] == initial + 1 {
+        (line - 1, line - 1, initial + 1, true, false)
+    } else if initial == 0 {
+        return (line..line + 1, 0);
+    } else {
+        (line, line, initial, true, true)
+    };
+    while up && start > 0 && levels[start - 1] >= indent {
+        start -= 1;
+    }
+    while down && end + 1 < levels.len() && levels[end + 1] >= indent {
+        end += 1;
+    }
+    (start..end + 1, indent)
+}
+
 /// The indent level of each line, as `getLinesIndentGuides` (guidesTextModelPart.ts) computes it:
 /// a blank line takes its level from the lines with content around it.
 pub fn indent_guides(lines: &[String], tab_size: usize, indent_size: usize, off_side: bool) -> Vec<usize> {
@@ -573,10 +610,13 @@ pub struct OpenEditor {
     pub model: SharedModel,
     /// A preview editor shows in italics and is replaced by the next preview open (`workbench.editor.enablePreview`).
     pub preview: bool,
+    /// A pinned editor (editorGroupModel.ts `isSticky`): the group's sticky editors come first, never preview.
+    pub sticky: bool,
     /// The `$model<N>` id the text model gets, so the extension host sees a new editor per opened model.
     pub model_id: u32,
     /// The cursors' selections, the primary one first (`CursorCollection`).
     pub selections: Vec<Selection>,
+    pub cursor_changed: bool,
     /// The cursor added last, which wins a merge of its direction (`lastAddedCursorIndex`).
     last_added: usize,
     /// Per cursor, visible columns a vertical move could not place at the anchor and the head, kept while
@@ -646,7 +686,7 @@ impl OpenEditor {
             let model = model.borrow();
             (model.version_id, word_wrap::WordWrap::new(&model.document.lines, model.document.too_large_for_tokenization))
         };
-        let mut editor = OpenEditor { seen_version, model, preview, model_id, selections: vec![Selection::default()], last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), folding_limit: folding::MAX_FOLDING_REGIONS_FOR_INDENT, folding_limited: None, sticky_outline: None, scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap, text_decorations: Vec::new(), injected_text: Vec::new() };
+        let mut editor = OpenEditor { seen_version, model, preview, sticky: false, model_id, selections: vec![Selection::default()], cursor_changed: false, last_added: 0, leftovers: Vec::new(), column_select: None, smart_select: None, cursor_states: Default::default(), highlights: Vec::new(), value_set_replacement: None, selection_anchor: None, folding: FoldingModel::default(), syntax_folding: false, folded_imports: false, sticky_model: Default::default(), folding_limit: folding::MAX_FOLDING_REGIONS_FOR_INDENT, folding_limited: None, sticky_outline: None, scroll: Scroll::default(), max_line_width: 0., view_zones: Vec::new(), snippet_session: None, word_wrap, text_decorations: Vec::new(), injected_text: Vec::new() };
         editor.refresh_highlights();
         editor.refresh_folding_ranges();
         editor
@@ -845,7 +885,11 @@ impl EditorGroup {
 
     /// The model a tab edits: its own, or a diff editor's modified side.
     pub fn tab_model(&self, index: usize) -> &OpenEditor {
-        let tab = &self.editors[index];
+        self.editor_model(&self.editors[index])
+    }
+
+    /// The model an editor of any group edits: a diff or merge editor's edited side, else the editor's own.
+    pub fn editor_model<'a>(&'a self, tab: &'a OpenEditor) -> &'a OpenEditor {
         match self.edited_side(tab.model_id) {
             Some(side) => self.model(&side.scheme, &side.path).expect("a diff or merge editor's models stay open"),
             None => tab,
@@ -905,6 +949,21 @@ impl EditorGroup {
     /// Shows `document` in the editor at `index`, in place of the model it showed, and activates it.
     pub fn replace(&mut self, index: usize, document: TextDocument) {
         let mut editor = self.create_model(document, false);
+        editor.sticky = self.editors[index].sticky;
+        self.restore_view_state(&mut editor);
+        let replaced = std::mem::replace(&mut self.editors[index], editor);
+        self.recent.retain(|id| *id != replaced.model_id);
+        self.remove_input(&replaced.model_id);
+        self.keep_or_dispose(replaced);
+        self.activate(index);
+    }
+
+    /// Shows `document` in the editor at `index` as a new model, also when its resource is the model it showed (an
+    /// editor placeholder resolving its file again), and activates it.
+    pub fn reload(&mut self, index: usize, document: TextDocument) {
+        self.next_model_id += 1;
+        let mut editor = OpenEditor::new(document, self.editors[index].preview, self.next_model_id);
+        editor.sticky = self.editors[index].sticky;
         self.restore_view_state(&mut editor);
         let replaced = std::mem::replace(&mut self.editors[index], editor);
         self.recent.retain(|id| *id != replaced.model_id);
@@ -1124,6 +1183,7 @@ impl EditorGroup {
         let existing = self.editors.iter().position(|open| Rc::ptr_eq(&open.model, &editor.model) && !self.diffs.contains_key(&open.model_id));
         match existing.filter(|_| !self.diffs.contains_key(&editor.model_id)) {
             Some(index) => {
+                let index = if editor.sticky { self.stick(index) } else { index };
                 self.activate(index);
                 self.remove_input(&editor.model_id);
                 self.keep_or_dispose(editor);
@@ -1205,7 +1265,10 @@ impl EditorGroup {
                 index
             }
             None => {
-                let index = self.active_index().map_or(self.editors.len(), |active| active + 1);
+                // `openEditor`: a new editor goes after the sticky ones, a sticky one last among them.
+                let sticky_count = self.sticky_count();
+                let after_active = self.active_index().map_or(self.editors.len(), |active| active + 1);
+                let index = if editor.sticky { after_active.min(sticky_count) } else { after_active.max(sticky_count) };
                 self.editors.insert(index, editor);
                 index
             }
@@ -1258,13 +1321,45 @@ impl EditorGroup {
         self.editors[index].preview = false;
     }
 
+    pub fn sticky_count(&self) -> usize {
+        self.editors.iter().take_while(|editor| editor.sticky).count()
+    }
+
+    /// editorGroupModel.ts `doStick`: the editor is pinned and becomes the last sticky one; answers its index.
+    pub fn stick(&mut self, index: usize) -> usize {
+        if self.editors[index].sticky {
+            return index;
+        }
+        self.pin(index);
+        let to = self.sticky_count();
+        let editor = self.editors.remove(index);
+        self.editors.insert(to, editor);
+        self.editors[to].sticky = true;
+        to
+    }
+
+    /// editorGroupModel.ts `doUnstick`: the editor becomes the first non-sticky one; answers its index.
+    pub fn unstick(&mut self, index: usize) -> usize {
+        if !self.editors[index].sticky {
+            return index;
+        }
+        let to = self.sticky_count() - 1;
+        let editor = self.editors.remove(index);
+        self.editors.insert(to, editor);
+        self.editors[to].sticky = false;
+        to
+    }
+
     /// editorGroupModel.ts `moveEditor` then `pin`, as a move inside the group does; `to` is clamped to the tabs.
+    /// A move into the sticky range makes the editor sticky, a move out of it unsticks it.
     pub fn move_editor(&mut self, from: usize, to: usize) {
         let to = to.min(self.editors.len() - 1);
         if from == to {
             return;
         }
-        let editor = self.editors.remove(from);
+        let sticky = to < self.sticky_count();
+        let mut editor = self.editors.remove(from);
+        editor.sticky = sticky;
         self.editors.insert(to, editor);
         self.pin(to);
     }
@@ -1379,6 +1474,19 @@ mod tests {
     }
 
     #[test]
+    fn the_active_indent_guide_is_the_block_at_the_cursor_or_the_one_it_opens_or_closes() {
+        // a {  b  c {  d  e  }  }  x
+        let levels = [0, 1, 1, 2, 2, 1, 0, 0];
+        assert_eq!(active_indent_guide(&levels, 0), (1..6, 1));
+        assert_eq!(active_indent_guide(&levels, 2), (3..5, 2));
+        assert_eq!(active_indent_guide(&levels, 3), (3..5, 2));
+        assert_eq!(active_indent_guide(&levels, 1), (1..6, 1));
+        assert_eq!(active_indent_guide(&levels, 5), (3..5, 2));
+        assert_eq!(active_indent_guide(&levels, 6), (1..6, 1));
+        assert_eq!(active_indent_guide(&levels, 7), (7..8, 0));
+    }
+
+    #[test]
     fn finds_words_and_their_whole_word_occurrences() {
         assert_eq!(word_at("Port notes", 0), Some(0..4));
         assert_eq!(word_at("Port notes", 4), Some(0..4));
@@ -1412,6 +1520,7 @@ mod tests {
             block_comment: None,
             tokens: Tokenization::default(),
             too_large_for_tokenization: false,
+            open_error: None,
         };
         let names = |group: &EditorGroup| group.editors.iter().map(|editor| editor.document().name()).collect::<Vec<_>>();
         let mut group = EditorGroup::default();
@@ -1424,6 +1533,65 @@ mod tests {
         assert_eq!(names(&group), ["a", "d", "c"]);
         group.close(1);
         assert_eq!(group.active().unwrap().document().name(), "a");
+    }
+
+    #[test]
+    fn sticky_editors_come_first_and_move_in_and_out_of_the_sticky_range() {
+        // editorGroupModel.test.ts 'Sticky Editors'.
+        let document = |name: &str| TextDocument {
+            scheme: "file".into(),
+            path: PathBuf::from(name),
+            lines: vec![String::new()],
+            eol: "\n",
+            encoding: "utf8".into(),
+            language_id: "plaintext".into(),
+            indentation: DEFAULT_INDENTATION,
+            off_side: false,
+            folding_markers: None,
+            block_comment: None,
+            tokens: Tokenization::default(),
+            too_large_for_tokenization: false,
+            open_error: None,
+        };
+        // A sticky editor's name ends in `*`.
+        let order = |group: &EditorGroup| group.editors.iter().map(|editor| format!("{}{}", editor.document().name(), if editor.sticky { "*" } else { "" })).collect::<Vec<_>>();
+        let index = |group: &EditorGroup, name: &str| group.editors.iter().position(|editor| editor.document().name() == name).unwrap();
+        let mut group = EditorGroup::default();
+        group.open(document("1"), false);
+        group.open(document("2"), false);
+        group.open(document("3"), true);
+        assert_eq!(group.sticky_count(), 0);
+        group.stick(index(&group, "3"));
+        assert_eq!(order(&group), ["3*", "1", "2"]);
+        assert!(!group.editors[0].preview, "sticking pins");
+        group.stick(0);
+        assert_eq!(group.sticky_count(), 1, "sticking a sticky editor is a no-op");
+        group.stick(index(&group, "2"));
+        assert_eq!(order(&group), ["3*", "2*", "1"]);
+        group.stick(index(&group, "1"));
+        assert_eq!(group.sticky_count(), 3);
+        group.unstick(index(&group, "3"));
+        assert_eq!(order(&group), ["2*", "1*", "3"]);
+        group.unstick(index(&group, "1"));
+        group.unstick(index(&group, "2"));
+        assert_eq!(group.sticky_count(), 0);
+        group.move_editor(index(&group, "1"), 0);
+        group.move_editor(index(&group, "2"), 1);
+        group.move_editor(index(&group, "3"), 2);
+        group.stick(0);
+        group.stick(1);
+        group.activate(0);
+        group.open(document("4"), false);
+        assert_eq!(index(&group, "4"), 2, "a new editor opens after the sticky ones");
+        group.close(2);
+        group.move_editor(index(&group, "1"), 1);
+        assert_eq!(order(&group), ["2*", "1*", "3"], "moved within the sticky range");
+        group.move_editor(index(&group, "1"), 2);
+        assert_eq!(order(&group), ["2*", "3", "1"], "moved out of the sticky range");
+        group.move_editor(index(&group, "1"), 0);
+        assert_eq!(order(&group), ["1*", "2*", "3"], "moved into the sticky range");
+        group.close(0);
+        assert_eq!(group.sticky_count(), 1, "closing a sticky editor");
     }
 
     #[test]
@@ -1442,6 +1610,7 @@ mod tests {
             block_comment: None,
             tokens: Tokenization::default(),
             too_large_for_tokenization: false,
+            open_error: None,
         };
         group.open(document, false);
         let editor = group.active_mut().unwrap();

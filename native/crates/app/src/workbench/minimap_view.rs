@@ -372,7 +372,8 @@ impl Workbench {
             let (view_line, column) = editor.view_column(Position::new(line, column));
             (view_line + 1, column)
         };
-        let mut selections: Vec<MinimapRange> = editor.selections.iter().map(|selection| MinimapRange { start: view(selection.start().line, selection.start().column), end: view(selection.end().line, selection.end().column) }).collect();
+        let cursor_selections = if editor.cursor_changed { editor.selections.as_slice() } else { &[] };
+        let mut selections: Vec<MinimapRange> = cursor_selections.iter().map(|selection| MinimapRange { start: view(selection.start().line, selection.start().column), end: view(selection.end().line, selection.end().column) }).collect();
         selections.sort_by_key(|range| range.start);
         let mut decorations = Vec::new();
         if let Some(color) = self.theme.color("minimap.selectionOccurrenceHighlight") {

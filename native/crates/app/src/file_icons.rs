@@ -3,7 +3,6 @@
 //! Font glyph outlines are read from the theme's woff font and drawn as SVG; image icons are drawn from their file.
 
 use std::collections::HashMap;
-use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
@@ -95,7 +94,7 @@ impl FileIconTheme {
         let folder = document_path.parent().expect("a theme file has a folder");
         let font = &document["fonts"][0];
         let face_data = match font["src"][0]["path"].as_str() {
-            Some(font_path) => woff_to_sfnt(&std::fs::read(folder.join(font_path))?)?,
+            Some(font_path) => wuff::decompress_woff1(&std::fs::read(folder.join(font_path))?)?,
             None => Vec::new(),
         };
         let face = ttf_parser::Face::parse(&face_data, 0).ok();
@@ -297,46 +296,6 @@ pub(crate) fn glyph_outline(face: &ttf_parser::Face, character: char) -> Option<
     let mut path = SvgPath(String::new());
     face.outline_glyph(face.glyph_index(character)?, &mut path)?;
     Some((path.0, f32::from(face.units_per_em())))
-}
-
-/// WOFF 1.0: the sfnt tables, each zlib-compressed when that made it smaller. Rebuilds the plain sfnt.
-pub(crate) fn woff_to_sfnt(woff: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let bytes = |offset: usize, length: usize| woff.get(offset..offset + length).context("truncated woff");
-    let u32_at = |offset: usize| Ok::<_, anyhow::Error>(u32::from_be_bytes(bytes(offset, 4)?.try_into()?));
-    anyhow::ensure!(bytes(0, 4)? == b"wOFF", "not a woff 1.0 font");
-    let table_count = u16::from_be_bytes(bytes(12, 2)?.try_into()?) as usize;
-    let mut tables = Vec::with_capacity(table_count);
-    for index in 0..table_count {
-        let record = 44 + index * 20;
-        let (offset, compressed, original) = (u32_at(record + 4)? as usize, u32_at(record + 8)? as usize, u32_at(record + 12)? as usize);
-        let stored = bytes(offset, compressed)?;
-        let data = if compressed < original {
-            let mut data = Vec::with_capacity(original);
-            flate2::read::ZlibDecoder::new(stored).read_to_end(&mut data)?;
-            data
-        } else {
-            stored.to_vec()
-        };
-        tables.push((bytes(record, 4)?, data));
-    }
-    let mut sfnt = Vec::new();
-    sfnt.extend_from_slice(bytes(4, 4)?);
-    sfnt.extend_from_slice(&(table_count as u16).to_be_bytes());
-    // searchRange, entrySelector and rangeShift: ttf-parser does not read them.
-    sfnt.extend_from_slice(&[0; 6]);
-    let mut offset = 12 + 16 * table_count;
-    for (tag, data) in &tables {
-        sfnt.extend_from_slice(tag);
-        sfnt.extend_from_slice(&0u32.to_be_bytes());
-        sfnt.extend_from_slice(&(offset as u32).to_be_bytes());
-        sfnt.extend_from_slice(&(data.len() as u32).to_be_bytes());
-        offset += data.len().next_multiple_of(4);
-    }
-    for (_, data) in &tables {
-        sfnt.extend_from_slice(data);
-        sfnt.resize(sfnt.len().next_multiple_of(4), 0);
-    }
-    Ok(sfnt)
 }
 
 #[cfg(test)]

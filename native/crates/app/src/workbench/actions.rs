@@ -19,8 +19,9 @@ const ACTIVE_GROUP_COLUMN: i64 = -1;
 
 impl Workbench {
     pub(super) fn register_workbench_actions(&mut self) {
-        self.commands.register("workbench.action.files.save", |workbench, _, _, cx| {
-            let saves = workbench.editors.active_index().map(|index| workbench.save_editor(index, cx));
+        // fileCommands.ts: the editor an Open Editors row or a tab passes, else the active one.
+        self.commands.register("workbench.action.files.save", |workbench, args, _, cx| {
+            let saves = workbench.context_editor(&args).map(|index| workbench.save_editor(index, cx));
             when_saved(saves.into_iter().collect(), |_| Value::Null, cx)
         });
         // `saveAll` in fileCommands.ts (Alt+Cmd+S), the next in openEditorsView.ts, `saveFiles` in fileCommands.ts.
@@ -36,8 +37,8 @@ impl Workbench {
             cx.notify();
             Outcome::done()
         });
-        self.commands.register("workbench.action.files.revert", |workbench, _, _, cx| {
-            if let Some(index) = workbench.editors.active_index() {
+        self.commands.register("workbench.action.files.revert", |workbench, args, _, cx| {
+            if let Some(index) = workbench.context_editor(&args) {
                 workbench.revert_and_close_untitled(vec![index], cx);
             }
             Outcome::done()
@@ -87,26 +88,53 @@ impl Workbench {
             Outcome::done()
         });
         self.commands.register("workbench.action.closeAllEditors", |workbench, _, window, cx| workbench.close_all_editors(window, cx));
-        self.commands.register("workbench.action.closeEditorsInGroup", |workbench, _, window, cx| workbench.close_editors((0..workbench.editors.editors.len()).collect(), window, cx));
+        // editorCommands.ts: the group's mass closes leave its sticky editors (`excludeSticky: true`).
+        self.commands.register("workbench.action.closeEditorsInGroup", |workbench, _, window, cx| workbench.close_editors(workbench.non_sticky_editors(), window, cx));
         // editorCommands.ts: these act on the editor a tab's context menu passes, else the active one.
-        self.commands.register("workbench.action.closeActiveEditor", |workbench, args, window, cx| {
-            let Some(index) = workbench.context_editor(&args) else { return Outcome::done() };
-            workbench.close_editors(vec![index], window, cx)
-        });
+        self.commands.register("workbench.action.closeActiveEditor", |workbench, args, window, cx| workbench.close_editor_handler(false, args, window, cx));
+        self.commands.register("workbench.action.closeActivePinnedEditor", |workbench, args, window, cx| workbench.close_editor_handler(true, args, window, cx));
         self.commands.register("workbench.action.closeOtherEditors", |workbench, args, window, cx| {
             let Some(index) = workbench.context_editor(&args) else { return Outcome::done() };
-            let others = (0..workbench.editors.editors.len()).filter(|other| *other != index).collect();
+            workbench.editors.pin(index);
+            let others = workbench.non_sticky_editors().into_iter().filter(|other| *other != index).collect();
             workbench.close_editors(others, window, cx)
         });
         self.commands.register("workbench.action.closeEditorsToTheRight", |workbench, args, window, cx| {
             let Some(index) = workbench.context_editor(&args) else { return Outcome::done() };
-            let right = (index + 1..workbench.editors.editors.len()).collect();
+            if let Some(active) = workbench.editors.active_index() {
+                workbench.editors.pin(active);
+            }
+            let right = workbench.non_sticky_editors().into_iter().filter(|other| *other > index).collect();
             workbench.close_editors(right, window, cx)
         });
         // `closeEditors({ savedOnly: true })`: dirty editors stay, so nothing asks.
         self.commands.register("workbench.action.closeUnmodifiedEditors", |workbench, _, window, cx| {
-            let saved = (0..workbench.editors.editors.len()).filter(|index| !workbench.editors.editors[*index].is_dirty()).collect();
+            let saved = workbench.non_sticky_editors().into_iter().filter(|index| !workbench.editors.editors[*index].is_dirty()).collect();
             workbench.close_editors(saved, window, cx)
+        });
+        // breadcrumbsControl.ts `CopyBreadcrumbPath`: the active editor's symbol path, `breadcrumbs.symbolPathSeparator` between.
+        self.commands.register("breadcrumbs.copyPath", |workbench, _, _, cx| {
+            let Some(editor) = workbench.editors.active() else { return Outcome::done() };
+            let labels: Vec<String> = workbench.breadcrumb_symbols(editor).into_iter().filter(|(kind, _)| kind.is_some()).map(|(_, name)| name).collect();
+            if !labels.is_empty() {
+                let separator = workbench.setting("breadcrumbs.symbolPathSeparator");
+                cx.write_to_clipboard(gpui::ClipboardItem::new_string(labels.join(separator.as_str().unwrap_or("."))));
+            }
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.pinEditor", |workbench, args, _, cx| {
+            if let Some(index) = workbench.context_editor(&args) {
+                workbench.editors.stick(index);
+                workbench.editors_changed(cx);
+            }
+            Outcome::done()
+        });
+        self.commands.register("workbench.action.unpinEditor", |workbench, args, _, cx| {
+            if let Some(index) = workbench.context_editor(&args) {
+                workbench.editors.unstick(index);
+                workbench.editors_changed(cx);
+            }
+            Outcome::done()
         });
         self.commands.register("workbench.action.keepEditor", |workbench, args, _, cx| {
             if let Some(index) = workbench.context_editor(&args) {
@@ -140,12 +168,42 @@ impl Workbench {
         (0..self.editors.editors.len()).filter(|index| self.editors.editors[*index].is_dirty()).collect()
     }
 
-    /// dirtyFilesIndicator.ts: the explorer's badge counts the dirty working copies, each model once.
+    /// dirtyFilesIndicator.ts: the explorer's badge counts the dirty working copies, each resource once (a split
+    /// editor's copy in another group is the same working copy).
     pub(super) fn dirty_working_copy_count(&self) -> u64 {
-        let mut models: Vec<u32> = self.editors.all_editors().filter(|editor| editor.is_dirty()).map(|editor| editor.model_id).collect();
-        models.sort_unstable();
-        models.dedup();
-        models.len() as u64
+        let mut resources: Vec<_> = self.editors.all_editors().filter(|editor| editor.is_dirty()).map(|editor| (editor.document().scheme.clone(), editor.document().path.clone())).collect();
+        resources.sort_unstable();
+        resources.dedup();
+        resources.len() as u64
+    }
+
+    /// The active group's editors after its sticky ones (`getEditors(SEQUENTIAL, { excludeSticky: true })`).
+    fn non_sticky_editors(&self) -> Vec<usize> {
+        (self.editors.sticky_count()..self.editors.editors.len()).collect()
+    }
+
+    /// editorCommands.ts `closeEditorHandler`: from a keybinding or a menu without context, a sticky active editor
+    /// stays (`workbench.editor.preventPinnedEditorClose` `keyboard` or `keyboardAndMouse`) and the most recent
+    /// non-sticky editor of its group, else of any group, opens instead.
+    fn close_editor_handler(&mut self, force_close_sticky: bool, args: Vec<Value>, window: &mut Window, cx: &mut Context<Self>) -> Outcome {
+        let prevent = self.setting("workbench.editor.preventPinnedEditorClose");
+        let keep_sticky = !force_close_sticky && args.is_empty() && matches!(prevent.as_str(), Some("keyboard" | "keyboardAndMouse"));
+        if keep_sticky && self.editors.active_tab().is_some_and(|editor| editor.sticky) {
+            for group in self.editors.group_ids_mru() {
+                let next = self.editors.group_editors_by_recency(group).into_iter().find(|editor| !editor.sticky).map(|editor| editor.model_id);
+                let Some(model_id) = next else { continue };
+                self.focus_group(group, window, cx);
+                let index = self.editors.editors.iter().position(|editor| editor.model_id == model_id).expect("the group's editor");
+                self.editors.activate(index);
+                self.editors_changed(cx);
+                return Outcome::done();
+            }
+        }
+        let Some(index) = self.context_editor(&args) else { return Outcome::done() };
+        if keep_sticky && self.editors.editors[index].sticky {
+            return Outcome::done();
+        }
+        self.close_editors(vec![index], window, cx)
     }
 
     /// editorActions.ts `CloseAllEditorsAction`: every group closes its editors, the active one last.
@@ -184,8 +242,10 @@ impl Workbench {
                 let index = if index < 0 || index > len { len } else { index };
                 workbench.editors.insert_moved(editor);
                 // `moveEditor(..., { index })`: the moved tab lands at the host's index, not after the active one.
+                // A sticky editor stays sticky (`sticky: isSticky` of the move), at most last among the sticky ones.
                 if let Some(at) = workbench.editors.editors.iter().position(|open| open.model_id == model) {
-                    workbench.editors.move_editor(at, (index as usize).min(workbench.editors.editors.len() - 1));
+                    let last = if workbench.editors.editors[at].sticky { workbench.editors.sticky_count() - 1 } else { workbench.editors.editors.len() - 1 };
+                    workbench.editors.move_editor(at, (index as usize).min(last));
                 }
             });
             self.close_group_if_empty(group);

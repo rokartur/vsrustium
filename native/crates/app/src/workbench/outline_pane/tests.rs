@@ -44,6 +44,8 @@ fn the_outline_lists_the_symbols_and_opens_the_selected_one(cx: &mut TestAppCont
         assert_eq!(editor.selection().head, crate::editor::Position::new(1, 2), "the start of the name");
         assert_eq!(workbench.breadcrumb_symbols(editor), [(Some(4), "A".to_string()), (Some(5), "run".to_string())], "the breadcrumbs follow the cursor");
     });
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command("breadcrumbs.copyPath", vec![], window, cx)));
+    assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(), Some("A.run"), "Copy Breadcrumbs Path joins the symbols with `.`");
     key("left", cx);
     assert_eq!(rows(cx), ["A", "  run", "b"], "a childless row has nothing to collapse");
     assert_eq!(workbench.read_with(cx, |workbench, _| workbench.outline_pane.selected.clone()).as_deref(), Some("root/provider_0/A"), "Left on a leaf goes to its parent");

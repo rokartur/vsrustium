@@ -88,8 +88,12 @@ impl Workbench {
             ("workbench.action.splitEditorDown", Some(Direction::Down)),
         ];
         for (id, direction) in splits {
-            self.commands.register(id, move |workbench, _, window, cx| {
+            self.commands.register(id, move |workbench, args, window, cx| {
                 workbench.leave_panel_group();
+                // `resolveCommandsContext`: the tab menu's editor is the one split.
+                if let Some(index) = workbench.context_editor(&args) {
+                    workbench.editors.activate(index);
+                }
                 let direction = direction.unwrap_or_else(|| workbench.side_by_side_direction());
                 workbench.split_editor(direction, window, cx);
                 Outcome::done()
@@ -161,6 +165,24 @@ impl Workbench {
                 workbench.leave_panel_group();
                 let groups = workbench.groups_in_grid_order();
                 let target = if last { groups[groups.len() - 1] } else { groups[0] };
+                workbench.move_active_editor_to(target, window, cx);
+                Outcome::done()
+            });
+        }
+        // editorCommands.ts `moveCopyEditorsToGroup` by group: the tab menu's editor (else the active one) moves to the
+        // group in that direction, a new group there when there is none.
+        let moves = [
+            ("workbench.action.moveEditorToAboveGroup", Direction::Up),
+            ("workbench.action.moveEditorToBelowGroup", Direction::Down),
+            ("workbench.action.moveEditorToLeftGroup", Direction::Left),
+            ("workbench.action.moveEditorToRightGroup", Direction::Right),
+        ];
+        for (id, direction) in moves {
+            self.commands.register(id, move |workbench, args, window, cx| {
+                workbench.leave_panel_group();
+                let Some(index) = workbench.context_editor(&args) else { return Outcome::done() };
+                workbench.editors.activate(index);
+                let target = workbench.group_in_direction(direction).unwrap_or_else(|| workbench.add_group_beside(direction));
                 workbench.move_active_editor_to(target, window, cx);
                 Outcome::done()
             });
@@ -329,7 +351,8 @@ impl Workbench {
             return self.close_editors_in_groups(groups, keep, window, cx);
         }
         self.focus_group(group, window, cx);
-        match self.close_editors((0..self.editors.editors.len()).collect(), window, cx) {
+        // `closeAllEditors({ excludeSticky: true })`.
+        match self.close_editors((self.editors.sticky_count()..self.editors.editors.len()).collect(), window, cx) {
             Outcome::Ready(_) => self.close_editors_in_groups(groups, keep, window, cx),
             Outcome::Pending(closing) => {
                 let (sender, receiver) = futures::channel::oneshot::channel();
@@ -617,11 +640,12 @@ impl Workbench {
             let area = div().absolute().left(px(rect.x)).top(px(rect.y)).w(px(rect.width)).h(px(rect.height)).overflow_hidden().flex().flex_col().child(body);
             groups.push(self.group_drop_area(group, area, cx));
         }
+        // splitview.css: the separator is the 1px `::before` at the start of the view after the sash.
         let separators = sashes.iter().map(|sash| {
             let line = div().absolute().bg(separator);
             match sash.orientation {
-                Orientation::Horizontal => line.left(px(sash.rect.x + sash.rect.width / 2. - 0.5)).top(px(sash.rect.y)).w(px(1.)).h(px(sash.rect.height)),
-                Orientation::Vertical => line.top(px(sash.rect.y + sash.rect.height / 2. - 0.5)).left(px(sash.rect.x)).h(px(1.)).w(px(sash.rect.width)),
+                Orientation::Horizontal => line.left(px(sash.rect.x + sash.rect.width / 2.)).top(px(sash.rect.y)).w(px(1.)).h(px(sash.rect.height)),
+                Orientation::Vertical => line.top(px(sash.rect.y + sash.rect.height / 2.)).left(px(sash.rect.x)).h(px(1.)).w(px(sash.rect.width)),
             }
         });
         let separators: Vec<Div> = separators.collect();
@@ -700,15 +724,9 @@ impl Workbench {
 
     /// multieditortabscontrol.ts: a tab drags to another place in its group, another group's tabs, or a group's
     /// drop area; over a tab the `tab.dragAndDropBorder` line marks where it goes.
-    pub(super) fn tab_drag_and_drop(&self, tab: Stateful<Div>, index: usize, cx: &mut Context<Self>) -> Stateful<Div> {
-        let group = self.editors.id;
-        let dragged = DraggedTab {
-            group,
-            index,
-            label: self.editor_name(&self.editors.editors[index]).into(),
-            foreground: self.foreground_or("tab.activeForeground"),
-            background: self.color("tab.activeBackground"),
-        };
+    /// A tab of `group` (a tab strip's, or an Open Editors row): dragged, and the drop before it.
+    pub(super) fn tab_drag_and_drop(&self, tab: Stateful<Div>, group: u32, index: usize, cx: &mut Context<Self>) -> Stateful<Div> {
+        let dragged = self.dragged_tab(group, index);
         let border = self.theme.color("tab.dragAndDropBorder").unwrap_or(self.foreground_or("tab.activeForeground"));
         tab.on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .drag_over::<DraggedTab>(move |style, _, _, _| style.border_l_2().border_color(border))
@@ -716,6 +734,16 @@ impl Workbench {
                 workbench.editor_groups.drop_target = None;
                 workbench.move_dragged_tab(dragged, group, Some(index), window, cx);
             }))
+    }
+
+    pub(super) fn dragged_tab(&self, group: u32, index: usize) -> DraggedTab {
+        DraggedTab {
+            group,
+            index,
+            label: self.editor_name(&self.editors.group_tabs(group).0[index]).into(),
+            foreground: self.foreground_or("tab.activeForeground"),
+            background: self.color("tab.activeBackground"),
+        }
     }
 
     /// The drop area of a group (below its tabs): the half it would split into, or the whole of it.
@@ -811,11 +839,15 @@ impl Workbench {
     }
 
     /// `moveEditor` / `doMoveEditorAcrossGroups` of a dropped tab, to `index` or after the target's active editor.
-    fn move_dragged_tab(&mut self, dragged: &DraggedTab, target: u32, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn move_dragged_tab(&mut self, dragged: &DraggedTab, target: u32, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         if dragged.group == target {
             self.with_group(target, |workbench| workbench.editors.move_editor(dragged.index, index.unwrap_or(usize::MAX)));
         } else {
-            let editor = self.with_group(dragged.group, |workbench| workbench.editors.take_editor(dragged.index));
+            let mut editor = self.with_group(dragged.group, |workbench| workbench.editors.take_editor(dragged.index));
+            // multiEditorTabsControl.ts `onDrop` opens with `sticky: false`: only a drop into the sticky range sticks it.
+            if index.is_some() {
+                editor.sticky = false;
+            }
             self.with_group(target, |workbench| {
                 workbench.editors.insert_moved(editor);
                 if let (Some(index), Some(from)) = (index, workbench.editors.active_index()) {

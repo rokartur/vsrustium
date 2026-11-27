@@ -649,6 +649,17 @@ pub fn working_copy_type_id(view_type: &str) -> String {
     format!("notebook/{view_type}/{view_type}")
 }
 
+/// The backup type id of a notebook shown as a REPL editor (ReplEditorInput resolves it with view type `repl`).
+pub fn repl_working_copy_type_id(notebook_type: &str) -> String {
+    format!("notebook/{notebook_type}/repl")
+}
+
+/// ReplWindowWorkingCopyEditorHandler `handles`: the notebook type of a REPL editor's backup type id.
+pub fn repl_notebook_type_of_working_copy(type_id: &str) -> Option<&str> {
+    let (notebook_type, view_type) = type_id.strip_prefix("notebook/")?.split_once('/')?;
+    (view_type == "repl" && !notebook_type.is_empty()).then_some(notebook_type)
+}
+
 /// SimpleNotebookWorkingCopyEditorHandler `_getViewType`: the view type of a notebook backup's type id, `None` for
 /// other type ids, a notebook type differing from its view type, and the interactive window.
 pub fn view_type_of_working_copy(type_id: &str) -> Option<&str> {

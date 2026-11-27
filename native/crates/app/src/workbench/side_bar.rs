@@ -8,12 +8,13 @@ use super::hover::{HoverOptions, HoverPosition};
 use super::search_view::SideBarView;
 
 /// The view containers of the activity bar: icon in the activity bar, icon in the compact bar, title, command, view.
+/// Icons are registered icon ids, resolved through the product icon theme and their defaults.
 pub(super) const VIEW_CONTAINERS: [(&str, &str, &str, &str, Option<SideBarView>); 5] = [
-    ("files", "files", "Explorer", "workbench.view.explorer", Some(SideBarView::Explorer)),
-    ("search-large", "search", "Search", "workbench.view.search", Some(SideBarView::Search)),
-    ("source-control", "source-control", "Source Control", "workbench.view.scm", Some(SideBarView::Scm)),
-    ("debug-alt", "debug-alt", "Run and Debug", "workbench.view.debug", Some(SideBarView::Debug)),
-    ("extensions", "extensions", "Extensions", "workbench.view.extensions", Some(SideBarView::Extensions)),
+    ("explorer-view-icon", "explorer-view-icon", "Explorer", "workbench.view.explorer", Some(SideBarView::Explorer)),
+    ("search-view-icon", "search", "Search", "workbench.view.search", Some(SideBarView::Search)),
+    ("source-control-view-icon", "source-control-view-icon", "Source Control", "workbench.view.scm", Some(SideBarView::Scm)),
+    ("run-view-icon", "run-view-icon", "Run and Debug", "workbench.view.debug", Some(SideBarView::Debug)),
+    ("extensions-view-icon", "extensions-view-icon", "Extensions", "workbench.view.extensions", Some(SideBarView::Extensions)),
 ];
 
 impl Workbench {

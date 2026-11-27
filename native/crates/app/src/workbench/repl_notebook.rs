@@ -16,6 +16,18 @@ use crate::notebook::{self, CODE, History, Interactive, MARKUP, NOTEBOOK_EDITOR_
 pub const VIEW_TYPE: &str = "repl";
 
 impl Workbench {
+    /// With the REPL input focused: the input's editor, and the list's focused cell editor with the cell's index and
+    /// the list's length once the list has a cell (the status bar entries).
+    pub(super) fn repl_input_status(&self, window: &Window) -> Option<(&crate::editor::OpenEditor, Option<(Option<&crate::editor::OpenEditor>, usize, usize)>)> {
+        let interactive = self.active_interactive().filter(|interactive| interactive.repl)?;
+        let input = self.editors.active().filter(|editor| self.editor_focus.is_focused(window) && uri_parts(&interactive.input).is_ok_and(|(scheme, path)| editor.document().is(scheme, &path)))?;
+        let notebook = self.active_notebook_editor()?;
+        let model = self.host.notebooks.model(&notebook.notebook)?;
+        let count = model.cells.len().saturating_sub(1);
+        let cells = (count > 0).then(|| (model.cells.get(notebook.focus.min(count - 1)).and_then(|cell| self.cell_model(&cell.uri)), notebook.focus.min(count - 1), count));
+        Some((input, cells))
+    }
+
     pub(super) fn register_repl_commands(&mut self) {
         self.commands.register("repl.execute", |workbench, args, window, cx| workbench.execute_interactive_input(args.first(), window, cx));
         self.commands.register("repl.input.focus", |workbench, _, window, cx| {

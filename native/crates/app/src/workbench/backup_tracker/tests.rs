@@ -172,6 +172,8 @@ fn open_with_notebooks<'a>(cx: &'a mut TestAppContext, dir: &Path) -> (gpui::Ent
         let description = json!({ "contributes": { "notebooks": [{ "type": NOTEBOOK, "displayName": "Test", "selector": [{ "filenamePattern": "*.tnb" }] }] } });
         workbench.extensions = vec![exthost::scan::ScannedExtension { id: "port.test".into(), location: "/ext".into(), description }];
         workbench.host.notebooks.serializers.push(crate::notebook::Serializer { handle: 1, view_type: NOTEBOOK.into(), options: json!({}), registration: Value::Null });
+        // A REPL editor's notebook type (ReplEditorInput).
+        workbench.host.notebooks.serializers.push(crate::notebook::Serializer { handle: 2, view_type: "jupyter-notebook".into(), options: json!({}), registration: json!({}) });
         workbench.start_backups(&user_data, None, window, cx);
         workbench.open_file(folder.join("a.txt"), true, window, cx);
         workbench
@@ -255,5 +257,38 @@ fn a_dirty_notebook_backs_up_through_its_serializer_and_opens_from_its_backup(cx
     answer(next_message(&receiver, "resolveTextContent"), json!("saved"), cx);
     answer(next_message(&receiver, "$dataToNotebook"), notebook_data("x"), cx);
     assert!(backups::list(&home).is_empty());
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// repl.contribution.ts `ReplWindowWorkingCopyEditorHandler`: a `notebook/jupyter-notebook/repl` backup opens a REPL
+/// editor on its notebook, resolved from it, and the REPL's notebook backs up under that type id again.
+#[gpui::test]
+fn a_repl_backup_opens_a_repl_editor(cx: &mut TestAppContext) {
+    let dir = scratch();
+    let uri = crate::uri::Uri::new("untitled", "", "Untitled-1.ipynb", "", "").unwrap();
+    let key = crate::notebook::uri_string(&uri.to_json());
+    let home = {
+        let (workbench, _, cx) = open_with_notebooks(cx, &dir);
+        workbench.read_with(cx, |workbench, _| workbench.lifecycle.backups.home.clone().unwrap())
+    };
+    backups::write(&home, &uri, "notebook/jupyter-notebook/repl", None, b"REPL").unwrap();
+
+    let (workbench, receiver, cx) = open_with_notebooks(cx, &dir);
+    let from_backup = next_message(&receiver, "$dataToNotebook");
+    assert_eq!(from_backup.args[1], json!({ "$vsbuffer": "UkVQTA==" }));
+    answer(from_backup, notebook_data("print(1)"), cx);
+    let (repl, tabs) = workbench.read_with(cx, |workbench, _| {
+        let repl = workbench.host.notebooks.interactives.iter().any(|interactive| interactive.repl && interactive.notebook == key);
+        (repl, workbench.editors.editors.len())
+    });
+    assert!(repl, "a REPL editor shows the notebook");
+    assert_eq!(tabs, 2, "next to a.txt");
+
+    // The restored notebook is dirty: it backs up again.
+    cx.executor().advance_clock(BACKUP_DELAY);
+    cx.run_until_parked();
+    answer(next_message(&receiver, "$notebookToData"), json!({ "$vsbuffer": "QkFDS1VQ" }), cx);
+    let backups: Vec<(String, Vec<u8>)> = backups::list(&home).iter().filter_map(|path| backups::resolve(path)).map(|backup| (backup.type_id, backup.content)).collect();
+    assert_eq!(backups, [("notebook/jupyter-notebook/repl".to_owned(), b"BACKUP".to_vec())]);
     std::fs::remove_dir_all(&dir).unwrap();
 }

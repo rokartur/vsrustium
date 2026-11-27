@@ -726,6 +726,7 @@ impl Session {
                 self.log.activation_errors.insert(id, message);
             }
             ("MainThreadStorage", _) if self.storage.is_some() => return self.storage.as_mut().expect("checked by the match guard").serve(method, args),
+            // A session without a window; the workbench answers with its window's focus.
             ("MainThreadWindow", "$getInitialState") => return Reply::Json(json!({ "isFocused": true, "isActive": true })),
             ("MainThreadUrls", "$createAppUri") => return Reply::Json(app_uri(&arg(0))),
             // product.json has no `enableTelemetry`: upstream's NullTelemetryService drops extension events, and so does the port.

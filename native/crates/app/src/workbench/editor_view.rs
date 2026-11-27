@@ -57,6 +57,16 @@ const DECORATIONS_WIDTH: f32 = 26.;
 const LINE_NUMBERS_MIN_CHARS: usize = 3;
 const OVERVIEW_RULER_WIDTH: f32 = 14.;
 const TAB_STRIP_HEIGHT: f32 = 32.;
+/// The sticky tabs' own bar above the strip (`pinnedTabsOnSeparateRow`), measured in the reference.
+const UPPER_TAB_BAR_HEIGHT: f32 = 30.;
+
+#[derive(Clone, Copy, PartialEq)]
+enum TabRow {
+    /// The strip connected to the editor; its first tab meets the part's rounded corner.
+    Main { first: bool },
+    /// The sticky tabs' bar above it (`pinnedTabsOnSeparateRow`).
+    Upper,
+}
 const BREADCRUMBS_HEIGHT: f32 = 22.;
 /// scrollableElement.ts `HIDE_TIMEOUT`; scrollbars.css fades in over 100ms and out over 800ms.
 const SCROLLBAR_HIDE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -103,6 +113,7 @@ impl Workbench {
                 None if self.shows_webview(editor) => part.child(self.webview_editor_body(editor)),
                 None if self.editors.active_tab().is_some_and(|tab| tab.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME) => part.child(self.notebook_editor_body(window, cx)),
                 None if editor.document().scheme == MULTI_DIFF_EDITOR_SCHEME => part,
+                None if editor.document().open_error.is_some() => part.child(self.editor_placeholder(cx)),
                 None => match (self.editors.active_merge(), secondary) {
                     (Some(merge), _) => part.child(self.merge_editor_body(merge, editor, window, cx)),
                     (None, Some(secondary)) => part.child(self.side_by_side_body(secondary, editor, window, cx)),
@@ -148,8 +159,14 @@ impl Workbench {
             }));
         // The line under the strip (tabs-border-bottom) runs below the shoulders; the active fill covers it.
         let bottom_line = div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(self.connected_tab_border());
+        // multiRowEditorTabsControl.ts: with `workbench.editor.pinnedTabsOnSeparateRow` the sticky tabs get a bar of
+        // their own above the others while the group has both (`two-tab-bars`); only the lower bar has the actions.
+        let count = self.editors.editors.len();
+        let sticky_count = self.editors.sticky_count();
+        let two_bars = sticky_count > 0 && sticky_count < count && self.setting("workbench.editor.pinnedTabsOnSeparateRow") == json!(true);
+        let lower_tabs = if two_bars { sticky_count..count } else { 0..count };
         // editortabscontrol.css: the whole title, tabs and their close buttons included, is cursor pointer.
-        div()
+        let lower = div()
             .relative()
             .h(px(TAB_STRIP_HEIGHT))
             .flex_none()
@@ -157,15 +174,33 @@ impl Workbench {
             .flex()
             .bg(self.tab_strip_background())
             .child(bottom_line)
-            .children((0..self.editors.editors.len()).map(|index| self.tab(index, index == active, cx)))
-            .child(actions)
+            .children(lower_tabs.clone().map(|index| self.tab(index, index == active, TabRow::Main { first: index == lower_tabs.start }, cx)))
+            .child(actions);
+        if !two_bars {
+            return lower;
+        }
+        // connectedEditorTabs.css `.connected-tab-upper-bar`: 2px above and before its tabs, none of them connected.
+        let upper = div()
+            .h(px(UPPER_TAB_BAR_HEIGHT))
+            .flex_none()
+            .cursor_pointer()
+            .pt(px(2.))
+            .pl(px(2.))
+            .flex()
+            .bg(self.tab_strip_background())
+            .children((0..sticky_count).map(|index| self.tab(index, index == active, TabRow::Upper, cx)));
+        div().flex_none().flex().flex_col().child(upper).child(lower)
     }
 
     /// The `navigation` group of `MenuId.EditorTitle` by order: the diff editor's built-in actions and the
     /// extensions' `editor/title` items, run with the active editor's resource.
     fn editor_title_actions(&self, window: &Window, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let mut actions = self.diff_title_actions(cx);
-        let context = self.key_context(window);
+        let mut context = self.key_context(window);
+        // A notebook's cell editors keep `editorLangId` in their own scoped context, which the title does not see.
+        if self.active_notebook_editor().is_some() {
+            context.remove("editorLangId");
+        }
         actions.extend(self.multi_diff_title_actions(&context, cx));
         actions.extend(self.merge_title_actions(cx));
         let resource = self.editors.active().map(|editor| editor.document().uri()).into_iter().collect::<Vec<_>>();
@@ -235,7 +270,11 @@ impl Workbench {
 
     /// editorTabsControl.ts `getHoverTitle`: the long title, with a preview note on a preview editor's tab.
     fn tab_hover(&self, index: usize) -> impl IntoElement {
-        let editor = &self.editors.editors[index];
+        self.editor_title_hover(("tab-hover", index), &self.editors.editors[index])
+    }
+
+    /// A tab's or an Open Editors row's hover: the editor's `getTitle(Verbosity.LONG)`.
+    pub(super) fn editor_title_hover(&self, id: impl Into<gpui::ElementId>, editor: &OpenEditor) -> impl IntoElement {
         // `getTitle(Verbosity.LONG)`: a search editor's and a webview's is its name.
         let title = match (self.editors.diffs.get(&editor.model_id), editor.document().scheme.as_str()) {
             (Some(diff), _) => diff.title(|side| crate::quick_input::path_label(crate::editor::split_query(&side.scheme, &side.path).0, None)),
@@ -252,23 +291,37 @@ impl Workbench {
             },
         };
         let content = if editor.preview { super::hover::HoverContent::Preview(title) } else { super::hover::HoverContent::Text(title) };
-        self.hover_target(("tab-hover", index), content, super::hover::HoverOptions::mouse())
+        self.hover_target(id, content, super::hover::HoverOptions::mouse())
     }
 
     /// A diff editor's tab is its modified side's (`DiffEditorInput.isDirty`); an auto saved one shows no dirty mark.
     pub(super) fn tab_shows_dirty(&self, index: usize) -> bool {
+        self.editor_shows_dirty(&self.editors.editors[index])
+    }
+
+    pub(super) fn editor_shows_dirty(&self, tab: &OpenEditor) -> bool {
         // A notebook tab is its notebook's working copy, not its focused cell's text model.
-        let tab = &self.editors.editors[index];
         if tab.document().scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME {
             return self.host.notebooks.model(&tab.document().path.to_string_lossy()).is_some_and(|model| model.dirty);
         }
-        let model = self.editors.tab_model(index);
+        let model = self.editors.editor_model(tab);
         model.is_dirty() && !self.editor_is_saving(model)
     }
 
     /// A tab sized to its label (tab.sizing fit): 8px before the label, 30.5px after it for the close action.
-    fn tab(&self, index: usize, active: bool, cx: &mut Context<Self>) -> Div {
+    fn tab(&self, index: usize, active: bool, row: TabRow, cx: &mut Context<Self>) -> Div {
         let editor = &self.editors.editors[index];
+        let upper = row == TabRow::Upper;
+        // connectedEditorTabs.css: the upper bar's tabs are 28px high, their label and icon 2px from the top.
+        let content_top = if upper { 2. } else { 3.5 };
+        // multiEditorTabsControl.ts `getStickyTabWidth`: `workbench.editor.pinnedTabSizing` compact (28px with the
+        // modern UI tabs, icon only, no actions) and shrink (80px, label cut) size the sticky tabs.
+        let sticky_sizing = match self.setting("workbench.editor.pinnedTabSizing").as_str() {
+            Some("compact") if editor.sticky => Some(28.),
+            Some("shrink") if editor.sticky => Some(80.),
+            _ => None,
+        };
+        let compact = sticky_sizing == Some(28.);
         let readonly = self.readonly(&editor.document().scheme, &editor.document().path).is_some();
         let action_foreground = if active { self.foreground_or("modernEditorTab.activeForeground") } else { self.foreground_or("tab.inactiveForeground") };
         // tabs.css colors `.tab-label:not(.monaco-decoration-itemColor)`: a decorated label (read-only, no color of its
@@ -281,7 +334,7 @@ impl Workbench {
         let decoration_color = self.decoration_color(decoration.as_ref(), self.setting("workbench.editor.decorations.colors") != json!(false));
         let badge = self.decoration_badge(decoration.as_ref(), foreground).filter(|_| self.setting("workbench.editor.decorations.badges") != json!(false));
         let label = div()
-            .mt(px(3.5))
+            .mt(px(content_top))
             .h(px(24.))
             .line_height(px(24.))
             .whitespace_nowrap()
@@ -290,7 +343,11 @@ impl Workbench {
             .when(editor.preview, |label| label.italic())
             .when_some(decoration_color, |label, color| label.text_color(color))
             .when(orphaned, |label| label.line_through().text_color(self.foreground_or("list.errorForeground")))
-            .child(self.editor_name(editor))
+            // A flex item's text never shrinks, so the cut name gets its own box for the ellipsis.
+            .map(|label| match sticky_sizing {
+                Some(_) => label.min_w_0().pr(px(5.)).child(div().min_w_0().overflow_hidden().text_ellipsis().child(self.editor_name(editor))),
+                None => label.child(self.editor_name(editor)),
+            })
             .children(self.untitled_description(editor).map(|description| {
                 // iconlabel.css `.label-description`: 0.9em at 0.7 opacity (0.95 in light themes), 0.5em after the name.
                 let opacity = if self.theme.kind == ThemeKind::Light { 0.95 } else { 0.7 };
@@ -304,28 +361,53 @@ impl Workbench {
         // textFileService.ts decorations: a read-only file's label ends in the lockSmall badge at 0.75 opacity. The
         // iconlabel.css `::after` font-size 90% (11.7px) wins over the decoration rule's 16px, which loads first.
         let lock = readonly.then(|| self.icon("lock-small", 11.7, 11.7, foreground).mt(px(9.5)).ml(px(5.)).opacity(0.75));
-        // A dirty tab shows a filled circle where the close action goes, also when inactive (tabstitlecontrol.css).
+        // A dirty tab shows a filled circle where the close action goes, also when inactive, and the action itself
+        // while hovered (multieditortabscontrol.css `.dirty .action-label:not(:hover)`); a sticky tab always shows its
+        // unpin action (`pinned`, `pinned-dirty` while dirty).
         let dirty = self.tab_shows_dirty(index);
-        let close_icon = if dirty { "circle-filled" } else { "close-small" };
-        let close = self.icon(close_icon, 20., 16., action_foreground).id(("close", index)).rounded(px(4.)).on_click(cx.listener(move |workbench, _, window, cx| {
-            cx.stop_propagation();
-            drop(workbench.close_editors(vec![index], window, cx));
-        }));
+        let sticky = editor.sticky;
+        let action_icon = if sticky { "pinned" } else { "close-small" };
+        let rest_icon = match (sticky, dirty) {
+            (true, true) => "pinned-dirty",
+            (false, true) => "circle-filled",
+            _ => action_icon,
+        };
+        let action_group = gpui::SharedString::from(format!("tab-action-{index}"));
+        let tab_group = gpui::SharedString::from(format!("tab-{index}"));
+        let close = div()
+            .id(("close", index))
+            .group(action_group.clone())
+            .relative()
+            .rounded(px(4.))
+            .hover(|action| action.bg(self.color("toolbar.hoverBackground")))
+            .child(self.icon(rest_icon, 20., 16., action_foreground).group_hover(action_group.clone(), |icon| icon.invisible()))
+            .child(self.icon(action_icon, 20., 16., action_foreground).absolute().top_0().left_0().invisible().group_hover(action_group, |icon| icon.visible()))
+            .when(sticky, |close| close.child(self.hover_target(("tab-unpin-hover", index), super::hover::HoverContent::Text("Unpin Editor".into()), super::hover::HoverOptions::mouse())))
+            .on_click(cx.listener(move |workbench, _, window, cx| {
+                cx.stop_propagation();
+                match sticky {
+                    true => drop(workbench.execute_command("workbench.action.unpinEditor", vec![json!({ "editorIndex": index })], window, cx)),
+                    false => drop(workbench.close_editors(vec![index], window, cx)),
+                }
+            }));
         let tab = div()
             .id(("tab", index))
             .relative()
             .h_full()
             .flex_none()
             .flex()
-            .pr(px(30.5))
             .text_color(foreground)
-            .map(|tab| match file_icon {
-                Some(icon) => tab.pl(px(6.)).child(icon.mt(px(3.5))).child(label.ml(px(6.))),
-                None => tab.pl(px(8.)).child(label),
+            .when_some(sticky_sizing, |tab, width| tab.w(px(width)))
+            .map(|tab| match (file_icon, compact) {
+                (Some(icon), true) => tab.pl(px(5.)).child(icon.mt(px(content_top))),
+                (None, true) => tab.px(px(4.)).child(label.flex_1().justify_center()),
+                (Some(icon), false) => tab.pl(px(6.)).pr(px(30.5)).child(icon.mt(px(content_top))).child(label.ml(px(6.))),
+                (None, false) => tab.pl(px(8.)).pr(px(30.5)).child(label),
             })
             .children(lock)
-            .children(badge.map(|badge| badge.mt(px(3.5)).line_height(px(24.))))
-            .map(|tab| self.tab_drag_and_drop(tab, index, cx))
+            // In a tab the badge sits right before the action's padding, without the list rows' 16px end margin.
+            .children(badge.map(|badge| badge.mt(px(3.5)).mr(px(0.)).line_height(px(24.))))
+            .map(|tab| self.tab_drag_and_drop(tab, self.editors.id, index, cx))
             .on_click(cx.listener(move |workbench, event: &gpui::ClickEvent, _, cx| {
                 workbench.editors.activate(index);
                 if event.click_count() == 2 {
@@ -334,10 +416,27 @@ impl Workbench {
                 workbench.editors_changed(cx);
             }))
             .on_mouse_down(MouseButton::Right, cx.listener(move |workbench, event: &MouseDownEvent, window, cx| workbench.show_tab_context_menu(index, event.position, window, cx)))
+            // multiEditorTabsControl.ts: a middle click closes the tab unless `preventPinnedEditorClose` keeps it.
+            .on_mouse_up(MouseButton::Middle, cx.listener(move |workbench, _: &gpui::MouseUpEvent, window, cx| {
+                if !workbench.prevents_mouse_close(&workbench.editors.editors[index]) {
+                    drop(workbench.close_editors(vec![index], window, cx));
+                }
+            }))
             .child(self.tab_hover(index))
-            .when(active || dirty, |tab| tab.child(div().absolute().top(px(5.5)).right(px(6.5)).child(close)));
+            // connectedEditorTabs.css: an inactive tab's close action is transparent until the tab is hovered.
+            .group(tab_group.clone())
+            .when(!compact, |tab| {
+                let close_top = if upper { 4. } else { 5.5 };
+                tab.child(div().absolute().top(px(close_top)).right(px(6.5)).when(!(active || dirty || sticky), |close| close.invisible().group_hover(tab_group, |close| close.visible())).child(close))
+            });
+        // multieditortabscontrol.css: tabs abut; only the last one keeps 8px after it, before the editor actions.
         if !active {
-            return div().h_full().flex_none().child(tab).mr(px(8.));
+            return div().h_full().flex_none().child(tab);
+        }
+        // connectedEditorTabs.css: an active tab in the upper bar is not connected to the editor, only a 24px fill inset 2px.
+        if upper {
+            let fill = div().absolute().inset(px(2.)).rounded(px(4.)).bg(self.color("editor.background"));
+            return div().h_full().flex_none().relative().child(fill).child(tab);
         }
         // The fill starts in the part's top border row; its caps and shoulders are cornerRadius-medium plus the stroke.
         let surface = self.color("editor.background");
@@ -352,7 +451,7 @@ impl Workbench {
             .child(div().absolute().top(px(-1.)).left_0().right_0().h(px(TAB_STRIP_HEIGHT + 1.)).bg(surface).border_t_1().border_r_1().rounded_t(radius).border_color(border))
             .when_some(self.theme.color("tab.activeBorder"), |tab, color| tab.child(div().absolute().bottom_0().left_0().right_0().h(px(1.)).bg(color)))
             // The first tab meets the part's own rounded corner, so it has no left shoulder.
-            .when(index > 0, |tab| tab.child(shoulder(div().left(-radius)).child(strip_corner().border_r_1().rounded_br(radius))))
+            .when(row == TabRow::Main { first: false }, |tab| tab.child(shoulder(div().left(-radius)).child(strip_corner().border_r_1().rounded_br(radius))))
             .child(shoulder(div().left_full()).child(strip_corner().border_l_1().rounded_bl(radius)))
             .child(tab)
     }
@@ -513,8 +612,8 @@ impl Workbench {
             _ if self.zen_mode_hides_line_numbers() => LineNumbers::Off,
             // simpleEditorOptions.ts: an interactive window's or REPL editor's input has none.
             _ if self.is_interactive_input(editor) => LineNumbers::Off,
-            // notebookEditorWidget.ts: a cell editor's line numbers follow `notebook.lineNumbers`, off by default.
-            _ if editor.document().scheme == crate::notebook::CELL_SCHEME => match self.setting("notebook.lineNumbers") == "on" {
+            // cellEditorOptions.ts: a cell editor's line numbers follow its own `lineNumbers`, else `notebook.lineNumbers`.
+            _ if editor.document().scheme == crate::notebook::CELL_SCHEME => match self.cell_line_numbers(&editor.document().uri_string()) {
                 true => LineNumbers::On,
                 false => LineNumbers::Off,
             },
@@ -1088,6 +1187,9 @@ impl Workbench {
         // Past the cap there are no marks, the banner shows instead.
         let unicode = self.unicode_highlights(editor).filter(|(_, highlights)| !highlights.has_more);
         let bracket_box = (self.theme.color("editorBracketMatch.background"), self.theme.color("editorBracketMatch.border"));
+        // indentGuides.ts: the guide around the primary cursor with `editor.guides.highlightActiveIndentation`.
+        let active_guide = (self.language_setting(editor, "editor.guides.highlightActiveIndentation") != json!(false))
+            .then(|| crate::editor::active_indent_guide(&editor.text_model().guides, editor.selections[0].head.line));
         let colors = LineColors {
             number: self.color("editorLineNumber.foreground"),
             active_number: self.color("editorLineNumber.activeForeground"),
@@ -1101,6 +1203,7 @@ impl Workbench {
             selection_highlight: self.theme.color("editor.selectionHighlightBackground"),
             selection_highlight_border: self.theme.color("editor.selectionHighlightBorder"),
             guide: self.color("editorIndentGuide.background1"),
+            active_guide: self.color("editorIndentGuide.activeBackground1"),
             cursor: self.color("editorCursor.foreground"),
             primary_cursor: self.color("editorMultiCursor.primary.foreground"),
             secondary_cursor: self.color("editorMultiCursor.secondary.foreground"),
@@ -1240,7 +1343,8 @@ impl Workbench {
                 content = content.children(inner_corners).children(pieces);
                 for level in 0..editor.text_model().guides[index] {
                     let x = (level * editor.document().indentation.indent_size()) as f32 * char_width;
-                    content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(colors.guide));
+                    let active = active_guide.as_ref().is_some_and(|(lines, indent)| lines.contains(&index) && level + 1 == *indent);
+                    content = content.child(div().absolute().top_0().left(px(x)).w(px(1.)).h_full().bg(if active { colors.active_guide } else { colors.guide }));
                 }
                 // foldingDecorations.ts COLLAPSED_HIGHLIGHTED_VISUAL_DECORATION: .folded-background over the whole line.
                 if collapsed == Some(true) {
@@ -1782,6 +1886,13 @@ impl Workbench {
         let quick_diff = self.quick_diff_ruler_lines(editor);
         let decoration_marks = self.text_decoration_ruler_marks(editor);
         let border = self.theme.color("editorOverviewRuler.border");
+        // `editorOverviewRuler.background`, else the tokens' default background while the minimap is on the right, so
+        // the ruler hides the minimap's line highlights under it.
+        let minimap = self.minimap_settings();
+        let background = self.theme.color("editorOverviewRuler.background").or_else(|| {
+            (minimap.enabled && minimap.layout.side == crate::editor::minimap::MinimapSide::Right)
+                .then(|| Rgba::try_from(self.theme.tokens.color_map()[2].as_str()).expect("the token color map holds hex colors"))
+        });
         let Viewport { top_whitespace, line_height, .. } = self.editors.viewport;
         let zones: Vec<(usize, f32)> = editor.view_zones.iter().map(|zone| (zone.anchor.map_or(0, |anchor| anchor.line + usize::from(!zone.before)), zone.height)).collect();
         let line_top = move |line: usize| top_whitespace + line as f32 * line_height + zones.iter().filter(|zone| zone.0 <= line).map(|zone| zone.1).sum::<f32>();
@@ -1802,6 +1913,9 @@ impl Workbench {
                 let ratio = canvas_height / scroll_height;
                 let lanes = RulerLanes::new(canvas_width);
                 let min_height = (6. * scale).floor();
+                if let Some(background) = background {
+                    paint(window, 0., 0., canvas_width, canvas_height, background);
+                }
                 // In z-index order: Go to Line's range in all lanes, find matches at 10, the current match at 13.
                 let center = (lanes.center_x, lanes.center_width);
                 for (lines, color, (x, width)) in [
@@ -1906,8 +2020,34 @@ impl Workbench {
         // A webview, extension, walkthrough or multi diff editor shows no editor status entries.
         // notebookIndicators.ts: a notebook editor whose cell editor has no focus shows its active cell instead.
         let notebook_cell = self.active_notebook_editor().filter(|_| !self.editor_focus.is_focused(window)).and_then(|editor| Some((editor.focus, self.host.notebooks.model(&editor.notebook)?.cells.len())));
-        if let Some((index, count)) = notebook_cell {
+        if let Some((input, cells)) = self.repl_input_status(window) {
+            // Seen in the reference with the REPL input focused: its end of line only, between the indentation and
+            // active cell entries of the list once it has a cell.
+            let [_, _, _, eol, _] = Self::editor_status_entries(input, &self.languages);
+            match cells {
+                None => items.push(eol),
+                Some((editor, index, count)) => {
+                    if let Some(editor) = editor {
+                        let [_, indentation, ..] = Self::editor_status_entries(editor, &self.languages);
+                        items.push(indentation);
+                    }
+                    items.push(eol);
+                    items.push((format!("Cell {} of {count}", index + 1), "", "notebook.centerActiveCell"));
+                }
+            }
+        } else if let Some((index, count)) = notebook_cell {
+            // editorStatus.ts: the indentation of the active cell's editor (`activeCodeEditor`), which a markdown
+            // preview has not; seen in the reference with the list focused on a code cell.
+            if let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme == crate::notebook::CELL_SCHEME && self.active_cell_has_editor()) {
+                let [_, indentation, ..] = Self::editor_status_entries(editor, &self.languages);
+                items.push(indentation);
+            }
             items.push((format!("Cell {} of {count}", index + 1), "", "notebook.centerActiveCell"));
+        } else if let Some(editor) = self.editors.active().filter(|editor| editor.document().open_error.is_some()) {
+            // editorStatus.ts `updateMetadataElement`: a binary editor's size; a placeholder has no text editor entries.
+            if let Some(crate::editor::OpenError::Binary(size)) = editor.document().open_error {
+                items.push((super::media_preview::format_size(size), "", ""));
+            }
         } else if let Some(editor) = self.editors.active().filter(|editor| !self.shows_webview(editor) && !matches!(editor.document().scheme.as_str(), super::extension_editor::EXTENSION_EDITOR_SCHEME | super::welcome_page::WALKTHROUGH_SCHEME | MULTI_DIFF_EDITOR_SCHEME)) {
             items.extend(Self::editor_status_entries(editor, &self.languages));
         }
@@ -2057,6 +2197,7 @@ struct LineColors {
     selection_highlight: Option<Rgba>,
     selection_highlight_border: Option<Rgba>,
     guide: Rgba,
+    active_guide: Rgba,
     cursor: Rgba,
     primary_cursor: Rgba,
     secondary_cursor: Rgba,

@@ -116,6 +116,142 @@ fn the_focused_cell_is_the_code_editor_the_workbench_edits(cx: &mut TestAppConte
 }
 
 #[gpui::test]
+fn a_click_on_the_text_of_another_code_cell_edits_that_cell(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "a = 1", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "b = 2", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let handle = workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].cells[1].handle);
+    let bounds = cx.debug_bounds(Box::leak(format!("notebook-cell-editor-{handle}").into_boxed_str())).unwrap();
+    cx.simulate_click(bounds.origin + gpui::point(gpui::px(60.), gpui::px(8.)), gpui::Modifiers::default());
+    workbench.update_in(cx, |workbench, window, _| {
+        assert_eq!(workbench.active_notebook_editor().unwrap().focus, 1);
+        assert!(workbench.editor_focus.is_focused(window));
+        let editor = workbench.editors.active().unwrap();
+        assert_eq!(editor.document().lines[0], "b = 2");
+        assert_eq!(editor.selection().head.line, 0);
+    });
+}
+
+#[gpui::test]
+fn notebook_find_goes_through_the_matches_of_all_cells_and_replaces_them(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "x = 1\nx", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "y = x", "outputs": [], "metadata": {} },
+        { "cellKind": 1, "language": "markdown", "source": "x md", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    cx.simulate_keystrokes("cmd-f");
+    workbench.update_in(cx, |workbench, window, cx| {
+        assert!(workbench.notebook_views.find.find_focus.is_focused(window), "Cmd+F in the cell list focuses the notebook find input");
+        workbench.edit_notebook_find_input(super::super::input_box_view::InputId::NotebookFind, |input| input.set_value("x".into()), cx);
+    });
+    cx.run_until_parked();
+    let label = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.notebook_find_count_label());
+    assert_eq!(label(cx), "1 of 3", "a markdown preview's source is left to the rendered markdown filter");
+    cx.simulate_keystrokes("enter");
+    cx.simulate_keystrokes("enter");
+    assert_eq!(label(cx), "3 of 3");
+    workbench.update_in(cx, |workbench, window, _| {
+        assert_eq!(workbench.active_notebook_editor().unwrap().focus, 1, "the match's cell takes the focus");
+        assert!(workbench.notebook_views.find.find_focus.is_focused(window), "the find input keeps the keyboard");
+        let editor = workbench.editors.active().unwrap();
+        assert_eq!((editor.selection().start(), editor.selection().end()), (crate::editor::Position::new(0, 4), crate::editor::Position::new(0, 5)));
+    });
+    cx.simulate_keystrokes("shift-enter");
+    assert_eq!(label(cx), "2 of 3");
+    run(&workbench, "_notebook.find.filter.markupPreview", cx);
+    assert_eq!(label(cx), "2 of 4", "without the rendered markdown filter the markdown source counts");
+    workbench.update_in(cx, |workbench, _, cx| {
+        workbench.notebook_views.find.state.replace_string = "z".into();
+        workbench.notebook_find_replace_all(cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(sources(&workbench, cx), ["z = 1\nz", "y = z", "z md"]);
+    assert_eq!(label(cx), "No results");
+    cx.simulate_keystrokes("escape");
+    workbench.update_in(cx, |workbench, window, _| {
+        assert!(!workbench.notebook_find_visible());
+        assert!(workbench.notebook_views.list_focus.is_focused(window), "the focus returns to the cell list");
+    });
+}
+
+#[gpui::test]
+fn a_reopened_notebook_editor_brings_back_its_focused_cell_editor_and_selection(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "a = 1", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "b = 22", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    cx.simulate_keystrokes("down enter end shift-left");
+    let key = workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].uri_string());
+    workbench.update_in(cx, |workbench, window, cx| {
+        workbench.host.notebooks.held.push(key.clone());
+        drop(workbench.execute_command("workbench.action.closeActiveEditor", Vec::new(), window, cx));
+    });
+    cx.run_until_parked();
+    workbench.read_with(cx, |workbench, _| assert!(workbench.active_notebook_editor().is_none()));
+    workbench.update_in(cx, |workbench, window, cx| workbench.show_notebook(&key, &json!({}), window, cx).unwrap());
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, _| {
+        assert_eq!(workbench.active_notebook_editor().unwrap().focus, 1);
+        assert!(workbench.editor_focus.is_focused(window), "the cell editor had the keyboard");
+        let editor = workbench.editors.active().unwrap();
+        assert_eq!(editor.document().lines[0], "b = 22");
+        assert_eq!((editor.selection().anchor, editor.selection().head), (crate::editor::Position::new(0, 6), crate::editor::Position::new(0, 5)));
+    });
+}
+
+#[gpui::test]
+fn a_markdown_cell_toolbar_goes_with_its_more_menu(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} },
+        { "cellKind": 1, "language": "markdown", "source": "# Title", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let (tab, handle) = workbench.read_with(cx, |workbench, _| (workbench.host.notebooks.editors[0].tab_model_id, workbench.host.notebooks.models[0].cells[1].handle));
+    workbench.update(cx, |workbench, cx| {
+        workbench.notebook_views.views.entry(tab).or_default().hovered = Some(handle);
+        cx.notify();
+    });
+    cx.run_until_parked();
+    let more = Box::leak(format!("notebook-cell-toolbar-more-{handle}").into_boxed_str());
+    let center = cx.debug_bounds(more).unwrap().center();
+    cx.simulate_click(center, gpui::Modifiers::default());
+    cx.simulate_keystrokes("escape");
+    cx.run_until_parked();
+    assert!(cx.debug_bounds(more).is_none(), "the hidden webview never reports the pointer leaving the preview for the menu");
+}
+
+/// cellDnd.ts: a cell dragged by its left column drops below the lower half of another cell, or with Alt is copied.
+#[gpui::test]
+fn a_cell_dragged_by_its_left_column_moves_or_copies_to_the_drop_place(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "a", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "b", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "c", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let drag = |from: usize, to: usize, lower: bool, modifiers: gpui::Modifiers, cx: &mut VisualTestContext| {
+        let handles: Vec<u64> = workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].cells.iter().map(|cell| cell.handle).collect());
+        let start = cx.debug_bounds(Box::leak(format!("notebook-cell-drag-handle-{}", handles[from]).into_boxed_str())).unwrap().center();
+        let target = cx.debug_bounds(Box::leak(format!("notebook-cell-drag-handle-{}", handles[to]).into_boxed_str())).unwrap();
+        let end = gpui::point(target.center().x, if lower { target.center().y + gpui::px(10.) } else { target.top() + gpui::px(4.) });
+        cx.simulate_mouse_down(start, gpui::MouseButton::Left, gpui::Modifiers::default());
+        cx.simulate_mouse_move(start + gpui::point(gpui::px(0.), gpui::px(10.)), Some(gpui::MouseButton::Left), gpui::Modifiers::default());
+        cx.simulate_mouse_move(end, Some(gpui::MouseButton::Left), modifiers);
+        cx.simulate_mouse_up(end, gpui::MouseButton::Left, modifiers);
+        cx.run_until_parked();
+    };
+    drag(0, 2, true, gpui::Modifiers::default(), cx);
+    assert_eq!(sources(&workbench, cx), ["b", "c", "a"]);
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.active_notebook_editor().unwrap().focus), 2);
+    drag(2, 0, false, gpui::Modifiers::alt(), cx);
+    assert_eq!(sources(&workbench, cx), ["a", "b", "c", "a"]);
+}
+
+#[gpui::test]
 fn the_cell_list_takes_the_keyboard_and_enter_and_escape_move_into_and_out_of_a_cell(cx: &mut TestAppContext) {
     let cells = json!([
         { "cellKind": 1, "language": "markdown", "source": "# Title\ntext", "outputs": [], "metadata": {} },
@@ -218,7 +354,7 @@ fn the_cell_language_picker_changes_the_language_and_the_kind(cx: &mut TestAppCo
         let input = workbench.quick_inputs.current().unwrap();
         input.order.iter().map(|row| &input.rows[*row]).map(|row| format!("{}{} {}", row.separator.as_ref().map(|label| format!("--{label}--")).unwrap_or_default(), row.item.label, row.item.description.clone().unwrap_or_default())).collect::<Vec<_>>()
     });
-    assert_eq!(rows, ["Auto Detect ", "--languages (identifier)--Python (python) - Current Language", "Markdown (markdown)", "----CSS (css)", "Plain Text (plaintext)", "Rust (rust)"]);
+    assert_eq!(rows, ["Auto Detect ", "--languages (identifier)--Python (python) - Current Language", "Markdown (markdown)", "----Binary (code-text-binary)", "CSS (css)", "Plain Text (plaintext)", "Rust (rust)"]);
     workbench.update_in(cx, |workbench, window, cx| {
         let input = workbench.quick_inputs.find_mut(|owner| matches!(owner, crate::main_thread_quick_open::Owner::EditorStatus(_))).unwrap();
         let handle = input.rows.iter().find(|row| row.item.label == "Markdown").unwrap().item.handle;
@@ -353,7 +489,130 @@ fn the_customize_notebook_submenu(cx: &mut TestAppContext) {
         })
     };
     let entry = |title: &str, checked: bool| (title.to_owned(), checked);
-    assert_eq!(menu(cx), [entry("Customize Notebook Layout", false), entry("Line Numbers", false), entry("Breadcrumbs", true)]);
+    assert_eq!(menu(cx), [entry("Customize Notebook Layout", false), entry("Line Numbers", false), entry("Breadcrumbs", true), entry("Toggle Cell Toolbar Position", false)]);
     run(&workbench, "notebook.toggleLineNumbersFromEditorTitle", cx);
     assert_eq!(menu(cx)[1], entry("Line Numbers", true));
+}
+
+/// The titles of menu actions: separators as `-`, submenus as `<title> >`.
+fn titles(actions: &[crate::menus::MenuAction]) -> Vec<String> {
+    let mut titles = Vec::new();
+    for action in actions {
+        titles.push(match action {
+            crate::menus::MenuAction::Command { title, .. } => title.clone(),
+            crate::menus::MenuAction::Submenu { title, .. } => format!("{title} >"),
+            crate::menus::MenuAction::Separator => "-".to_owned(),
+        });
+    }
+    titles
+}
+
+fn run_on_cell(workbench: &gpui::Entity<Workbench>, id: &str, index: usize, cx: &mut VisualTestContext) {
+    let args = vec![json!({ "start": index, "end": index + 1, "ui": true })];
+    workbench.update_in(cx, |workbench, window, cx| drop(workbench.execute_command(id, args, window, cx)));
+    cx.run_until_parked();
+}
+
+/// cellToolbars.ts: a cell's buttons, `...` dropdown and delete button from `MenuId.NotebookCellTitle` and
+/// `NotebookCellDelete`, as the reference shows them for an ipynb without the Jupyter extension.
+#[gpui::test]
+fn the_cell_toolbar_menus(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 1, "language": "markdown", "source": "# Title", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let toolbar = |index: usize, cx: &mut VisualTestContext| {
+        workbench.update_in(cx, |workbench, window, _| {
+            let model = &workbench.host.notebooks.models[0];
+            let row = workbench.notebook_rows(workbench.host.notebooks.editors[0].tab_model_id, model).into_iter().nth(index).unwrap();
+            let (primary, more, delete) = workbench.cell_toolbar_actions(model, &row, window);
+            (titles(&primary), titles(&more), titles(&delete))
+        })
+    };
+    let (primary, more, delete) = toolbar(0, cx);
+    assert_eq!(primary, ["Run Cells In Section", "Edit Cell", "Split Cell"]);
+    let overflow = ["Cut Cell", "Copy Cell", "Paste Cell", "-", "Insert Cell >", "-", "Change Cell to Code", "Join With Previous Cell", "Join With Next Cell", "Join Selected Cells", "Copy Cell Down", "-", "Show Cell Line Numbers", "Toggle Cell Toolbar Position"];
+    assert_eq!(more, overflow);
+    assert_eq!(delete, ["Delete Cell"]);
+    // `notebookMissingKernelExtension`: running above and below shows without a kernel.
+    let (primary, more, _) = toolbar(1, cx);
+    assert_eq!(primary, ["Execute Above Cells", "Execute Cell and Below", "Split Cell"]);
+    assert_eq!(more[6], "Change Cell to Markdown");
+}
+
+/// foldingController.ts: Fold Cell and Unfold Cell on the innermost section of the focused markdown cell; collapsed
+/// sections hide their cells and keep the sections inside them collapsed.
+#[gpui::test]
+fn markdown_headers_fold_their_sections(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 1, "language": "markdown", "source": "# A", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "x", "outputs": [], "metadata": {} },
+        { "cellKind": 1, "language": "markdown", "source": "## B", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "y", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    let rows = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let model = &workbench.host.notebooks.models[0];
+            let rows = workbench.notebook_rows(workbench.host.notebooks.editors[0].tab_model_id, model);
+            (rows.iter().map(|row| row.hidden).collect::<Vec<_>>(), rows.iter().map(|row| row.fold).collect::<Vec<_>>(), workbench.host.notebooks.editors[0].focus)
+        })
+    };
+    assert_eq!(rows(cx), (vec![false; 4], vec![Some((false, 3)), None, Some((false, 1)), None], 0));
+    workbench.update(cx, |workbench, _| workbench.host.notebooks.editors[0].focus = 3);
+    // A code cell folds nothing downwards.
+    run(&workbench, "notebook.fold", cx);
+    assert_eq!(rows(cx).0, [false; 4]);
+    workbench.update(cx, |workbench, _| workbench.host.notebooks.editors[0].focus = 2);
+    run(&workbench, "notebook.fold", cx);
+    assert_eq!(rows(cx), (vec![false, false, false, true], vec![Some((false, 3)), None, Some((true, 1)), None], 2));
+    workbench.update(cx, |workbench, _| workbench.host.notebooks.editors[0].focus = 1);
+    run(&workbench, "notebook.fold", cx);
+    assert_eq!(rows(cx).0, [false, false, false, true], "a code cell folds nothing");
+    workbench.update(cx, |workbench, _| workbench.host.notebooks.editors[0].focus = 0);
+    run(&workbench, "notebook.fold", cx);
+    assert_eq!(rows(cx).0, [false, true, true, true]);
+    run(&workbench, "notebook.unfold", cx);
+    assert_eq!(rows(cx).0, [false, false, false, true], "the inner section stays collapsed");
+}
+
+/// cellCommands.ts, notebookClipboard.ts and cellEditorOptions.ts on the toolbar's cell.
+#[gpui::test]
+fn the_cell_toolbar_commands(cx: &mut TestAppContext) {
+    let cells = json!([
+        { "cellKind": 2, "language": "python", "source": "a\nb", "outputs": [], "metadata": {} },
+        { "cellKind": 2, "language": "python", "source": "c", "outputs": [], "metadata": {} },
+        { "cellKind": 1, "language": "markdown", "source": "# T", "outputs": [], "metadata": {} },
+    ]);
+    let (workbench, cx, _) = workbench_with_cells(cells, cx);
+    run_on_cell(&workbench, "notebook.cell.copy", 1, cx);
+    run_on_cell(&workbench, "notebook.cell.paste", 2, cx);
+    assert_eq!(sources(&workbench, cx), ["a\nb", "c", "# T", "c"]);
+    run_on_cell(&workbench, "notebook.cell.cut", 0, cx);
+    assert_eq!(sources(&workbench, cx), ["c", "# T", "c"]);
+    assert_eq!(cx.read_from_clipboard().and_then(|item| item.text()).as_deref(), Some("a\nb"));
+    run_on_cell(&workbench, "notebook.cell.joinBelow", 0, cx);
+    assert_eq!(sources(&workbench, cx), ["c\n# T", "c"]);
+    // From the toolbar the cell editor has no cursor: the split point is the start.
+    run_on_cell(&workbench, "notebook.cell.split", 0, cx);
+    assert_eq!(sources(&workbench, cx), ["", "c\n# T", "c"]);
+    run_on_cell(&workbench, "notebook.cell.changeToMarkdown", 2, cx);
+    run_on_cell(&workbench, "notebook.cell.moveUp", 2, cx);
+    let kinds = |cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.host.notebooks.models[0].cells.iter().map(|cell| cell.kind).collect::<Vec<_>>());
+    assert_eq!(kinds(cx), [crate::notebook::CODE, crate::notebook::MARKUP, crate::notebook::CODE]);
+    workbench.update_in(cx, |workbench, window, cx| window.focus(&workbench.editor_focus, cx));
+    run(&workbench, "undo", cx);
+    assert_eq!(kinds(cx), [crate::notebook::CODE, crate::notebook::CODE, crate::notebook::MARKUP]);
+    run_on_cell(&workbench, "notebook.cell.insertMarkdownCellAbove", 0, cx);
+    assert_eq!(sources(&workbench, cx), ["", "", "c\n# T", "c"]);
+    assert_eq!(kinds(cx)[0], crate::notebook::MARKUP);
+    let line_numbers = |cx: &mut VisualTestContext| {
+        workbench.read_with(cx, |workbench, _| {
+            let model = &workbench.host.notebooks.models[0];
+            model.cells.iter().map(|cell| workbench.cell_model(&cell.uri).is_some_and(|editor| workbench.cell_line_numbers(&editor.document().uri_string()))).collect::<Vec<_>>()
+        })
+    };
+    run_on_cell(&workbench, "notebook.cell.toggleLineNumbers", 1, cx);
+    assert_eq!(line_numbers(cx), [false, true, false, false]);
 }

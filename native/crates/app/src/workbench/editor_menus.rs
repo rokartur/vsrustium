@@ -63,6 +63,9 @@ impl Workbench {
         let mut context = self.key_context(window);
         let editor_keys = [
             ("activeEditorIsNotPreview", json!(!editors[index].preview)),
+            ("activeEditorIsPinned", json!(editors[index].sticky)),
+            ("activeEditorIsDirty", json!(self.tab_shows_dirty(index))),
+            ("splitEditorsVertically", json!(self.setting("workbench.editor.openSideBySideDirection") == "down")),
             ("activeEditorIsLastInGroup", json!(index == editors.len() - 1)),
             ("activeEditorCannotClose", json!(false)),
             ("groupEditorsCount", json!(editors.len())),

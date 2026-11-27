@@ -27,9 +27,14 @@ pub struct ViewStates {
 impl ViewStates {
     /// `doLoad`: the memento's cache as `LRUCache.fromJSON` reads it.
     pub fn from_memento(raw: &str) -> Self {
+        Self::from_memento_key(raw, MEMENTO_KEY)
+    }
+
+    /// `doLoad` of the editor memento stored under `key`.
+    pub fn from_memento_key(raw: &str, key: &str) -> Self {
         let Ok(memento) = serde_json::from_str::<Value>(raw) else { return Self::default() };
         let mut states = Self::default();
-        for entry in memento[MEMENTO_KEY].as_array().into_iter().flatten() {
+        for entry in memento[key].as_array().into_iter().flatten() {
             if let (Some(resource), Some(groups)) = (entry[0].as_str(), entry.get(1)) {
                 states.entries.push((resource.to_owned(), groups.clone()));
             }
@@ -40,8 +45,12 @@ impl ViewStates {
 
     /// `saveState`: the cache as `LRUCache.toJSON` writes it into the memento.
     pub fn to_memento(&self) -> String {
+        self.to_memento_key(MEMENTO_KEY)
+    }
+
+    pub fn to_memento_key(&self, key: &str) -> String {
         let entries: Vec<Value> = self.entries.iter().map(|(resource, groups)| json!([resource, groups])).collect();
-        json!({ MEMENTO_KEY: entries }).to_string()
+        json!({ key: entries }).to_string()
     }
 
     /// `saveEditorState`: the newest entry, the oldest beyond the limit dropped.

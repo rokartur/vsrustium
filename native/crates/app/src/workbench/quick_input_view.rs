@@ -813,7 +813,8 @@ impl Workbench {
             .children(separator.map(|label| div().flex().items_center().ml(px(4.)).mr(px(2.)).text_size(px(11.)).text_color(separator_color).child(label)))
             .when(row.item.buttons.iter().any(|button| buttons_shown || button.always_visible), |entry| {
                 let buttons = row.item.buttons.iter().enumerate().filter(|(_, button)| buttons_shown || button.always_visible);
-                entry.child(div().flex().items_center().mt(px(1.)).children(buttons.map(|(index, button)| {
+                // quickInput.css puts 4px between two `.action-label.codicon` (margin-right); the last one lines up as is.
+                entry.child(div().flex().items_center().gap(px(2.)).mt(px(1.)).children(buttons.map(|(index, button)| {
                     let toggle = button.toggle;
                     self.icon(button.codicon.as_deref().unwrap_or("blank"), 20., 16., icon_color)
                         .id(("quick-input-item-button", index))

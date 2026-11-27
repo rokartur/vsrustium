@@ -27,6 +27,8 @@ pub const EDITOR_BOTTOM_PADDING: f32 = 4.;
 /// `_computeBottomToolbarDimensions` with the cell toolbar on the right (`notebook.cellToolbarLocation`).
 pub const BOTTOM_TOOLBAR_GAP: f32 = 18.;
 pub const BOTTOM_TOOLBAR_HEIGHT: f32 = 18.;
+/// notebookOptions.ts `markdownFoldHintHeight`: the hint under a collapsed header's preview.
+pub const FOLD_HINT_HEIGHT: f32 = 22.;
 /// markupCellViewModel.ts: a preview without its height from the webview yet.
 const UNMEASURED_PREVIEW_HEIGHT: f32 = 100.;
 
@@ -35,8 +37,11 @@ const UNMEASURED_PREVIEW_HEIGHT: f32 = 100.;
 pub enum CellInput {
     /// A code cell, or a markup cell being edited: its line count and its outputs' heights from the webview.
     Editor { lines: usize, outputs_height: f32, markup: bool },
-    /// A markup cell's rendered preview, its height from the webview once measured.
-    Preview { height: Option<f32> },
+    /// A markup cell's rendered preview, its height from the webview once measured, with the fold hint when its
+    /// section is collapsed.
+    Preview { height: Option<f32>, collapsed: bool },
+    /// A cell in a collapsed section: not in the list (`NotebookViewModel` hidden ranges).
+    Hidden,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -66,10 +71,12 @@ pub fn layout(cells: &[CellInput], line_height: f32) -> (Vec<CellLayout>, f32) {
                 let height = margins + editor_height + STATUS_BAR_HEIGHT + outputs_height + BOTTOM_TOOLBAR_GAP;
                 CellLayout { top, height, editor_top, editor_height, output_top }
             }
-            CellInput::Preview { height } => {
+            CellInput::Preview { height, collapsed } => {
                 let preview = height.unwrap_or(UNMEASURED_PREVIEW_HEIGHT);
-                CellLayout { top, height: (preview + BOTTOM_TOOLBAR_GAP).max(1.), editor_top: 0., editor_height: 0., output_top: preview }
+                let fold_hint = if collapsed { FOLD_HINT_HEIGHT } else { 0. };
+                CellLayout { top, height: (preview + BOTTOM_TOOLBAR_GAP + fold_hint).max(1.), editor_top: 0., editor_height: 0., output_top: preview }
             }
+            CellInput::Hidden => CellLayout { top, height: 0., editor_top: 0., editor_height: 0., output_top: 0. },
         };
         top += cell_layout.height;
         layouts.push(cell_layout);

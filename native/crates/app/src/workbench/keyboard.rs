@@ -384,14 +384,24 @@ impl Workbench {
         }
         if let Some(index) = self.editors.active_index() {
             context.insert("activeEditorIsLastInGroup".into(), json!(index == self.editors.editors.len() - 1));
+            context.insert("activeEditorIsPinned".into(), json!(self.editors.editors[index].sticky));
         }
         if let Some(editor) = self.editors.active() {
+            // breadcrumbsControl.ts `update`: every editor with a resource has breadcrumbs but untitled and merge editors.
+            let breadcrumbs_possible = editor.document().scheme != "untitled" && self.editors.active_merge().is_none();
+            context.insert("breadcrumbsPossible".into(), json!(breadcrumbs_possible));
+            context.insert("breadcrumbsVisible".into(), json!(breadcrumbs_possible && self.setting("breadcrumbs.enabled") != json!(false)));
+            context.insert("breadcrumbsHasSymbols".into(), json!(breadcrumbs_possible && !self.breadcrumb_symbols(editor).is_empty()));
             let pane = match editor.document().scheme.as_str() {
                 super::welcome_page::WALKTHROUGH_SCHEME => "gettingStartedPage",
                 _ if self.active_notebook_editor().is_some() => "workbench.editor.notebook",
                 _ => "workbench.editor.files",
             };
             context.insert("activeEditor".into(), json!(pane));
+            // contextkeys.ts `applyAvailableEditorIds`; every use reads it as a boolean, so the showing editor's id stands in for the list.
+            if let Some((_, editor_id)) = self.active_editor_type() {
+                context.insert("activeEditorAvailableEditorIds".into(), json!(editor_id));
+            }
             self.webview_editor_context(&mut context);
             self.insert_diff_editor_context(&mut context);
             self.insert_multi_diff_editor_context(&mut context);
@@ -476,6 +486,7 @@ impl Workbench {
             SideBarView::Extensions => self.extensions_context(window, &mut context),
             SideBarView::Debug | SideBarView::Testing | SideBarView::Contributed(_) | SideBarView::Generated(_) => {}
         }
+        self.open_editors_context(window, &mut context);
         // After the side bar's keys, whose list is not focused: the notebook's cell list is a list (notebookCellList.ts).
         if self.notebook_views.list_focus.is_focused(window) {
             context.insert("listFocus".into(), json!(true));

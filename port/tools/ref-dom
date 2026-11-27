@@ -27,6 +27,7 @@ const keys: Record<string, { key: string; code: string; windowsVirtualKeyCode: n
 	F12: { key: 'F12', code: 'F12', windowsVirtualKeyCode: 123 },
 	P: { key: 'p', code: 'KeyP', windowsVirtualKeyCode: 80 },
 	B: { key: 'b', code: 'KeyB', windowsVirtualKeyCode: 66 },
+	K: { key: 'k', code: 'KeyK', windowsVirtualKeyCode: 75 },
 };
 // CDP `modifiers` bits, for keys written as `shift+alt+F12`.
 const modifierBits: Record<string, number> = { alt: 1, ctrl: 2, meta: 4, shift: 8 };

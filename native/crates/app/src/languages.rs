@@ -14,6 +14,7 @@ use crate::editor::folding::FoldingMarkers;
 use crate::theme::strip_jsonc;
 
 pub const PLAINTEXT: &str = "plaintext";
+pub const BINARY_TEXT_FILE_MODE: &str = "code-text-binary";
 
 struct Association {
     id: String,
@@ -55,6 +56,8 @@ impl Languages {
         let grammars = textmate::Registry::new(extensions.iter().map(|extension| (extension.location.as_path(), &extension.description)));
         let mut languages = Languages { associations: Vec::new(), ids: Vec::new(), names: HashMap::new(), lowercase_names: HashMap::new(), off_side: HashMap::new(), folding_markers: HashMap::new(), block_comments: HashMap::new(), line_comments: HashMap::new(), first_lines: Vec::new(), grammars, brackets: HashMap::new(), rules: HashMap::new() };
         languages.register(&serde_json::json!({ "id": PLAINTEXT, "extensions": [".txt"], "aliases": ["Plain Text", "text"] }), None);
+        // files.contribution.ts: BINARY_TEXT_FILE_MODE, the language of a binary file opened as text anyway.
+        languages.register(&serde_json::json!({ "id": BINARY_TEXT_FILE_MODE, "aliases": ["Binary"], "mimetypes": ["text/x-code-binary"] }), None);
         for extension in extensions {
             for language in extension.description["contributes"]["languages"].as_array().into_iter().flatten() {
                 languages.register(language, Some(&extension.location));

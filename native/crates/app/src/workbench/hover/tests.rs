@@ -244,6 +244,31 @@ fn a_hover_shows_after_the_delay_and_hides_when_the_pointer_leaves(cx: &mut Test
     assert_eq!(shown(cx), None);
 }
 
+/// Chromium's fake mouse move: a target uncovered by a closing context menu gets its hover with the pointer still.
+#[gpui::test]
+fn a_target_under_a_closing_context_menu_gets_its_hover(cx: &mut TestAppContext) {
+    let (workbench, cx) = open_workbench("hover-menu", cx);
+    let width = cx.update(|window, _| window.viewport_size().width);
+    let panel = point(width - px(49.), px(18.5));
+    workbench.update_in(cx, |workbench, window, cx| {
+        let actions = vec![crate::menus::MenuAction::Command { id: "workbench.action.closeAllEditors".into(), title: "Close All".into(), enabled: true, checked: false, alt: None }];
+        workbench.show_context_menu_actions(actions, &Default::default(), Bounds::new(point(px(400.), px(300.)), size(px(0.), px(0.))), Vec::new(), window, cx);
+    });
+    cx.simulate_mouse_move(panel, None, Modifiers::none());
+    wait(cx, 1500);
+    assert_eq!(shown(&workbench, cx), None, "the open menu's backdrop takes the pointer");
+    workbench.update_in(cx, |workbench, window, cx| workbench.hide_context_menu(window, cx));
+    // Two frames as the platform loop delivers them: next-frame callbacks, then the draw.
+    for _ in 0..2 {
+        cx.update(|window, cx| {
+            window.simulate_next_frame(cx);
+            drop(window.draw(cx));
+        });
+    }
+    wait(cx, 1500);
+    assert_eq!(shown(&workbench, cx).as_deref(), Some("Toggle Panel (⌘J)"));
+}
+
 /// A `---` paragraph is a 1px rule, 8px below the paragraph before it and 4px above the one after it.
 #[test]
 fn a_rule_paragraph_collapses_its_margins() {

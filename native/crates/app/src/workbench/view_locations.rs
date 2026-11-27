@@ -11,7 +11,7 @@ use super::layout::Part;
 use super::search_view::SideBarView;
 use super::tree_view::static_id;
 use super::debug_view::{BREAKPOINTS_VIEW, CALL_STACK_VIEW, DEBUG_CONTAINER, DEBUG_WELCOME_VIEW, LOADED_SCRIPTS_VIEW, VARIABLES_VIEW, WATCH_VIEW};
-use super::view_panes::{EMPTY_VIEW, FILE_VIEW, OUTLINE_VIEW, PaneContainer, SCM_CHANGES_VIEW, SCM_HISTORY_VIEW, TIMELINE_VIEW, ViewPane};
+use super::view_panes::{EMPTY_VIEW, FILE_VIEW, OPEN_EDITORS_VIEW, OUTLINE_VIEW, PaneContainer, SCM_CHANGES_VIEW, SCM_HISTORY_VIEW, TIMELINE_VIEW, ViewPane};
 use crate::commands::Outcome;
 use crate::quick_input::{Entry, Item, Kind, QuickInput};
 
@@ -99,6 +99,7 @@ impl Workbench {
     pub(super) fn movable_views(&self) -> Vec<MovableView> {
         let view = |id, name, default_container, icon| MovableView { id, name, default_container, icon };
         let mut views = vec![
+            view(OPEN_EDITORS_VIEW, "Open Editors", EXPLORER_CONTAINER, "book"),
             view(EMPTY_VIEW, "No Folder Opened", EXPLORER_CONTAINER, "files"),
             view(FILE_VIEW, "Folders", EXPLORER_CONTAINER, "files"),
             view(OUTLINE_VIEW, "Outline", EXPLORER_CONTAINER, "symbol-class"),
@@ -352,6 +353,7 @@ impl Workbench {
     /// The pane of a view drawn outside its own container's code.
     pub(super) fn movable_view_pane(&mut self, id: &'static str, window: &mut Window, cx: &mut Context<Self>) -> ViewPane {
         match id {
+            OPEN_EDITORS_VIEW => self.open_editors_pane(window, cx),
             FILE_VIEW | EMPTY_VIEW => self.folder_view_pane(window, cx),
             OUTLINE_VIEW => self.outline_view_pane(window, cx),
             TIMELINE_VIEW => self.timeline_pane(window, cx),
@@ -389,6 +391,9 @@ impl Workbench {
     pub(super) fn focused_movable_view(&self, window: &Window) -> Option<&'static str> {
         if self.outline_pane.focus.is_focused(window) {
             return Some(OUTLINE_VIEW);
+        }
+        if self.open_editors_focus.is_focused(window) {
+            return Some(OPEN_EDITORS_VIEW);
         }
         if self.timeline_focus_within(window) {
             return Some(TIMELINE_VIEW);

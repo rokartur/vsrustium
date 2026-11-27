@@ -59,6 +59,8 @@ fn a_notebook_shown_as_repl_executes_its_last_cell(cx: &mut TestAppContext) {
     });
     assert_eq!((tab.as_str(), rows), ("REPL - 1", 1), "the list leaves the input cell out");
     assert_eq!(active_editor, "workbench.editor.repl");
+    let status = workbench.update_in(cx, |workbench, window, _| workbench.repl_input_status(window).map(|(input, cells)| (input.document().lines.clone(), cells.map(|(_, index, count)| (index, count)))));
+    assert_eq!(status, Some((vec![String::new()], Some((0, 1)))), "the status bar takes the input's end of line and the list's cell entries");
     let delta = receiver.try_iter().find(|message| message.method == "$acceptDocumentAndEditorsDelta" && json!(message.args).to_string().contains("addedEditors")).expect("the editor reaches the host");
     assert!(json!(delta.args).to_string().contains(r#""viewType":"repl""#), "{:?}", delta.args);
 

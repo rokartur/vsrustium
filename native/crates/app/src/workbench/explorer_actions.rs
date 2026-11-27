@@ -167,14 +167,21 @@ impl Workbench {
             workbench.execute_command("revealInExplorer", vec![json!({ "scheme": "file", "path": path })], window, cx)
         });
         // fileCommands.ts `REVEAL_IN_EXPLORER_COMMAND_ID` over `getResourceForCommand`: the resource, else the focused
-        // Explorer row, else the active editor's; outside the workspace it would focus Open Editors, which the port lacks.
+        // Explorer row, else the active editor's.
         self.commands.register("revealInExplorer", |workbench, args, window, cx| {
             let focused_row = workbench.folder.as_ref().filter(|_| workbench.explorer.focus.is_focused(window)).and_then(|tree| tree.focused.clone());
             let path = match args.first().and_then(|uri| uri["path"].as_str()) {
                 Some(path) => Some(PathBuf::from(path)),
                 None => focused_row.or_else(|| workbench.editors.active().map(|editor| editor.document().path.clone())),
             };
-            let Some(path) = path.filter(|path| workbench.workspace().is_some_and(|workspace| workspace.folder_of(path).is_some())) else { return Outcome::done() };
+            let Some(path) = path.filter(|path| workbench.workspace().is_some_and(|workspace| workspace.folder_of(path).is_some())) else {
+                // Outside the workspace: the Open Editors view, unless it is hidden.
+                if !workbench.view_hidden("explorer", super::view_panes::OPEN_EDITORS_VIEW) {
+                    workbench.expand_pane(super::view_panes::PaneContainer::Explorer, super::view_panes::OPEN_EDITORS_VIEW, cx);
+                    window.focus(&workbench.open_editors_focus.clone(), cx);
+                }
+                return Outcome::done();
+            };
             workbench.side_bar_view = SideBarView::Explorer;
             workbench.select_explorer_item(&path, window, cx);
             Outcome::done()
@@ -194,7 +201,7 @@ impl Workbench {
         ];
         let hover = self.color("toolbar.hoverBackground");
         // 4px from the header's end, measured against the reference with ui-pair (m12/workspace-folders.json).
-        let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(4.)).when(!shown, |bar| bar.invisible().when(self.pane_hover_reachable(), |bar| bar.group_hover(super::view_panes::FILE_VIEW, |bar| bar.visible())));
+        let mut bar = div().ml_auto().mr(px(4.)).flex().gap(px(4.)).when(!shown && !self.pane_hovered(super::view_panes::PaneContainer::Explorer, super::view_panes::FILE_VIEW, window), |bar| bar.invisible());
         for (icon, title, command, enabled) in actions {
             let foreground = if enabled { self.foreground_or("icon.foreground") } else { self.color("disabledForeground") };
             bar = bar.child(self.icon(icon, 20., 16., foreground).id(command).rounded(px(4.)).when(enabled, |action| {

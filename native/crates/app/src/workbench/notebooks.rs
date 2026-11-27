@@ -186,12 +186,17 @@ impl Workbench {
             Outcome::Ready(workbench.apply_notebook_edits(&key, &edits, cx).map(|_| Value::Null))
         });
         for (id, kind) in [("notebook.cell.insertCodeCellBelow", notebook::CODE), ("notebook.cell.insertCodeCellBelowAndFocusContainer", notebook::CODE), ("notebook.cell.insertMarkdownCellBelow", 1)] {
-            self.commands.register(id, move |workbench, _, window, cx| workbench.insert_cell_below(kind, window, cx));
+            self.commands.register(id, move |workbench, args, window, cx| match args.first().is_some_and(|context| context["ui"] == true) {
+                true => workbench.insert_toolbar_cell(&args, kind, false, window, cx),
+                false => workbench.insert_cell_below(kind, window, cx),
+            });
         }
         self.commands.register("notebook.selectKernel", |workbench, _, window, cx| workbench.show_kernel_picker(window, cx));
         self.register_notebook_list_commands();
+        self.register_notebook_find_commands();
         self.register_notebook_output_commands();
         self.register_notebook_layout_commands();
+        self.register_notebook_cell_commands();
         self.commands.register("notebook.cell.copyDown", |workbench, args, _, cx| {
             let Some((key, indices)) = workbench.cells_from_args(&args) else { return Outcome::done() };
             let Some(&index) = indices.first() else { return Outcome::done() };
@@ -557,6 +562,10 @@ impl Workbench {
             return receiver;
         }
         let snapshot = model.snapshot(|cell| self.cell_text(&cell.uri));
+        let type_id = match self.host.notebooks.interactives.iter().any(|interactive| interactive.repl && interactive.notebook == key) {
+            true => notebook::repl_working_copy_type_id(&view_type),
+            false => notebook::working_copy_type_id(&view_type),
+        };
         let meta = match uri_parts(&uri) {
             Ok((scheme, path)) if scheme == "file" => super::backup_tracker::file_meta(&path, false),
             _ => None,
@@ -564,7 +573,7 @@ impl Workbench {
         let done = self.lifecycle.backups.start_operation();
         cx.spawn(async move |workbench, cx| {
             let written = match notebook_to_data(&workbench, cx, &view_type, snapshot).await {
-                Ok(bytes) => crate::uri::Uri::from_json(&uri).and_then(|resource| backups::write(&home, &resource, &notebook::working_copy_type_id(&view_type), meta.as_ref(), &bytes).map_err(|error| error.to_string())),
+                Ok(bytes) => crate::uri::Uri::from_json(&uri).and_then(|resource| backups::write(&home, &resource, &type_id, meta.as_ref(), &bytes).map_err(|error| error.to_string())),
                 Err(error) => Err(error.to_string()),
             };
             if let Err(error) = &written {
@@ -577,17 +586,35 @@ impl Workbench {
         receiver
     }
 
+    /// Both working copies' backups go: the notebook may have been shown as a REPL editor.
     pub(super) fn discard_notebook_backup(&self, uri: &Value, view_type: &str) {
         if let (Some(home), Ok(resource)) = (&self.lifecycle.backups.home, crate::uri::Uri::from_json(uri)) {
             backups::discard(home, &resource, &notebook::working_copy_type_id(view_type));
+            backups::discard(home, &resource, &notebook::repl_working_copy_type_id(view_type));
         }
     }
 
-    /// The backed up bytes of a notebook (`resolveFromBackup`), None without a backup.
+    /// The backed up bytes of a notebook (`resolveFromBackup`), its REPL editor's backup else, None without a backup.
     fn notebook_backup(&self, uri: &Value, view_type: &str) -> Option<Vec<u8>> {
         let home = self.lifecycle.backups.home.as_ref()?;
         let resource = crate::uri::Uri::from_json(uri).ok()?;
-        backups::resolve(&backups::backup_path(home, &resource, &notebook::working_copy_type_id(view_type))).map(|backup| backup.content)
+        let backup = |type_id: String| backups::resolve(&backups::backup_path(home, &resource, &type_id)).map(|backup| backup.content);
+        backup(notebook::working_copy_type_id(view_type)).or_else(|| backup(notebook::repl_working_copy_type_id(view_type)))
+    }
+
+    /// ReplWindowWorkingCopyEditorHandler `createEditor` for a REPL backup without an open notebook: a REPL editor
+    /// on it opens in the background, its notebook resolved from the backup.
+    pub(super) fn restore_repl_backup(&mut self, uri: Value, window: &mut Window, cx: &mut Context<Self>) {
+        let key = notebook::uri_string(&uri);
+        let restoring = self.notebook_views.restores.iter().any(|restore| notebook::uri_string(restore.input.resource()) == key);
+        if self.host.notebooks.model(&key).is_some() || self.host.notebooks.held.contains(&key) || restoring {
+            return;
+        }
+        let index = self.editors.editors.len();
+        self.notebook_views.restores.push(NotebookRestore { group: self.editors.id, index, preview: false, sticky: false, active: false, input: NotebookInput::Repl { resource: uri, label: None } });
+        if self.notebook_views.restores.len() == 1 {
+            self.restore_notebook_editors(window, cx);
+        }
     }
 
     /// SimpleNotebookWorkingCopyEditorHandler `createEditor` for a backup without an open notebook: the notebook
@@ -718,8 +745,12 @@ impl Workbench {
         }
         // notebookEditorWidget.ts focuses the cell list, not a cell's editor: the editor takes the focus on a click
         // into a cell or Enter.
+        // A restored view state with `editorFocused` gives the keyboard to the focused cell's editor.
         if options["preserveFocus"] != true {
-            window.focus(&self.notebook_views.list_focus, cx);
+            match self.take_notebook_restore_editor_focus(tab_model_id) {
+                true => window.focus(&self.editor_focus, cx),
+                false => window.focus(&self.notebook_views.list_focus, cx),
+            }
         }
         self.editors_changed(cx);
         self.update_notebook_cell_status_bars(key, cx);
@@ -733,13 +764,24 @@ impl Workbench {
             let (editors, _) = self.editors.group_tabs(group);
             tabs.extend(editors.iter().filter(|editor| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME).map(|editor| (editor.model_id, editor.document().path.to_string_lossy().into_owned())));
         }
+        // notebookEditor.ts saves a closing editor's view state (`onWillCloseEditor`) and loads it into a new one.
+        let closed: Vec<u32> = self.host.notebooks.editors.iter().map(|editor| editor.tab_model_id).filter(|tab| !tabs.iter().any(|(id, _)| id == tab)).collect();
+        for tab in closed {
+            self.save_notebook_view_state(tab);
+        }
         let notebooks = &mut self.host.notebooks;
         notebooks.editors.retain(|editor| tabs.iter().any(|(id, _)| *id == editor.tab_model_id));
+        let mut opened = Vec::new();
         for (tab_model_id, notebook) in tabs {
             if notebooks.editor(tab_model_id).is_none() {
                 notebooks.editors.push(NotebookEditor { tab_model_id, id: format!("$notebookEditor{tab_model_id}"), notebook, focus: 0, selections: vec![(0, 1)], input_focused: false, visible_ranges: None });
+                opened.push(tab_model_id);
             }
         }
+        for tab in opened {
+            self.restore_notebook_view_state(tab);
+        }
+        let notebooks = &mut self.host.notebooks;
         self.editors.stacked_editors.clear();
         for editor in &notebooks.editors {
             let Some(model) = notebooks.model(&editor.notebook) else { continue };
@@ -1220,6 +1262,7 @@ pub(super) struct NotebookRestore {
     pub group: u32,
     pub index: usize,
     pub preview: bool,
+    pub sticky: bool,
     /// The group's active editor.
     pub active: bool,
     pub input: NotebookInput,
@@ -1309,6 +1352,9 @@ impl Workbench {
                         workbench.editors.move_editor(from, restore.index);
                         let to = restore.index.min(workbench.editors.editors.len() - 1);
                         workbench.editors.editors[to].preview = restore.preview;
+                        if restore.sticky {
+                            workbench.editors.stick(to);
+                        }
                     }
                 }
                 if workbench.editors.group_ids_mru().contains(&previous_group) && !restore.active {

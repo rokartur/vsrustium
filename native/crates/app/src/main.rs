@@ -537,6 +537,7 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
                 workbench.start_backups(&user_data, backup_folder, window, cx);
                 perf::mark("code/willRestoreEditors");
                 let resolver_cache = workbench.take_editor_resolver_cache();
+                workbench.set_restored_editor_type_controls();
                 if let Some(file) = file {
                     workbench.open_startup_file(file, &resolver_cache, window, cx);
                 } else if workbench.editors.active().is_some() && window.focused(cx).is_none() {
