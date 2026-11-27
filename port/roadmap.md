@@ -6,7 +6,7 @@ Rule for every milestone (Artur): a feature ships end to end and 1:1 with VS Cod
 
 Mouse cursors are part of the look (Artur): every element gets the cursor the reference CSS gives it (`rg 'cursor:' src/vs --glob '*.css'`): `pointer` on clickable items (activity bar, tabs, list rows, status bar items with a command, buttons, links), `text` over editor text and input fields, the resize cursors on sashes, `default` elsewhere. GPUI: `.cursor_pointer()`, `.cursor_text()`, `.cursor_ew_resize()` and the like on the element, never a window-wide cursor.
 
-Ledger today: 427 verified, 12 ported, 0 stub, 0 todo, 126 removed, 28 n/a (of 593 rows).
+Ledger today: 428 verified, 11 ported, 0 stub, 0 todo, 126 removed, 28 n/a (of 593 rows).
 
 ## Done
 
@@ -220,6 +220,7 @@ Open:
 - Bun host dropped from 57 to 41 MiB between milestones 1 and 2, not investigated (`port/results/benchmark.md`).
 - Wu measured 99 MiB once and 154 to 156 MiB later, cause not investigated.
 - Bun runs without `@vscode/native-watchdog` (oven-sh/bun#18546): a host with a stuck event loop is not killed. Recheck on each Bun upgrade.
+- To fix (Artur, from the workbench/contrib/files pass, row stays verified): a long tooltip wraps one path segment earlier than the reference (GPUI line breaking vs Chromium's); after Cmd+W the pin button gets its hover style only on the next mouse move (GPUI re-hit-tests on input, not after a layout change); the ui-pair run showed no TypeScript suggest list after typing `x` (unchecked, suggest row); the Explorer was not paired in the light and high contrast themes.
 
 ## Coverage check
 

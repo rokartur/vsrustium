@@ -13,8 +13,8 @@ use crate::list_tree::{StickyRow, active_guide_parents, indent_guides, position_
 const ROW_HEIGHT: f32 = 22.;
 /// tree.css `.monaco-enable-motion .monaco-tl-indent > .indent-guide { transition: opacity 0.1s linear }`.
 const GUIDE_FADE: Duration = Duration::from_millis(100);
-/// tree.css `.monaco-tl-indent { left: 16px }`, from the row's `.monaco-tl-row`, 3px inside the list row.
-const GUIDES_LEFT: f32 = 19.;
+/// tree.css `.monaco-tl-indent { left: 16px }`, from the row's `.monaco-tl-row`.
+const GUIDES_LEFT: f32 = 16.;
 
 /// The indent guides of one render of a tree: the depths of its rows and the rows whose guides are active.
 pub struct TreeGuides {
@@ -37,7 +37,7 @@ enum GuidesMode {
 
 impl TreeGuides {
     /// The guides of row `index`, an absolute layer for the list row it is put in; `inset` is where the row's
-    /// content box starts inside that element.
+    /// `.monaco-tl-row` starts inside that element.
     pub fn row(&self, index: usize, inset: f32) -> Option<Div> {
         if self.mode == GuidesMode::None {
             return None;
@@ -184,7 +184,7 @@ impl Workbench {
                 self.search.focus_and_select(Some(row.key));
                 window.focus(&self.search.focus.clone(), cx);
             }
-            ListId::KeybindingsTable | ListId::Notebook(_) => unreachable!("only the Explorer and Search lists are trees"),
+            ListId::KeybindingsTable | ListId::EditorTabs { .. } | ListId::Notebook(_) => unreachable!("only the Explorer and Search lists are trees"),
         }
         cx.notify();
     }
@@ -193,7 +193,7 @@ impl Workbench {
         match list {
             ListId::Explorer => self.folder.as_ref().map(|tree| tree.rows().iter().map(|row| row.depth).collect()).unwrap_or_default(),
             ListId::Search => self.search.rows(&self.search_folders(), Some(&self.collapse_results())).iter().map(|row| row.depth).collect(),
-            ListId::KeybindingsTable | ListId::Notebook(_) => Vec::new(),
+            ListId::KeybindingsTable | ListId::EditorTabs { .. } | ListId::Notebook(_) => Vec::new(),
         }
     }
 

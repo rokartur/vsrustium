@@ -1,0 +1,21 @@
+[
+	{ "wait": 2000 },
+	{ "click": [100, 129] },
+	{ "wait": 800 },
+	{ "hover": [600, 400] },
+	{ "wait": 800 },
+	{ "shot": "tree-plain" },
+	{ "hover": [150, 173] },
+	{ "wait": 300 },
+	{ "shot": "hover-300" },
+	{ "wait": 500 },
+	{ "shot": "tree-hover" },
+	{ "wait": 1000 },
+	{ "shot": "hover-1800" },
+	{ "click": [150, 173] },
+	{ "wait": 800 },
+	{ "shot": "tree-selected" },
+	{ "hover": [600, 400] },
+	{ "wait": 800 },
+	{ "shot": "tree-selected-away" }
+]

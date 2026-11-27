@@ -1,0 +1,14 @@
+[
+	{ "hotkey": ["cmd", "shift", "p"] },
+	{ "wait": 800 },
+	{ "type": "new search editor" },
+	{ "wait": 1000 },
+	{ "key": "return" },
+	{ "wait": 1500 },
+	{ "type": "the" },
+	{ "wait": 2500 },
+	{ "shot": "search-editor" },
+	{ "doubleClick": [390, 164] },
+	{ "wait": 2000 },
+	{ "shot": "search-editor-file-line-peek" }
+]
