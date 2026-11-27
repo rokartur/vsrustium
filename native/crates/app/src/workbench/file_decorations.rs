@@ -106,16 +106,17 @@ impl Workbench {
         decoration.filter(|_| colors)?.color.as_deref().and_then(|color| self.theme.color(color))
     }
 
-    /// iconlabel.css `.monaco-icon-label::after`: the letter at 90% size, weight 600 and 0.75 opacity, 5px after
-    /// the label and 16px from the end, in the decoration's color; a folder with bubbling children shows the
-    /// filled circle at 0.4 opacity instead (decorationsService.ts `_onlyChildren`).
+    /// iconlabel.css `.monaco-icon-label::after`: the letter at weight 600 and 0.75 opacity, 5px after the label,
+    /// in the decoration's color; a folder with bubbling children shows the filled circle at 0.4 opacity instead
+    /// (decorationsService.ts `_onlyChildren`). Modern UI's fontRamp.css sets both to `fontSize-label2` (11px)
+    /// and 8px from the end, over iconlabel.css's 16px and the bubble rule's 14px.
     pub(super) fn decoration_badge(&self, decoration: Option<&Decoration>, foreground: Rgba) -> Option<Div> {
         let decoration = decoration?;
         let color = decoration.color.as_deref().and_then(|color| self.theme.color(color)).unwrap_or(foreground);
         if decoration.bubbled {
-            return Some(self.icon("circle-filled", 14., 14., color).flex_none().ml(px(5.)).mr(px(14.)).opacity(0.4));
+            return Some(self.icon("circle-filled", 11., 11., color).flex_none().ml(px(5.)).mr(px(8.)).opacity(0.4));
         }
         let letter = decoration.letter.clone()?;
-        Some(div().flex_none().ml(px(5.)).mr(px(16.)).text_size(px(11.7)).font_weight(gpui::FontWeight::SEMIBOLD).opacity(0.75).text_color(color).child(letter))
+        Some(div().flex_none().ml(px(5.)).mr(px(8.)).text_size(px(11.)).font_weight(gpui::FontWeight::SEMIBOLD).opacity(0.75).text_color(color).child(letter))
     }
 }
