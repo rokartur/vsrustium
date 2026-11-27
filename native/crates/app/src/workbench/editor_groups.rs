@@ -32,14 +32,24 @@ struct GroupView {
     minimap_info: Option<(MinimapLayoutInfo, f64)>,
 }
 
-/// A tab being dragged (`DraggedEditorIdentifier`): its group and index, and its label for the drag image.
+/// A tab being dragged (`DraggedEditorIdentifier`): its workbench, group and index, its file, the pointer's offset in
+/// it, and its label for the drag image.
 #[derive(Clone)]
 pub(super) struct DraggedTab {
-    group: u32,
-    index: usize,
+    workbench: gpui::EntityId,
+    pub(super) group: u32,
+    pub(super) index: usize,
+    resource: Option<PathBuf>,
+    pub(super) offset: gpui::Point<Pixels>,
     label: SharedString,
     foreground: gpui::Rgba,
     background: gpui::Rgba,
+}
+
+impl DraggedTab {
+    pub(super) fn is_from(&self, workbench: gpui::EntityId) -> bool {
+        self.workbench == workbench
+    }
 }
 
 impl Render for DraggedTab {
@@ -48,22 +58,85 @@ impl Render for DraggedTab {
     }
 }
 
+/// The main editor part's id; auxiliary parts count up from 1 (auxiliaryEditorPart.ts `COUNTER`).
+pub(super) const MAIN_PART: u32 = 0;
+
+/// What `EditorGroups` keeps of each editor part: the part of the active group has it in the fields, the others here.
+#[derive(Default)]
+pub(super) struct PartLayout {
+    pub(super) grid: Option<EditorGrid>,
+    part_bounds: Rc<Cell<Bounds<f32>>>,
+    hovered_sash: Option<SashId>,
+    sash_hover: Option<(SashId, Task<()>)>,
+}
+
+impl PartLayout {
+    /// An auxiliary part: always a grid, also of one group, which tells the part's groups.
+    pub(super) fn auxiliary(group: u32, width: f32, height: f32) -> Self {
+        PartLayout { grid: Some(EditorGrid::new(group, width, height)), ..PartLayout::default() }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct EditorGroups {
+    /// The part whose layout the next four fields hold: the part of the active group.
+    part: u32,
+    /// The other parts' layouts by part id.
+    pub(super) parked: Vec<(u32, PartLayout)>,
     /// Made at the first split, with the part's size the last frame measured.
     grid: Option<EditorGrid>,
-    views: HashMap<u32, GroupView>,
     /// The editor part's content box, measured each frame.
     part_bounds: Rc<Cell<Bounds<f32>>>,
+    hovered_sash: Option<SashId>,
+    sash_hover: Option<(SashId, Task<()>)>,
+    views: HashMap<u32, GroupView>,
     /// Set while another group draws through the active group's code.
     pub(super) drawing_inactive: bool,
     /// The active group while groups draw swapped in: a side by side editor's secondary group, active, draws inside
     /// its owner's swapped body.
     really_active: Option<u32>,
-    hovered_sash: Option<SashId>,
     /// editorDropTarget.ts: the group a dragged tab is over and the side it would split, `None` to move into it.
     drop_target: Option<(u32, Option<Direction>)>,
-    sash_hover: Option<(SashId, Task<()>)>,
+    /// The tab being dragged, from the drag's start to its release (auxiliary_windows.rs `cross_window_drag`).
+    pub(super) dragged_tab: Option<DraggedTab>,
+}
+
+impl EditorGroups {
+    /// Makes `part`'s layout the one in the fields, parking the current part's.
+    pub(super) fn switch_part(&mut self, part: u32) {
+        if part == self.part {
+            return;
+        }
+        let index = self.parked.iter().position(|(id, _)| *id == part).expect("an open part");
+        let (_, layout) = self.parked.remove(index);
+        let leaving = PartLayout {
+            grid: std::mem::replace(&mut self.grid, layout.grid),
+            part_bounds: std::mem::replace(&mut self.part_bounds, layout.part_bounds),
+            hovered_sash: std::mem::replace(&mut self.hovered_sash, layout.hovered_sash),
+            sash_hover: std::mem::replace(&mut self.sash_hover, layout.sash_hover),
+        };
+        self.parked.push((self.part, leaving));
+        self.part = part;
+    }
+
+    pub(super) fn part_grid(&self, part: u32) -> Option<&EditorGrid> {
+        if part == self.part {
+            return self.grid.as_ref();
+        }
+        self.parked.iter().find(|(id, _)| *id == part).and_then(|(_, layout)| layout.grid.as_ref())
+    }
+
+    /// The auxiliary part whose grid holds `group`.
+    fn auxiliary_part_of(&self, group: u32) -> Option<u32> {
+        let current = std::iter::once((self.part, self.grid.as_ref()));
+        let parked = self.parked.iter().map(|(id, layout)| (*id, layout.grid.as_ref()));
+        current.chain(parked).find(|(id, grid)| *id != MAIN_PART && grid.is_some_and(|grid| grid.groups().contains(&group))).map(|(id, _)| id)
+    }
+
+    /// The part of the active group.
+    pub(super) fn active_part(&self) -> u32 {
+        self.part
+    }
 }
 
 /// Editors that cannot be copied into a new group (`EditorInputCapabilities.Singleton` or not serializable):
@@ -274,12 +347,12 @@ impl Workbench {
 
     /// The editor part's context keys (editorPart.ts `handleContextKeys`, editorGroupView.ts).
     pub(super) fn editor_groups_context(&self, context: &mut HashMap<String, Value>) {
-        let groups = self.groups_in_grid_order();
+        let groups = self.part_groups(self.editor_groups.part);
         // The modal group is in no grid: its keys follow the part's group active before it.
         let active = self.editors.group_ids_mru().into_iter().find(|group| groups.contains(group)).expect("the part has a group");
         let index = groups.iter().position(|group| *group == active).expect("found in the grid above");
         let maximized = self.editor_groups.grid.as_ref().is_some_and(EditorGrid::is_maximized);
-        context.insert("multipleEditorGroups".into(), json!(groups.len() > 1));
+        context.insert("multipleEditorGroups".into(), json!(self.groups_in_grid_order().len() > 1));
         context.insert("editorPartMultipleEditorGroups".into(), json!(groups.len() > 1));
         context.insert("editorPartMaximizedEditorGroup".into(), json!(maximized));
         context.insert("activeEditorGroupEmpty".into(), json!(self.editors.group_tabs(self.editor_group_id()).0.is_empty()));
@@ -289,12 +362,40 @@ impl Workbench {
         context.insert("groupEditorsCount".into(), json!(self.editors.group_tabs(self.editor_group_id()).0.len()));
     }
 
-    /// `getGroups(GroupsOrder.GRID_APPEARANCE)`.
+    /// editorParts.ts `getGroups(GroupsOrder.GRID_APPEARANCE)`: the main part's groups, then each auxiliary part's in
+    /// the order the parts opened.
     pub(super) fn groups_in_grid_order(&self) -> Vec<u32> {
-        match &self.editor_groups.grid {
-            Some(grid) => grid.groups(),
-            None => self.editors.group_ids_mru().into_iter().filter(|group| *group != MODAL_GROUP).take(1).collect(),
+        let mut groups = self.part_groups(MAIN_PART);
+        for part in self.auxiliary_windows.part_ids() {
+            groups.extend(self.part_groups(part));
         }
+        groups
+    }
+
+    /// A part's groups in grid order.
+    pub(super) fn part_groups(&self, part: u32) -> Vec<u32> {
+        match self.editor_groups.part_grid(part) {
+            Some(grid) => grid.groups(),
+            None => self.editors.group_ids_mru().into_iter().filter(|group| self.part_of_group(*group) == Some(part)).take(1).collect(),
+        }
+    }
+
+    /// The part `group` is in; `None` for a group in no part's grid: the modal and panel groups and a side by side
+    /// editor's secondary side.
+    pub(super) fn part_of_group(&self, group: u32) -> Option<u32> {
+        if group == MODAL_GROUP || group == PANEL_GROUP || self.editors.is_side_group(group) {
+            return None;
+        }
+        Some(self.editor_groups.auxiliary_part_of(group).unwrap_or(MAIN_PART))
+    }
+
+    /// Runs `run` with `part`'s layout in the fields, then brings the active part's back.
+    pub(super) fn in_part<R>(&mut self, part: u32, run: impl FnOnce(&mut Self) -> R) -> R {
+        let active = self.editor_groups.part;
+        self.editor_groups.switch_part(part);
+        let result = run(self);
+        self.editor_groups.switch_part(active);
+        result
     }
 
     /// The active editor group: the active group, or while the panel's editor has focus the group active before it.
@@ -414,8 +515,23 @@ impl Workbench {
         let webview = self.editors.active().and_then(|editor| self.webview_panels.panels.iter().find(|panel| panel.shows(editor)));
         match webview.map(|panel| panel.handle.clone()) {
             Some(handle) => self.focus_webview_panel(&handle, window, cx),
-            None => window.focus(&self.editor_focus, cx),
+            None => self.focus_editor_in_its_window(window, cx),
         }
+    }
+
+    /// Focuses the active group's editor in the window that shows the group, which comes to the front when it is
+    /// not `window`.
+    pub(super) fn focus_editor_in_its_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(target) = self.group_window(self.editors.id).filter(|target| *target != window.window_handle()) else {
+            return window.focus(&self.editor_focus, cx);
+        };
+        let focus = self.editor_focus.clone();
+        cx.defer(move |cx| {
+            let _ = target.update(cx, |_, window, cx| {
+                window.activate_window();
+                window.focus(&focus, cx);
+            });
+        });
     }
 
     /// Makes `group` the active one: its code editor state comes back from `views`, the leaving one goes there.
@@ -432,14 +548,18 @@ impl Workbench {
         };
         self.editor_groups.views.insert(previous, leaving);
         self.editors.activate_group(group);
+        if let Some(part) = self.part_of_group(group) {
+            self.editor_groups.switch_part(part);
+        }
     }
 
-    /// Runs `run` with `group` as the active group, then brings the active group back.
+    /// Runs `run` with `group` as the active group, then brings the active group and part back.
     pub(super) fn with_group<R>(&mut self, group: u32, run: impl FnOnce(&mut Self) -> R) -> R {
-        let active = self.editors.id;
+        let (active, part) = (self.editors.id, self.editor_groups.part);
         self.activate_group(group);
         let result = run(self);
         self.activate_group(active);
+        self.editor_groups.switch_part(part);
         result
     }
 
@@ -484,19 +604,19 @@ impl Workbench {
         let Some(index) = self.editors.active_index().filter(|_| target != source) else { return };
         let editor = self.editors.take_editor(index);
         self.activate_group(target);
-        self.editors.insert_moved(editor);
+        self.insert_moved_editor(editor);
         self.close_group_if_empty(source);
         self.focus_group(target, window, cx);
     }
 
     /// `mergeGroup`: every editor of `source` moves to the end of `target`, then `source` closes.
-    fn merge_group(&mut self, source: u32, target: u32, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn merge_group(&mut self, source: u32, target: u32, window: &mut Window, cx: &mut Context<Self>) {
         self.with_group(source, |workbench| {
             let moved: Vec<_> = (0..workbench.editors.editors.len()).map(|_| workbench.editors.take_editor(0)).collect();
             workbench.with_group(target, |workbench| {
                 let active = workbench.editors.active_index();
                 for editor in moved {
-                    workbench.editors.insert_moved(editor);
+                    workbench.insert_moved_editor(editor);
                 }
                 if let Some(active) = active {
                     workbench.editors.activate(active);
@@ -507,10 +627,17 @@ impl Workbench {
         self.focus_group(target, window, cx);
     }
 
-    /// `workbench.action.closeGroup` (`removeGroup`): a group with editors merges into the most recent other group.
+    /// `workbench.action.closeGroup` (`removeGroup`): a group with editors merges into the part's most recent other
+    /// group; an editor window's last group closes the window (auxiliaryEditorPart.ts `removeGroup`).
     fn close_group(&mut self, group: u32, window: &mut Window, cx: &mut Context<Self>) {
+        let part = self.part_of_group(group);
         let mru = self.editors.group_ids_mru();
-        let Some(&next) = mru.iter().find(|other| **other != group) else { return };
+        let Some(&next) = mru.iter().find(|other| **other != group && self.part_of_group(**other) == part) else {
+            if let Some(part) = part.filter(|part| *part != MAIN_PART) {
+                self.close_auxiliary_window(part, cx);
+            }
+            return;
+        };
         let has_editors = if group == self.editors.id { !self.editors.editors.is_empty() } else { self.editors.group(group).is_some_and(|state| !state.editors.is_empty()) };
         if has_editors {
             return self.merge_group(group, next, window, cx);
@@ -522,14 +649,22 @@ impl Workbench {
     /// editorGroupView.ts `doCloseEditor`: the last editor of a group closed with `workbench.editor.closeEmptyGroups`.
     pub(super) fn close_group_if_empty(&mut self, group: u32) {
         let empty = if group == self.editors.id { self.editors.editors.is_empty() } else { self.editors.group(group).is_some_and(|state| state.editors.is_empty()) };
+        // The main part keeps its last group; an auxiliary part's last group goes with its window
+        // (auxiliaryEditorPart.ts `removeGroup`).
+        let removable = match self.part_of_group(group) {
+            Some(MAIN_PART) => self.part_groups(MAIN_PART).len() > 1,
+            Some(_) => true,
+            None => group != PANEL_GROUP,
+        };
         // The modal part enforces `closeEmptyGroups`: its group goes with its last editor.
-        if empty && (group == MODAL_GROUP || group != PANEL_GROUP && self.editors.has_several_groups() && self.setting("workbench.editor.closeEmptyGroups") != json!(false)) {
+        if empty && (group == MODAL_GROUP || removable && self.setting("workbench.editor.closeEmptyGroups") != json!(false)) {
             self.remove_group(group);
         }
     }
 
     /// `removeGroup`: the group's editors close; the most recent other group becomes active when it was.
-    fn remove_group(&mut self, group: u32) {
+    pub(super) fn remove_group(&mut self, group: u32) {
+        let part = self.part_of_group(group);
         if group == self.editors.id {
             let next = self.editors.group_ids_mru()[1];
             self.activate_group(next);
@@ -538,12 +673,24 @@ impl Workbench {
         self.editor_groups.views.remove(&group);
         self.remove_from_navigation(|entry| entry.group == group);
         let sizing = self.split_sizing();
-        // `applyLayout` takes the groups it drops out of the grid before their editors merge; the modal group has none.
-        if let Some(grid) = self.editor_groups.grid.as_mut().filter(|grid| grid.groups().contains(&group)) {
-            grid.remove_group(group, sizing);
-        }
-        if !self.editors.has_several_groups() {
-            self.editor_groups.grid = None;
+        let Some(part) = part else { return };
+        let emptied = self.in_part(part, |workbench| {
+            // `applyLayout` takes the groups it drops out of the grid before their editors merge.
+            let grid = workbench.editor_groups.grid.as_mut().filter(|grid| grid.groups().contains(&group));
+            // An editor window's last group: the part goes with it.
+            if grid.as_ref().is_some_and(|grid| grid.groups().len() == 1) {
+                return true;
+            }
+            if let Some(grid) = grid {
+                grid.remove_group(group, sizing);
+            }
+            if part == MAIN_PART && workbench.editor_groups.grid.as_ref().is_some_and(|grid| grid.groups().len() < 2) {
+                workbench.editor_groups.grid = None;
+            }
+            false
+        });
+        if emptied {
+            self.close_auxiliary_part(part);
         }
     }
 
@@ -578,7 +725,7 @@ impl Workbench {
         for group in dropped {
             self.merge_group(group, last, window, cx);
         }
-        if order.len() == 1 {
+        if order.len() == 1 && self.editor_groups.part == MAIN_PART {
             self.editor_groups.grid = None;
         }
         let focus = if order.contains(&active) { active } else { last };
@@ -600,13 +747,16 @@ impl Workbench {
         let (left, right) = margins.unwrap_or_default();
         let measure = canvas(move |bounds, _, _| part_bounds.set(bounds.map(f32::from)), |_, _, _, _| ()).absolute().top_0().bottom_0().left(px(left)).right(px(right));
         let centered_chrome = self.centered_layout_chrome(margins, cx);
+        // floatingPanels.css floats the main window's parts; an editor window's part fills it.
+        let floating = self.editor_groups.part == MAIN_PART;
         let card = div()
             .flex_1()
             // A long breadcrumbs path must not widen the part past the window.
             .min_w_0()
+            .min_h_0()
             .relative()
             .bg(self.color("editor.background"))
-            .map(|card| match self.compact_density() {
+            .when(floating, |card| match self.compact_density() {
                 // editorBorder.css: a compact editor has no left border unless it meets the window's left edge.
                 true => card.border_t_1().border_r_1().border_b_1().when(self.part_at_left_edge(super::layout::Part::Editor), |card| card.border_l_1()).border_color(gpui::transparent_black()),
                 false => card.border_1().rounded(px(8.)).border_color(self.color("surface.border")),
@@ -619,14 +769,16 @@ impl Workbench {
         let sash_size = self.sash_size();
         let Some(grid) = self.editor_groups.grid.as_mut() else {
             // The modal part's group draws in the modal; the part shows the group active before it.
-            let group = self.editors.group_ids_mru().into_iter().find(|group| *group != MODAL_GROUP).expect("the part has a group");
+            let group = self.part_groups(self.editor_groups.part)[0];
             if self.editors.group_tabs(group).0.is_empty() {
                 let strokes = self.compact_density().then(|| self.part_top_border());
-                return card.flex().flex_col().items_center().justify_center().child(self.watermark(256.)).children(strokes);
+                // editorDropTarget.ts: the empty part takes drops too.
+                let empty = div().flex_1().min_h_0().relative().flex().flex_col().items_center().justify_center().child(self.watermark(256.));
+                return card.flex().flex_col().child(self.group_drop_area(group, empty, cx)).children(strokes);
             }
             let body = if group == self.editors.id { self.editor_group_body(window, cx) } else { self.inactive_group_body(group, window, cx) };
             let area = self.group_drop_area(group, div().flex_1().min_h_0().relative().flex().flex_col().child(body), cx);
-            return card.flex().flex_col().child(area).child(self.part_top_border());
+            return card.flex().flex_col().child(area).when(floating, |card| card.child(self.part_top_border()));
         };
         let size = self.editor_groups.part_bounds.get().size;
         grid.layout(size.width, size.height);
@@ -655,7 +807,7 @@ impl Workbench {
         let sash_elements: Vec<AnyElement> = sashes.into_iter().map(|sash| self.group_sash(sash, cx)).collect();
         let dragging = self.editor_groups.grid.as_ref().is_some_and(|grid| grid.dragged_sash().is_some());
         let groups_area = div().absolute().top_0().bottom_0().left(px(left)).right(px(right)).children(groups).children(separators).children(sash_elements);
-        card.child(groups_area).when(dragging, |card| card.child(self.group_sash_drag(cx))).child(self.part_top_border())
+        card.child(groups_area).when(dragging, |card| card.child(self.group_sash_drag(cx))).when(floating, |card| card.child(self.part_top_border()))
     }
 
     /// A group's tabs and editor, or the watermark of an empty group (editorgroupview.css: at most 200px in a part of
@@ -729,9 +881,14 @@ impl Workbench {
     /// drop area; over a tab the `tab.dragAndDropBorder` line marks where it goes.
     /// A tab of `group` (a tab strip's, or an Open Editors row): dragged, and the drop before it.
     pub(super) fn tab_drag_and_drop(&self, tab: Stateful<Div>, group: u32, index: usize, cx: &mut Context<Self>) -> Stateful<Div> {
-        let dragged = self.dragged_tab(group, index);
+        let dragged = self.dragged_tab(group, index, cx);
         let border = self.theme.color("tab.dragAndDropBorder").unwrap_or(self.foreground_or("tab.activeForeground"));
-        tab.on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+        let workbench = cx.entity().downgrade();
+        tab.on_drag(dragged, move |dragged, offset, _, cx| {
+            let dragged = DraggedTab { offset, ..dragged.clone() };
+            let _ = workbench.update(cx, |workbench, _| workbench.editor_groups.dragged_tab = Some(dragged.clone()));
+            cx.new(|_| dragged)
+        })
             .drag_over::<DraggedTab>(move |style, _, _, _| style.border_l_2().border_color(border))
             .on_drop(cx.listener(move |workbench, dragged: &DraggedTab, window, cx| {
                 workbench.editor_groups.drop_target = None;
@@ -739,10 +896,14 @@ impl Workbench {
             }))
     }
 
-    pub(super) fn dragged_tab(&self, group: u32, index: usize) -> DraggedTab {
+    pub(super) fn dragged_tab(&self, group: u32, index: usize, cx: &Context<Self>) -> DraggedTab {
+        let tab = &self.editors.group_tabs(group).0[index];
         DraggedTab {
+            workbench: cx.entity_id(),
             group,
             index,
+            resource: Some(tab.document()).filter(|document| document.scheme == "file").map(|document| document.path.clone()),
+            offset: gpui::Point::default(),
             label: self.editor_name(&self.editors.group_tabs(group).0[index]).into(),
             foreground: self.foreground_or("tab.activeForeground"),
             background: self.color("tab.activeBackground"),
@@ -843,6 +1004,11 @@ impl Workbench {
 
     /// `moveEditor` / `doMoveEditorAcrossGroups` of a dropped tab, to `index` or after the target's active editor.
     pub(super) fn move_dragged_tab(&mut self, dragged: &DraggedTab, target: u32, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
+        self.editor_groups.dragged_tab = None;
+        // A tab of another window's workbench is a resource drop there (dnd.ts `ResourcesDropHandler`): its file opens.
+        if !dragged.is_from(cx.entity_id()) {
+            return self.drop_external_paths(dragged.resource.iter().cloned().collect(), target, window, cx);
+        }
         if dragged.group == target {
             self.with_group(target, |workbench| workbench.editors.move_editor(dragged.index, index.unwrap_or(usize::MAX)));
         } else {
@@ -852,7 +1018,7 @@ impl Workbench {
                 editor.sticky = false;
             }
             self.with_group(target, |workbench| {
-                workbench.editors.insert_moved(editor);
+                workbench.insert_moved_editor(editor);
                 if let (Some(index), Some(from)) = (index, workbench.editors.active_index()) {
                     workbench.editors.move_editor(from, index);
                 }

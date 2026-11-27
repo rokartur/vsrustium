@@ -1140,27 +1140,34 @@ impl EditorGroup {
         self.next_group_id += 1;
         let id = self.next_group_id;
         let mut group = GroupState { id, editors: Vec::new(), recent: Vec::new(), viewport: self.viewport, unicode_banner_closed: false };
-        let source = self.active_tab().filter(|_| copy_active).map(|tab| (tab.model.clone(), tab.view_state(self.viewport), tab.model_id));
-        if let Some((model, view_state, tab_id)) = source {
-            self.next_model_id += 1;
-            let mut copy = OpenEditor::of_model(model, false, self.next_model_id);
-            copy.restore_view_state(&view_state, self.viewport);
-            let diff = self.diffs.get(&tab_id).map(|diff| {
-                let view_state = diff.modified_editor.as_ref().map(|editor| editor.view_state(self.viewport));
-                (DiffInput { inline_now: diff.inline_now, ..DiffInput::new(diff.original.clone(), diff.modified.clone(), diff.label.clone()) }, view_state)
-            });
-            if let Some((mut input, view_state)) = diff {
-                self.attach_modified_editor(&mut input);
-                if let (Some(editor), Some(view_state)) = (input.modified_editor.as_mut(), view_state) {
-                    editor.restore_view_state(&view_state, self.viewport);
-                }
-                self.diffs.insert(copy.model_id, input);
-            }
+        if let Some(copy) = copy_active.then(|| self.copy_active()).flatten() {
             group.recent.push(copy.model_id);
             group.editors.push(copy);
         }
         self.other_groups.push(group);
         id
+    }
+
+    /// A copy of the active editor for another group, as `splitEditor` copies it: an editor of the same model with
+    /// the same view state, not a preview.
+    pub fn copy_active(&mut self) -> Option<OpenEditor> {
+        let tab = self.active_tab()?;
+        let (model, view_state, tab_id) = (tab.model.clone(), tab.view_state(self.viewport), tab.model_id);
+        self.next_model_id += 1;
+        let mut copy = OpenEditor::of_model(model, false, self.next_model_id);
+        copy.restore_view_state(&view_state, self.viewport);
+        let diff = self.diffs.get(&tab_id).map(|diff| {
+            let view_state = diff.modified_editor.as_ref().map(|editor| editor.view_state(self.viewport));
+            (DiffInput { inline_now: diff.inline_now, ..DiffInput::new(diff.original.clone(), diff.modified.clone(), diff.label.clone()) }, view_state)
+        });
+        if let Some((mut input, view_state)) = diff {
+            self.attach_modified_editor(&mut input);
+            if let (Some(editor), Some(view_state)) = (input.modified_editor.as_mut(), view_state) {
+                editor.restore_view_state(&view_state, self.viewport);
+            }
+            self.diffs.insert(copy.model_id, input);
+        }
+        Some(copy)
     }
 
     /// `removeGroup` of a group other than the active one: its editors close.

@@ -165,7 +165,7 @@ impl Workbench {
                     if phase != DispatchPhase::Capture {
                         return;
                     }
-                    let Some(Some(workbench)) = window.root::<Workbench>() else { return };
+                    let Some(workbench) = super::auxiliary_windows::window_workbench(window, cx) else { return };
                     let hovered = hitbox.is_hovered(window);
                     if !hovered && !workbench.read(cx).hovers.is_target(&target.id) {
                         return;
@@ -176,7 +176,7 @@ impl Workbench {
                     if phase != DispatchPhase::Capture || !pressed.is_hovered(window) {
                         return;
                     }
-                    let Some(Some(workbench)) = window.root::<Workbench>() else { return };
+                    let Some(workbench) = super::auxiliary_windows::window_workbench(window, cx) else { return };
                     workbench.update(cx, |workbench, cx| workbench.dismiss_hover(cx));
                 });
             },

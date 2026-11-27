@@ -72,6 +72,11 @@ impl Workbench {
         });
         // `CloseWindowAction` / nativeHostService.closeWindow: the window closes as its close button closes it.
         self.commands.register("workbench.action.closeWindow", |workbench, _, window, cx| {
+            // An editor window closes alone (auxiliaryWindowService.ts: it has no lifecycle of its own).
+            if let Some(part) = workbench.auxiliary_part_of_window(window) {
+                workbench.close_auxiliary_window(part, cx);
+                return Outcome::done();
+            }
             workbench.close_window(window, cx);
             Outcome::done()
         });
@@ -94,11 +99,12 @@ impl Workbench {
 
     fn close_window(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.shutdown(ShutdownReason::Close, window, cx, |workbench, window, cx| {
-            if cx.windows().len() == 1 {
+            if cx.windows().into_iter().filter(|handle| handle.downcast::<Workbench>().is_some()).count() == 1 {
                 let state = workbench.window_state(window, cx);
                 cx.set_global(LastClosedWindow(Some(state)));
             }
             workbench.lifecycle.window_closed = true;
+            workbench.remove_auxiliary_windows(cx);
             window.remove_window();
         });
     }

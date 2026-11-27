@@ -6,13 +6,14 @@ mod tests;
 
 use std::collections::BTreeMap;
 
-use gpui::{Action, App, Context, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType, Window, WindowHandle, actions};
+use gpui::{Action, AnyWindowHandle, App, Context, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType, Window, actions};
 use objc2::{MainThreadMarker, sel};
 use objc2_app_kit::{NSApplication, NSMenuItem};
 use objc2_foundation::NSString;
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::auxiliary_windows::{AuxiliaryWindow, window_workbench};
 use crate::keybindings::Chord;
 use super::workspace_actions::recent_openable;
 use crate::menus::{MenuAction, MenuId, menu_actions, mnemonic_menu_label};
@@ -73,7 +74,7 @@ pub fn install(cx: &mut App) {
             // menubar.ts `runActionInRenderer`: the focused window runs it; with no window Quit quits and the
             // others open an empty window first.
             match menu_window(cx) {
-                Some(window) => drop(window.update(cx, |workbench, window, cx| workbench.run_menu_command(&id, window, cx))),
+                Some(window) => update_menu_window(window, cx, |workbench, window, cx| workbench.run_menu_command(&id, window, cx)),
                 None if id == "workbench.action.quit" => cx.quit(),
                 None => {
                     let Ok(window) = crate::open_window(crate::WindowRequest::default(), cx) else { return };
@@ -86,7 +87,7 @@ pub fn install(cx: &mut App) {
         let index = action.index;
         cx.defer(move |cx| {
             let Some(window) = menu_window(cx) else { return };
-            let _ = window.update(cx, |workbench, window, cx| workbench.open_recent_menu_entry(index, window, cx));
+            update_menu_window(window, cx, |workbench, window, cx| workbench.open_recent_menu_entry(index, window, cx));
         });
     });
     cx.on_action(|_: &Hide, cx| cx.hide());
@@ -94,12 +95,20 @@ pub fn install(cx: &mut App) {
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
 }
 
-/// The window menu actions go to: the active window, else the frontmost workbench window, else any (a platform
-/// without a window stack).
-fn menu_window(cx: &App) -> Option<WindowHandle<Workbench>> {
-    let active = cx.active_window().and_then(|window| window.downcast::<Workbench>());
-    let frontmost = || cx.window_stack().unwrap_or_else(|| cx.windows()).into_iter().find_map(|window| window.downcast::<Workbench>());
-    active.or_else(frontmost)
+/// The window menu actions go to: the active workbench or editor window, else the frontmost workbench window, else
+/// any (a platform without a window stack).
+fn menu_window(cx: &App) -> Option<AnyWindowHandle> {
+    let ours = |window: &AnyWindowHandle| window.downcast::<Workbench>().is_some() || window.downcast::<AuxiliaryWindow>().is_some();
+    let frontmost = || cx.window_stack().unwrap_or_else(|| cx.windows()).into_iter().find(|window| window.downcast::<Workbench>().is_some());
+    cx.active_window().filter(ours).or_else(frontmost)
+}
+
+/// Runs `run` on the workbench of `window` with that window.
+fn update_menu_window(window: AnyWindowHandle, cx: &mut App, run: impl FnOnce(&mut Workbench, &mut Window, &mut Context<Workbench>)) {
+    let _ = window.update(cx, |_, window, cx| {
+        let Some(workbench) = window_workbench(window, cx) else { return };
+        workbench.update(cx, |workbench, cx| run(workbench, window, cx));
+    });
 }
 
 impl Workbench {

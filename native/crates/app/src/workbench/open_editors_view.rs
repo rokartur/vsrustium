@@ -425,7 +425,7 @@ impl Workbench {
                     drop(workbench.close_editors(vec![index], window, cx));
                 }
             }))
-            .on_drag(self.dragged_tab(group, index), |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+            .on_drag(self.dragged_tab(group, index, cx), |dragged, _, _, cx| cx.new(|_| dragged.clone()))
             .on_drop(cx.listener(move |workbench, dragged: &DraggedTab, window, cx| workbench.move_dragged_tab(dragged, group, Some(index), window, cx)));
         row.into_any_element()
     }
