@@ -1203,16 +1203,25 @@ impl Workbench {
         let left = self.arrangement().side_bar == layout::Position::Left;
         let hover = HoverOptions::composite_bar(if left { HoverPosition::Right } else { HoverPosition::Left });
         let inactive = self.color("activityBar.inactiveForeground");
-        let items = side_bar::VIEW_CONTAINERS.map(|(icon, _, title, command, view)| {
+        let containers = side_bar::VIEW_CONTAINERS.into_iter().filter(|(_, _, _, command, _)| !self.container_hidden_if_empty(command));
+        let items: Vec<_> = containers.map(|(icon, _, title, command, view)| {
             let active = view.is_some_and(|view| self.side_bar_view == view) && self.side_bar_visible();
             let icon = if active { self.active_view_icon(icon) } else { self.icon(icon, 36., 24., inactive) };
             icon.id(command)
+                .debug_selector(move || command.to_owned())
                 .cursor_pointer()
                 .child(self.action_hover(title, command, hover))
                 .relative()
                 .children(self.container_activity_badge(command))
                 .when(view.is_some(), |icon| icon.on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, command, event, window, cx))))
-        });
+                // compositeBar.ts `CompositeBarDndCallbacks.drop` on an item: the view moves into that container.
+                .when(command != "workbench.view.extensions", |icon| {
+                    icon.on_drop(cx.listener(move |workbench, dragged: &view_panes::DraggedPane, _, cx| {
+                        cx.stop_propagation();
+                        workbench.drop_view_on_container(dragged.id, command, cx);
+                    }))
+                })
+        }).collect();
         div()
             .w(px(44.))
             .flex()
@@ -1302,20 +1311,31 @@ impl Workbench {
             return self.side_bar_frame().text_color(foreground).child(title).child(self.extensions_view(window, cx));
         }
         if self.side_bar_view == SideBarView::Search {
-            let title = self.side_bar_title("Search").child(self.search_title_actions(cx));
-            return self.side_bar_frame().text_color(foreground).child(title).child(self.search_view(window, cx));
+            let container = self.view_pane_container(view_panes::PaneContainer::Search, "Search", vec![self.search_view_pane(window, cx)], window, cx);
+            let merged = self.panes(view_panes::PaneContainer::Search).view.as_ref().is_some_and(|view| view.ids().len() == 1);
+            return container.when(!merged, |container| container.child(div().h(px(5.)).flex_none()));
         }
         if self.side_bar_view == SideBarView::Debug {
-            return self.debug_side_bar(window, cx).children(self.contributed_sections_of("debug", window, cx));
+            return self.debug_side_bar(window, cx);
         }
         if self.side_bar_view == SideBarView::Testing {
-            return self.testing_side_bar(cx).children(self.contributed_sections_of("test", window, cx));
+            return self.testing_side_bar(cx).children(self.testing_contributed_sections(window, cx));
         }
+        let has_folder = self.folder.as_ref().is_some_and(|tree| !tree.workspace.folders.is_empty());
+        self.explorer_view_container(window, cx)
+            // shortcut: extension webview views sit below the Explorer's panes, not in view_panes.rs; milestone 11 moves them in.
+            .when(has_folder, |container| container.children(self.webview_view_panes(cx)))
+            // The pane view is laid out 5px shorter than the side bar content.
+            .child(div().h(px(5.)).flex_none())
+    }
+
+    /// The folder's view with its tree, or the empty window's view.
+    pub(in crate::workbench) fn folder_view_pane(&self, window: &Window, cx: &mut Context<Self>) -> view_panes::ViewPane {
         // explorerViewlet.ts: the empty view shows while `workspaceFolderCount` is 0, in an empty workspace too.
         let Some(tree) = self.folder.as_ref().filter(|tree| !tree.workspace.folders.is_empty()) else {
-            let empty = view_panes::ViewPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, show_actions: false, body: self.empty_view(window, cx).into_any_element() };
-            return self.explorer_view_container(empty, window, cx).child(div().h(px(5.)).flex_none());
+            return view_panes::ViewPane { id: view_panes::EMPTY_VIEW, title: "No Folder Opened".into(), description: None, actions: None, show_actions: false, body: self.empty_view(window, cx).into_any_element() };
         };
+        let foreground = self.foreground_or("sideBar.foreground");
         // explorerviewlet.css: in high contrast an explorer item has a 20px line from the row top, 1px above center.
         let label_line = if self.theme.kind.is_high_contrast() { 20. } else { 22. };
         let edit_focused = self.explorer.input_focus.is_focused(window);
@@ -1523,7 +1543,7 @@ impl Workbench {
         // explorerView.ts `setEditable`: no horizontal scrolling while a name is edited.
         let horizontal = self.horizontal_scrolling(list_scroll::ListId::Explorer) && self.explorer.edit.is_none();
         let explorer_focused = self.explorer.focus.is_focused(window);
-        self.explorer_view_container(view_panes::ViewPane { id: view_panes::FILE_VIEW, title: folder_name, description: None, actions: None, show_actions: explorer_focused, body:
+        view_panes::ViewPane { id: view_panes::FILE_VIEW, title: folder_name, description: None, actions: None, show_actions: explorer_focused, body:
                 div().id("explorer-pane").relative().flex_1().min_h_0().flex().flex_col()
                 .child(
                 div()
@@ -1544,21 +1564,13 @@ impl Workbench {
                     // `horizontalScrolling`: unwrapped rows as wide as the widest, at least the view.
                     .child(div().flex_none().flex().flex_col().when(horizontal, |rows| rows.self_start().min_w_full().whitespace_nowrap()).children(rows))
                     .child(self.explorer_empty_area(cx)),
-                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.high_contrast_list_outline(tree_focused, tree.focused.is_some())).children(self.explorer_find_widget(window, cx)).into_any_element() }, window, cx)
-            // shortcut: extension webview views sit below the Explorer's panes, not in view_panes.rs; milestone 11 moves them in.
-            .children(self.webview_view_panes(cx))
-            // The pane view is laid out 5px shorter than the side bar content.
-            .child(div().h(px(5.)).flex_none())
+                ).child(self.list_scroll_layer(list_scroll::ListId::Explorer, cx)).children(sticky_container).children(self.high_contrast_list_outline(tree_focused, tree.focused.is_some())).children(self.explorer_find_widget(window, cx)).into_any_element() }
     }
 
-    /// The Explorer's `ViewPaneContainer`: `first` (the folder's or the empty window's view), Outline and Timeline.
-    fn explorer_view_container(&self, first: view_panes::ViewPane, window: &Window, cx: &mut Context<Self>) -> Div {
-        let outline_focused = self.outline_pane.focus.is_focused(window);
-        let panes = vec![
-            first,
-            view_panes::ViewPane { id: view_panes::OUTLINE_VIEW, title: "Outline".into(), description: None, actions: Some(self.outline_title_actions(window, cx).into_any_element()), show_actions: outline_focused, body: self.outline_pane_body(window, cx) },
-            self.timeline_pane(window, cx),
-        ];
+    /// The Explorer's `ViewPaneContainer`: the folder's or the empty window's view, Outline and Timeline, the ones
+    /// still in it (`layout_view_panes` leaves out the moved ones).
+    fn explorer_view_container(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let panes = vec![self.folder_view_pane(window, cx), self.outline_view_pane(window, cx), self.timeline_pane(window, cx)];
         self.view_pane_container(view_panes::PaneContainer::Explorer, "Explorer", panes, window, cx)
     }
 

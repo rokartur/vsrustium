@@ -54,7 +54,8 @@ impl Workbench {
     /// background, the checked one in the side bar's color and connected to its content.
     fn compact_activity_bar(&self, footer: bool, cx: &mut Context<Self>) -> Div {
         let hover = HoverOptions::composite_bar(if footer { HoverPosition::Above } else { HoverPosition::Below });
-        let tabs = VIEW_CONTAINERS.map(|(_, icon, title, command, view)| {
+        let containers = VIEW_CONTAINERS.into_iter().filter(|(_, _, _, command, _)| !self.container_hidden_if_empty(command));
+        let tabs: Vec<_> = containers.map(|(_, icon, title, command, view)| {
             let active = view.is_some_and(|view| view == self.side_bar_view);
             let color = if active { self.color("activityBarTop.foreground") } else { self.color("activityBarTop.inactiveForeground") };
             self.icon(icon, 36., 16., color)
@@ -64,7 +65,7 @@ impl Workbench {
                 .when(active, |tab| tab.bg(self.color("sideBar.background")).when(footer, |tab| tab.rounded_b(px(7.))).when(!footer, |tab| tab.rounded_t(px(7.))))
                 .child(self.action_hover(title, command, hover))
                 .when(view.is_some(), |tab| tab.on_click(cx.listener(move |workbench, event: &ClickEvent, window, cx| workbench.activity_item_clicked(active, command, event, window, cx))))
-        });
+        }).collect();
         div().h(px(32.)).flex_none().flex().bg(self.tab_strip_background()).children(tabs)
     }
 

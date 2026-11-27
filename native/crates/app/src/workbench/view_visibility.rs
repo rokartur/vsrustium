@@ -9,7 +9,7 @@ use gpui::{Context, Div, MouseButton, MouseDownEvent, Stateful, Window, prelude:
 use serde_json::{Value, json};
 
 use super::Workbench;
-use super::view_panes::{EMPTY_VIEW, FILE_VIEW, OUTLINE_VIEW, TIMELINE_VIEW};
+use super::view_panes::FILE_VIEW;
 use crate::commands::Outcome;
 use crate::menus::MenuAction;
 
@@ -29,6 +29,7 @@ pub(super) fn container_storage_id(container: &str) -> String {
         "explorer" => "workbench.explorer.views.state".into(),
         "scm" => "workbench.scm.views.state".into(),
         "debug" => "workbench.view.debug.state".into(),
+        "search" => "workbench.view.search.state".into(),
         "test" => "workbench.view.extension.test.state".into(),
         generated if super::view_locations::is_generated_container(generated) => format!("{generated}.state"),
         other => format!("workbench.view.extension.{other}.state"),
@@ -67,23 +68,26 @@ impl Workbench {
 
     /// `activeViewDescriptors` of the container in their order, hidden ones included.
     fn container_view_entries(&self, container: &str) -> Vec<ViewEntry> {
-        let mut entries = Vec::new();
-        if container == "explorer" {
-            match self.workspace().is_some_and(|workspace| !workspace.folders.is_empty()) {
-                true => entries.push(ViewEntry { id: FILE_VIEW, name: "Folders".into(), can_toggle: false }),
-                false => entries.push(ViewEntry { id: EMPTY_VIEW, name: "No Folder Opened".into(), can_toggle: true }),
-            }
-        }
         let container_id = match container {
             "explorer" => super::view_locations::EXPLORER_CONTAINER,
             "scm" => super::view_locations::SCM_CONTAINER,
-            other => other,
+            "search" => super::view_locations::SEARCH_CONTAINER,
+            "debug" => super::debug_view::DEBUG_CONTAINER,
+            "test" => super::view_locations::TESTING_CONTAINER,
+            other => self.tree_views.containers.iter().find(|contributed| contributed.key == other).map_or(other, |contributed| contributed.id),
         };
+        let mut entries = Vec::new();
         for view in self.views_in(container_id) {
-            entries.push(ViewEntry { id: view.id, name: view.name.into(), can_toggle: view.id == OUTLINE_VIEW || view.id == TIMELINE_VIEW });
+            // A contributed view lists while its `when` holds, hidden or not.
+            let listed = match self.tree_views.views.iter().find(|tree_view| tree_view.id == view.id) {
+                Some(tree_view) => tree_view.when.as_ref().is_none_or(|when| when.evaluate(&self.context_keys)),
+                None => self.movable_view_shown(&view),
+            };
+            if listed {
+                // explorerViewlet.ts and search.contribution.ts: Folders and Search set `canToggleVisibility: false`.
+                entries.push(ViewEntry { id: view.id, name: view.name.into(), can_toggle: view.id != FILE_VIEW && view.id != super::view_locations::SEARCH_VIEW });
+            }
         }
-        let contributed = self.tree_views.views.iter().filter(|view| view.container == container && view.when.as_ref().is_none_or(|when| when.evaluate(&self.context_keys)));
-        entries.extend(contributed.map(|view| ViewEntry { id: view.id, name: view.name.clone(), can_toggle: true }));
         entries
     }
 

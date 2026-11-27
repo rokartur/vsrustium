@@ -142,6 +142,10 @@ impl SplitView {
     pub fn layout(&mut self, size: f32) {
         let previous = self.size.max(self.content_size);
         self.size = size;
+        // A view container whose views all moved away lays out no view.
+        if self.views.is_empty() {
+            return;
+        }
         match self.proportions.clone() {
             None => {
                 let (low, high) = self.priority_indexes();
@@ -174,7 +178,8 @@ impl SplitView {
     /// `resizeView`: the view takes `size` within its bounds and the others absorb the change, it last.
     pub fn resize_view(&mut self, index: usize, size: f32) {
         let Some(view) = self.views.get_mut(index) else { return };
-        view.size = size.round().clamp(view.min(), view.max().min(self.size));
+        // numbers.ts `clamp`: the minimum wins when the split view is smaller than it (a part before its first paint).
+        view.size = size.round().min(view.max().min(self.size)).max(view.min());
         let others = (0..self.views.len()).filter(|&other| other != index);
         let mut low: Vec<usize> = others.clone().filter(|&other| self.views[other].priority == Priority::Low).collect();
         low.push(index);

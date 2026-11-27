@@ -403,6 +403,11 @@ impl Workbench {
         })
     }
 
+    pub(super) fn search_view_pane(&self, window: &Window, cx: &mut Context<Self>) -> super::view_panes::ViewPane {
+        let body = self.search_view(window, cx).into_any_element();
+        super::view_panes::ViewPane { id: super::view_locations::SEARCH_VIEW, title: "Search".into(), description: None, actions: Some(self.search_title_actions(cx).into_any_element()), show_actions: false, body }
+    }
+
     /// The Search view's content below the title: the widgets, the message line and the results tree.
     pub(super) fn search_view(&self, window: &Window, cx: &mut Context<Self>) -> Div {
         let view = &self.search;

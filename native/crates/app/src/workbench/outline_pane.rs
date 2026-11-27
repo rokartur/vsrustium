@@ -108,6 +108,11 @@ impl Workbench {
         }));
     }
 
+    pub(super) fn outline_view_pane(&self, window: &Window, cx: &mut Context<Self>) -> super::view_panes::ViewPane {
+        let show_actions = self.outline_pane.focus.is_focused(window);
+        super::view_panes::ViewPane { id: super::view_panes::OUTLINE_VIEW, title: "Outline".into(), description: None, actions: Some(self.outline_title_actions(window, cx).into_any_element()), show_actions, body: self.outline_pane_body(window, cx) }
+    }
+
     /// `.outline-pane`: the message, or the tree of the active editor's symbols.
     pub(super) fn outline_pane_body(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         if let Some(body) = self.notebook_outline_pane_body(window, cx) {

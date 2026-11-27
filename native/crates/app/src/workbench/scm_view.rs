@@ -399,6 +399,12 @@ impl Workbench {
     /// provider, then the contributed views. Several repositories, or `scm.alwaysShowRepositories`, show a row per
     /// repository with its children below it (scmViewPane.ts `SCMTreeDataSource.getChildren`).
     pub(in crate::workbench) fn scm_side_bar(&self, window: &Window, cx: &mut Context<Self>) -> Div {
+        let mut panes = vec![self.scm_changes_pane(window, cx)];
+        panes.extend(self.active_scm_provider().filter(|provider| provider.has_history_provider).map(|provider| self.scm_graph_pane(provider, window, cx)));
+        self.view_pane_container(PaneContainer::Scm, "Source Control", panes, window, cx).child(div().h(px(5.)).flex_none())
+    }
+
+    pub(in crate::workbench) fn scm_changes_pane(&self, window: &Window, cx: &mut Context<Self>) -> ViewPane {
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
         let providers = self.visible_scm_providers();
         let show_repositories = providers.len() > 1 || self.setting("scm.alwaysShowRepositories") == json!(true);
@@ -429,9 +435,7 @@ impl Workbench {
                 div().id("scm-list").flex_1().min_h_0().overflow_y_scroll().track_focus(&self.scm.list_focus).children(rows).into_any_element()
             }
         };
-        let mut panes = vec![ViewPane { id: SCM_CHANGES_VIEW, title: "Changes".into(), description: None, actions: Some(actions.into_any_element()), show_actions, body }];
-        panes.extend(self.active_scm_provider().filter(|provider| provider.has_history_provider).map(|provider| self.scm_graph_pane(provider, window, cx)));
-        self.view_pane_container(PaneContainer::Scm, "Source Control", panes, window, cx).child(div().h(px(5.)).flex_none())
+        ViewPane { id: SCM_CHANGES_VIEW, title: "Changes".into(), description: None, actions: Some(actions.into_any_element()), show_actions, body }
     }
 
     /// A repository's input, action button (`scm.showActionButton`) and groups; the groups show when some has

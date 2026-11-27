@@ -12,7 +12,8 @@ use gpui::{
 use serde_json::{Value, json};
 
 use super::Workbench;
-use super::view_locations::{EXPLORER_CONTAINER, SCM_CONTAINER};
+use super::debug_view::{CALL_STACK_VIEW, DEBUG_CONTAINER, LOADED_SCRIPTS_VIEW, VARIABLES_VIEW, WATCH_VIEW};
+use super::view_locations::{EXPLORER_CONTAINER, SCM_CONTAINER, SEARCH_CONTAINER, SEARCH_VIEW};
 use super::view_visibility::container_storage_id;
 use crate::split_view::{SashState, SplitView, View};
 
@@ -36,6 +37,8 @@ pub(super) const SCM_HISTORY_VIEW: &str = "workbench.scm.history";
 pub(super) enum PaneContainer {
     Explorer,
     Scm,
+    Search,
+    Debug,
     /// A container generated for moved views (view_locations.rs), by its id.
     Generated(&'static str),
 }
@@ -46,6 +49,8 @@ impl PaneContainer {
         match self {
             PaneContainer::Explorer => "explorer",
             PaneContainer::Scm => "scm",
+            PaneContainer::Search => "search",
+            PaneContainer::Debug => "debug",
             PaneContainer::Generated(id) => id,
         }
     }
@@ -54,6 +59,8 @@ impl PaneContainer {
         match self {
             PaneContainer::Explorer => EXPLORER_CONTAINER,
             PaneContainer::Scm => SCM_CONTAINER,
+            PaneContainer::Search => SEARCH_CONTAINER,
+            PaneContainer::Debug => DEBUG_CONTAINER,
             PaneContainer::Generated(id) => id,
         }
     }
@@ -67,35 +74,51 @@ pub struct PaneView {
     /// `Pane.expandedSize`: the size an expanded pane last laid out at, which it comes back at.
     expanded_sizes: Vec<Option<f32>>,
     split: SplitView,
+    /// `Orientation.HORIZONTAL`: the panes side by side, sized by width.
+    horizontal: bool,
 }
 
-fn size_limits(expanded: bool) -> (f32, f32) {
+/// The descriptors' `weight`, 20 where they set none.
+fn view_weight(id: &str) -> f32 {
+    match id {
+        VARIABLES_VIEW | SCM_CHANGES_VIEW | SCM_HISTORY_VIEW => 40.,
+        OUTLINE_VIEW | TIMELINE_VIEW | CALL_STACK_VIEW => 30.,
+        WATCH_VIEW => 10.,
+        LOADED_SCRIPTS_VIEW => 5.,
+        _ => 20.,
+    }
+}
+
+/// paneview.ts `minimumSize`: the header and, while expanded, `minimumBodySize` (200 side by side, 120 stacked).
+fn size_limits(expanded: bool, horizontal: bool) -> (f32, f32) {
+    let minimum_body = if horizontal { 200. } else { MINIMUM_BODY_SIZE };
     match expanded {
-        true => (HEADER_SIZE + MINIMUM_BODY_SIZE, f32::INFINITY),
+        true => (HEADER_SIZE + minimum_body, f32::INFINITY),
         false => (HEADER_SIZE, HEADER_SIZE),
     }
 }
 
 impl PaneView {
     /// `addPanes` at their minimum sizes, the first layout, then `restoreViewSizes`: each pane at its stored size,
-    /// else an equal share (`computeInitialSizes` with the default weight of 20) of the container's height, which
-    /// is the pane view's and its bottom gap.
-    pub fn new(height: f32, panes: &[(&'static str, bool, Option<f32>)]) -> Self {
+    /// else its weight's share (`computeInitialSizes`) of the container's height, which is the pane view's and its
+    /// bottom gap.
+    pub fn new(height: f32, panes: &[(&'static str, bool, Option<f32>)], horizontal: bool) -> Self {
         let views = panes.iter().map(|&(_, expanded, _)| {
-            let (minimum, maximum) = size_limits(expanded);
+            let (minimum, maximum) = size_limits(expanded, horizontal);
             View::new(minimum, minimum, maximum)
         });
         let mut split = SplitView::new(height, views.collect());
         split.layout(height);
-        let share = (height + BOTTOM_GAP) / panes.len() as f32;
-        for (index, &(_, _, size)) in panes.iter().enumerate() {
-            split.resize_view(index, size.unwrap_or(share));
+        let total_weight: f32 = panes.iter().map(|&(id, _, _)| view_weight(id)).sum();
+        for (index, &(id, _, size)) in panes.iter().enumerate() {
+            split.resize_view(index, size.unwrap_or((height + BOTTOM_GAP) * view_weight(id) / total_weight));
         }
         let mut pane_view = PaneView {
             ids: panes.iter().map(|&(id, _, _)| id).collect(),
             expanded: panes.iter().map(|&(_, expanded, _)| expanded).collect(),
             expanded_sizes: vec![None; panes.len()],
             split,
+            horizontal,
         };
         pane_view.remember_expanded_sizes();
         pane_view
@@ -103,6 +126,10 @@ impl PaneView {
 
     pub fn ids(&self) -> &[&'static str] {
         &self.ids
+    }
+
+    pub fn is_horizontal(&self) -> bool {
+        self.horizontal
     }
 
     pub fn is_expanded(&self, index: usize) -> bool {
@@ -127,7 +154,7 @@ impl PaneView {
             return false;
         }
         self.expanded[index] = expanded;
-        let (minimum, maximum) = size_limits(expanded);
+        let (minimum, maximum) = size_limits(expanded, self.horizontal);
         self.split.set_limits(index, minimum, maximum);
         let current = self.split.sizes()[index];
         let size = if expanded { self.expanded_sizes[index].unwrap_or(current) } else { current };
@@ -249,15 +276,19 @@ impl Workbench {
         match container {
             PaneContainer::Explorer => &self.explorer_panes,
             PaneContainer::Scm => &self.scm_panes,
-            PaneContainer::Generated(id) => self.generated_panes.get(id).expect("a generated container is laid out before use"),
+            other => self.generated_panes.get(other.container_id()).expect("a container is laid out before use"),
         }
+    }
+
+    fn panes_laid_out(&self, container: PaneContainer) -> bool {
+        matches!(container, PaneContainer::Explorer | PaneContainer::Scm) || self.generated_panes.contains_key(container.container_id())
     }
 
     fn panes_mut(&mut self, container: PaneContainer) -> &mut ContainerPanes {
         match container {
             PaneContainer::Explorer => &mut self.explorer_panes,
             PaneContainer::Scm => &mut self.scm_panes,
-            PaneContainer::Generated(id) => self.generated_panes.entry(id).or_default(),
+            other => self.generated_panes.entry(other.container_id()).or_default(),
         }
     }
 
@@ -268,14 +299,11 @@ impl Workbench {
         let height = side_bar_height - 2. - 32. - compact - BOTTOM_GAP;
         let first = if self.workspace().is_some_and(|workspace| !workspace.folders.is_empty()) { FILE_VIEW } else { EMPTY_VIEW };
         let built_in = [first, OUTLINE_VIEW, TIMELINE_VIEW].into_iter().filter(|&id| id == FILE_VIEW || !self.view_hidden("explorer", id));
-        let built_in: Vec<_> = built_in.filter(|&id| id == first || self.views_in(EXPLORER_CONTAINER).iter().any(|view| view.id == id)).collect();
         // viewsExtensionPoint.ts `showCollapsed`: an extension's view in the Explorer or Source Control starts collapsed.
-        let mut explorer: Vec<_> = built_in.into_iter().map(|id| (id, id != first)).chain(self.shown_tree_views().into_iter().map(|id| (id, true))).collect();
-        explorer.extend(self.moved_views_in(EXPLORER_CONTAINER));
-        self.layout_panes(PaneContainer::Explorer, height, explorer, cx);
+        let explorer: Vec<_> = built_in.map(|id| (id, id != first)).chain(self.shown_tree_views().into_iter().map(|id| (id, true))).collect();
+        self.layout_container(PaneContainer::Explorer, height, explorer, cx);
         if let Some(container) = self.side_bar_container().filter(|container| super::view_locations::is_generated_container(container)) {
-            let views = self.moved_views_in(container);
-            self.layout_panes(PaneContainer::Generated(container), height, views, cx);
+            self.layout_container(PaneContainer::Generated(container), height, Vec::new(), cx);
         }
         let mut scm = Vec::new();
         if !self.view_hidden("scm", SCM_CHANGES_VIEW) {
@@ -286,8 +314,19 @@ impl Workbench {
             scm.push((SCM_HISTORY_VIEW, false));
         }
         scm.extend(self.shown_views_of("scm").into_iter().map(|id| (id, true)));
-        scm.extend(self.moved_views_in(SCM_CONTAINER));
-        self.layout_panes(PaneContainer::Scm, height, scm, cx);
+        self.layout_container(PaneContainer::Scm, height, scm, cx);
+        self.layout_container(PaneContainer::Search, height, vec![(SEARCH_VIEW, false)], cx);
+        let mut debug = self.debug_views();
+        debug.extend(self.shown_views_of("debug").into_iter().map(|id| (id, true)));
+        self.layout_container(PaneContainer::Debug, height, debug, cx);
+    }
+
+    /// The container's own views still in it, then the views moved into it.
+    fn layout_container(&mut self, container: PaneContainer, height: f32, own: Vec<(&'static str, bool)>, cx: &mut Context<Self>) {
+        let id = container.container_id();
+        let mut views: Vec<_> = own.into_iter().filter(|(view, _)| self.stays_in(view, id)).collect();
+        views.extend(self.moved_views_in(id));
+        self.layout_panes(container, height, views, false, cx);
     }
 
     /// The shown views moved into the container from their own, expanded at first.
@@ -298,12 +337,12 @@ impl Workbench {
 
     /// The container's views by id with whether each starts collapsed: viewContainerModel.ts order (stored, else
     /// declared) and collapsed state (stored, else the descriptor's `collapsed`).
-    pub(super) fn layout_panes(&mut self, container: PaneContainer, height: f32, mut descriptors: Vec<(&'static str, bool)>, cx: &mut Context<Self>) {
+    pub(super) fn layout_panes(&mut self, container: PaneContainer, height: f32, mut descriptors: Vec<(&'static str, bool)>, horizontal: bool, cx: &mut Context<Self>) {
         let panes = self.panes_mut(container);
         for &(id, _) in &descriptors {
             panes.focus.entry(id).or_insert_with(|| cx.focus_handle());
         }
-        let laid_out = panes.view.as_ref().is_some_and(|view| view.ids().len() == descriptors.len() && descriptors.iter().all(|(id, _)| view.ids().contains(id)));
+        let laid_out = panes.view.as_ref().is_some_and(|view| view.horizontal == horizontal && view.ids().len() == descriptors.len() && descriptors.iter().all(|(id, _)| view.ids().contains(id)));
         if laid_out {
             panes.view.as_mut().expect("checked above").layout(height);
             return;
@@ -324,7 +363,7 @@ impl Workbench {
             }
             pane_states.push((id, !state["collapsed"].as_bool().unwrap_or(collapsed_by_default), size));
         }
-        panes.view = Some(PaneView::new(height, &pane_states));
+        panes.view = Some(PaneView::new(height, &pane_states, horizontal));
     }
 
     /// viewContainerModel.ts `updateState`: collapsed and size per view in the workspace, order in the profile.
@@ -349,7 +388,7 @@ impl Workbench {
 
     /// Whether the view's body shows: expanded, or merged into its container as its only view.
     pub(super) fn view_pane_expanded(&self, container: PaneContainer, id: &str) -> bool {
-        if let PaneContainer::Generated(generated) = container && !self.generated_panes.contains_key(generated) {
+        if !self.panes_laid_out(container) {
             return false;
         }
         let Some(view) = self.panes(container).view.as_ref() else { return false };
@@ -358,7 +397,7 @@ impl Workbench {
 
     /// `viewsService.openView`: expands the view's pane once it is laid out.
     pub(super) fn expand_pane(&mut self, container: PaneContainer, id: &str, cx: &mut Context<Self>) {
-        if let PaneContainer::Generated(generated) = container && !self.generated_panes.contains_key(generated) {
+        if !self.panes_laid_out(container) {
             return;
         }
         let index = self.panes(container).view.as_ref().and_then(|view| view.ids().iter().position(|&pane| pane == id));
@@ -454,41 +493,52 @@ impl Workbench {
         let (ids, sizes, sash_states) = (view.ids().to_vec(), view.sizes(), view.sash_states());
         let expanded: Vec<bool> = (0..ids.len()).map(|index| view.is_expanded(index)).collect();
         let dragging_sash = view.dragged_sash().is_some();
+        let horizontal = view.is_horizontal();
         let mut elements = Vec::new();
         for (index, (&id, pane)) in ids.iter().zip(ordered).enumerate() {
             let header = self.pane_header(container, index, id, &pane.title, pane.description, pane.actions.filter(|_| expanded[index]), pane.show_actions, expanded[index], ids.len(), window, cx);
-            elements.push(self.pane(container, id, sizes[index], header, expanded[index].then_some(pane.body), cx));
+            elements.push(self.pane(container, id, sizes[index], header, expanded[index].then_some(pane.body), horizontal, cx));
         }
-        let mut top = 0.;
+        let mut boundary = 0.;
         let mut sashes = Vec::new();
         for (index, state) in sash_states.into_iter().enumerate() {
-            top += sizes[index];
-            sashes.push(self.pane_sash(container, index, state, top, cx));
+            boundary += sizes[index];
+            sashes.push(self.pane_sash(container, index, state, boundary, horizontal, cx));
         }
+        let size = px(sizes.iter().sum());
         div()
             .relative()
-            .h(px(sizes.iter().sum()))
+            .when(horizontal, |view| view.w(size).h_full().flex_row())
+            .when(!horizontal, |view| view.h(size).flex_col())
             .flex_none()
             .flex()
-            .flex_col()
             .children(elements)
             .children(sashes)
             .when(dragging_sash, |view| view.child(self.pane_sash_drag(container, cx)))
     }
 
     /// `.pane` with its body under the header while expanded, and the drop overlay of a dragged header.
-    fn pane(&self, container: PaneContainer, id: &'static str, size: f32, header: Div, body: Option<AnyElement>, cx: &mut Context<Self>) -> AnyElement {
+    /// Side by side (`horizontal`), a pane after the first has the section border on its left, and a collapsed one is
+    /// its header turned into a column (paneview.css `.pane.horizontal:not(.expanded)`).
+    #[allow(clippy::too_many_arguments)]
+    fn pane(&self, container: PaneContainer, id: &'static str, size: f32, header: Div, body: Option<AnyElement>, horizontal: bool, cx: &mut Context<Self>) -> AnyElement {
         let drop = self.panes(container).drop.filter(|(target, _)| *target == id && cx.has_active_drag()).map(|(_, below)| below);
         let overlay = self.color("sideBar.dropBackground");
         let outline = self.theme.color("contrastActiveBorder");
+        let first = self.panes(container).view.as_ref().is_some_and(|view| view.ids().first() == Some(&id));
+        let left_border = self.theme.color("panelSection.border").filter(|_| horizontal && !first);
+        let collapsed_column = horizontal && body.is_none();
         div()
             .id(id)
             .group(id)
             .relative()
-            .h(px(size))
+            .when(horizontal, |pane| pane.w(px(size)).h_full())
+            .when(!horizontal, |pane| pane.h(px(size)))
+            .when_some(left_border, |pane, border| pane.border_l_1().border_color(border))
             .flex_none()
             .flex()
-            .flex_col()
+            .when(collapsed_column, |pane| pane.flex_row())
+            .when(!collapsed_column, |pane| pane.flex_col())
             .overflow_hidden()
             .child(header)
             .when_some(body, |pane, body| pane.child(div().flex_1().min_h_0().flex().flex_col().child(body)))
@@ -497,7 +547,10 @@ impl Workbench {
                     return;
                 }
                 let dragged = event.drag(cx);
-                let below = event.event.position.y >= event.bounds.center().y;
+                let below = match horizontal {
+                    true => event.event.position.x >= event.bounds.center().x,
+                    false => event.event.position.y >= event.bounds.center().y,
+                };
                 let accepts = dragged.container == container || workbench.can_move_view(dragged.id);
                 let drop = (accepts && dragged.id != id).then_some((id, below));
                 let panes = workbench.panes_mut(container);
@@ -515,8 +568,10 @@ impl Workbench {
                 }
             }))
             .when_some(drop, |pane, below| {
-                let half = div().absolute().left_0().right_0().h(gpui::relative(0.5)).bg(overlay);
-                let half = if below { half.bottom_0() } else { half.top_0() };
+                let half = match horizontal {
+                    true => div().absolute().top_0().bottom_0().w(gpui::relative(0.5)).bg(overlay).when(below, |half| half.right_0()).when(!below, |half| half.left_0()),
+                    false => div().absolute().left_0().right_0().h(gpui::relative(0.5)).bg(overlay).when(below, |half| half.bottom_0()).when(!below, |half| half.top_0()),
+                };
                 pane.child(half.when_some(outline, |half, color| half.border_2().border_dashed().border_color(color)))
             })
             .into_any_element()
@@ -560,7 +615,10 @@ impl Workbench {
             || self.setting("workbench.view.alwaysShowHeaderActions") == json!(true);
         let foreground = self.foreground_or("sideBarSectionHeader.foreground");
         let background = self.color("sideBar.background");
-        let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| index > 0);
+        let horizontal = self.panes(container).view.as_ref().is_some_and(PaneView::is_horizontal);
+        // paneview.ts `style`: side by side the border is the pane's left one, not the header's top one.
+        let border = self.theme.color("sideBarSectionHeader.border").or(self.theme.color("surface.border")).filter(|_| index > 0 && !horizontal);
+        let column = horizontal && !expanded;
         let chevron = if expanded { "chevron-down" } else { "chevron-right" };
         let dragged = DraggedPane {
             container,
@@ -572,12 +630,14 @@ impl Workbench {
             background,
             foreground,
         };
-        div().flex_none().child(
+        div().flex_none().when(column, |header| header.h_full()).child(
             div()
                 .id(("pane-header", index))
+                .debug_selector(move || format!("pane-header-{id}"))
                 .track_focus(focus)
                 .relative()
                 .h(px(HEADER_SIZE))
+                .when(column, |header| header.h_full().w(px(HEADER_SIZE)).flex_col().pt(px(2.)))
                 // paneview.css: .pane-header is cursor: pointer.
                 .cursor_pointer()
                 .mx(px(4.))
@@ -635,8 +695,8 @@ impl Workbench {
         )
     }
 
-    /// A horizontal `.monaco-sash` between two panes (sash.css): 4px centered on the boundary.
-    fn pane_sash(&self, container: PaneContainer, index: usize, state: SashState, boundary: f32, cx: &mut Context<Self>) -> AnyElement {
+    /// The `.monaco-sash` between two panes (sash.css): 4px centered on the boundary, vertical side by side.
+    fn pane_sash(&self, container: PaneContainer, index: usize, state: SashState, boundary: f32, horizontal: bool, cx: &mut Context<Self>) -> AnyElement {
         if state == SashState::Disabled {
             return div().into_any_element();
         }
@@ -644,18 +704,19 @@ impl Workbench {
         let dragged = panes.view.as_ref().and_then(PaneView::dragged_sash);
         let active = panes.hovered_sash == Some(index) || dragged == Some(index);
         let hover_border = self.theme.color("sash.hoverBorder").unwrap_or(self.color("focusBorder"));
-        let cursor = match state {
-            SashState::AtMinimum => gpui::CursorStyle::ResizeDown,
-            SashState::AtMaximum => gpui::CursorStyle::ResizeUp,
-            _ => gpui::CursorStyle::ResizeRow,
+        let cursor = match (state, horizontal) {
+            (SashState::AtMinimum, false) => gpui::CursorStyle::ResizeDown,
+            (SashState::AtMaximum, false) => gpui::CursorStyle::ResizeUp,
+            (_, false) => gpui::CursorStyle::ResizeRow,
+            (SashState::AtMinimum, true) => gpui::CursorStyle::ResizeRight,
+            (SashState::AtMaximum, true) => gpui::CursorStyle::ResizeLeft,
+            (_, true) => gpui::CursorStyle::ResizeColumn,
         };
         div()
             .id(("pane-sash", index))
             .absolute()
-            .left_0()
-            .right_0()
-            .top(px(boundary - 2.))
-            .h(px(4.))
+            .when(horizontal, |sash| sash.top_0().bottom_0().left(px(boundary - 2.)).w(px(4.)))
+            .when(!horizontal, |sash| sash.left_0().right_0().top(px(boundary - 2.)).h(px(4.)))
             .cursor(cursor)
             .when(active, |sash| sash.bg(hover_border))
             .on_hover(cx.listener(move |workbench, hovered: &bool, window, cx| {
@@ -686,7 +747,8 @@ impl Workbench {
                 cx.listener(move |workbench, event: &MouseDownEvent, _, cx| {
                     cx.stop_propagation();
                     let view = workbench.panes_mut(container).view.as_mut().expect("sashes are drawn with the panes");
-                    view.start_sash_drag(index, f32::from(event.position.y), event.modifiers.alt);
+                    let position = if horizontal { event.position.x } else { event.position.y };
+                    view.start_sash_drag(index, f32::from(position), event.modifiers.alt);
                     cx.notify();
                 }),
             )
@@ -703,7 +765,8 @@ impl Workbench {
                 window.on_mouse_event(move |event: &MouseMoveEvent, _, _, cx| {
                     moved.update(cx, |workbench, cx| {
                         let view = workbench.panes_mut(container).view.as_mut().expect("a sash drags in the panes");
-                        view.drag_sash(f32::from(event.position.y), event.modifiers.alt);
+                        let position = if view.is_horizontal() { event.position.x } else { event.position.y };
+                        view.drag_sash(f32::from(position), event.modifiers.alt);
                         cx.notify();
                     });
                 });
@@ -733,13 +796,13 @@ mod tests {
 
     #[test]
     fn collapsed_panes_are_their_headers_and_the_folder_takes_the_rest() {
-        let view = PaneView::new(662., &EXPLORER);
+        let view = PaneView::new(662., &EXPLORER, false);
         assert_eq!(view.sizes(), vec![606., 28., 28.]);
     }
 
     #[test]
     fn expanding_outline_and_timeline_gives_each_its_header_and_minimum_body_as_the_reference_does() {
-        let mut view = PaneView::new(662., &EXPLORER);
+        let mut view = PaneView::new(662., &EXPLORER, false);
         assert!(view.set_expanded(1, true));
         assert!(view.set_expanded(2, true));
         assert_eq!(view.sizes(), vec![366., 148., 148.]);
@@ -748,7 +811,7 @@ mod tests {
 
     #[test]
     fn a_collapsed_pane_comes_back_at_its_expanded_size() {
-        let mut view = PaneView::new(662., &EXPLORER);
+        let mut view = PaneView::new(662., &EXPLORER, false);
         view.set_expanded(1, true);
         view.start_sash_drag(0, 486., false);
         view.drag_sash(406., false);
@@ -763,7 +826,7 @@ mod tests {
 
     #[test]
     fn stored_sizes_restore_and_moved_panes_keep_their_sizes() {
-        let mut view = PaneView::new(662., &[(FILE_VIEW, true, Some(300.)), (OUTLINE_VIEW, true, Some(334.)), (TIMELINE_VIEW, false, Some(28.))]);
+        let mut view = PaneView::new(662., &[(FILE_VIEW, true, Some(300.)), (OUTLINE_VIEW, true, Some(334.)), (TIMELINE_VIEW, false, Some(28.))], false);
         assert_eq!(view.sizes(), vec![300., 334., 28.]);
         view.move_pane(2, 0);
         assert_eq!(view.ids(), [TIMELINE_VIEW, FILE_VIEW, OUTLINE_VIEW]);
@@ -774,7 +837,7 @@ mod tests {
     // The reference's Graph header sits 3px above the middle: the share counts the container's 5px bottom gap.
     #[test]
     fn equal_shares_are_of_the_container_with_its_bottom_gap() {
-        let view = PaneView::new(662., &[(SCM_CHANGES_VIEW, true, None), (SCM_HISTORY_VIEW, true, None)]);
+        let view = PaneView::new(662., &[(SCM_CHANGES_VIEW, true, None), (SCM_HISTORY_VIEW, true, None)], false);
         assert_eq!(view.sizes(), vec![328., 334.]);
     }
 
