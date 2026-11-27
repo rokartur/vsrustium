@@ -88,6 +88,28 @@ fn the_page_has_the_focus_until_a_snippet_is_pressed(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_click_on_a_snippet_focuses_it_and_one_on_the_page_takes_the_focus_back(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = workbench(cx);
+    let blocks = parse(CONTENT);
+    let css = blocks.iter().position(|block| matches!(block, Block::Code { .. })).unwrap();
+    let bounds = workbench.read_with(cx, |workbench, _| workbench.playground.scroll.bounds_for_item(css + 1).unwrap());
+    // Line 3 of an unfocused snippet under the mouse while the page, a 1 line model, is the active editor.
+    cx.simulate_mouse_move(bounds.origin + point(px(200.), px(18. * 2.5)), None, gpui::Modifiers::none());
+    cx.run_until_parked();
+    // Line 2 of the CSS snippet, right of its text.
+    cx.simulate_click(bounds.origin + point(px(600.), px(18. * 1.5)), gpui::Modifiers::none());
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, _| {
+        assert_eq!(workbench.editors.active().unwrap().document().language_id, "css");
+        assert_eq!(workbench.editors.active().unwrap().selection().head, crate::editor::Position { line: 1, column: 73 });
+        assert_eq!(workbench.key_context(window)["editorTextFocus"], true);
+    });
+    cx.simulate_click(bounds.origin + point(px(600.), px(-6.)), gpui::Modifiers::none());
+    cx.run_until_parked();
+    workbench.update_in(cx, |workbench, window, _| assert_eq!(workbench.key_context(window).get("interactivePlaygroundFocus"), Some(&json!(true))));
+}
+
+#[gpui::test]
 fn the_arrow_and_page_commands_scroll_the_page(cx: &mut TestAppContext) {
     let (workbench, cx, _) = workbench(cx);
     let top = |workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContext| workbench.read_with(cx, |workbench, _| workbench.playground_scroll_top());

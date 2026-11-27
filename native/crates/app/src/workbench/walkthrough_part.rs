@@ -246,7 +246,7 @@ impl Workbench {
             .child(div().flex_none());
         let mut margin_bottom = 0.;
         for (element, (margin_top, margin_below)) in children {
-            page = page.child(div().flex_none().mt(px(f32::max(margin_top, margin_bottom))).child(element));
+            page = page.child(div().flex_none().w_full().flex().flex_col().mt(px(f32::max(margin_top, margin_bottom))).child(element));
             margin_bottom = margin_below;
         }
         page = page.child(div().flex_none().h(px(margin_bottom)));
@@ -285,7 +285,7 @@ impl Workbench {
     #[allow(clippy::too_many_arguments)]
     fn page_block(&self, id: &str, block: &Block, snippets: &[&OpenEditor], next_snippet: &mut usize, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match block {
-            Block::Paragraph(inline) => self.page_inline(id, inline, cx).into_any_element(),
+            Block::Paragraph(inline) => div().w_full().child(self.page_inline(id, inline, FontWeight::NORMAL, cx)).into_any_element(),
             Block::Heading(level, inline) => {
                 let (size, line_height) = match level {
                     1 => (40., 48.),
@@ -295,7 +295,7 @@ impl Workbench {
                 };
                 // walkThroughPart.css: h1 to h3 `font-weight: lighter`. shortcut: h4's uppercase is left out, the page has none.
                 let weight = if *level < 4 { FontWeight::THIN } else { FontWeight::NORMAL };
-                div().text_size(px(size)).line_height(px(line_height)).font_weight(weight).child(self.page_inline(id, inline, cx)).into_any_element()
+                div().text_size(px(size)).line_height(px(line_height)).child(self.page_inline(id, inline, weight, cx)).into_any_element()
             }
             Block::Code { .. } => {
                 let snippet = snippets.get(*next_snippet).copied();
@@ -306,19 +306,19 @@ impl Workbench {
                 }
             }
             Block::List { start, items } => {
-                let mut list = div().flex().flex_col().pl(px(40.));
+                let mut list = div().w_full().flex().flex_col().pl(px(40.));
                 for (index, item) in items.iter().enumerate() {
                     let marker = match start {
                         Some(first) => format!("{}.", first + index as u64),
                         None => "\u{2022}".to_owned(),
                     };
-                    let mut content = div().flex().flex_col();
+                    let mut content = div().w_full().flex().flex_col();
                     for (block_index, block) in item.iter().enumerate() {
                         // A tight item's text has no paragraph margins.
                         content = content.child(self.page_block(&format!("{id}-{index}-{block_index}"), block, snippets, next_snippet, window, cx));
                     }
                     let marker = div().absolute().left(px(-40.)).w(px(36.)).flex().justify_end().child(marker);
-                    list = list.child(div().relative().child(marker).child(content));
+                    list = list.child(div().w_full().relative().child(marker).child(content));
                 }
                 list.into_any_element()
             }
@@ -346,8 +346,8 @@ impl Workbench {
     }
 
     /// `.walkThroughEditorContainer`: the snippet's editor `max(lineCount + 1, 4)` lines high, on
-    /// `walkThrough.embeddedEditorBackground`; a press on another snippet focuses it first, in the capture phase,
-    /// so its line's own press places the cursor there.
+    /// `walkThrough.embeddedEditorBackground`. Another snippet's lines answer the mouse for the focused editor, so a
+    /// cover takes its presses: it focuses the snippet and clicks there.
     fn snippet_editor(&self, editor: &OpenEditor, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let height = snippet_height(editor, self.editor_metrics(editor, window).line_height);
         let active = self.editors.active().is_some_and(|active| std::ptr::eq(active, editor));
@@ -358,28 +358,52 @@ impl Workbench {
             .overflow_hidden()
             .bg(self.color("walkThrough.embeddedEditorBackground"))
             .when(self.theme.kind.is_high_contrast(), |area| area.border_1().border_color(self.color("contrastBorder")))
-            .when(!active, |area| {
-                area.capture_any_mouse_down(cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
-                    if event.button == MouseButton::Left {
-                        workbench.focus_snippet(path.clone(), window, cx);
-                    }
-                }))
-            })
+            .relative()
             // The editor keeps its press; the page would take the focus from it.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(self.embedded_code_editor(editor, window, cx))
+            .when(!active, |area| {
+                let cover = div().absolute().inset_0().block_mouse_except_scroll().on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |workbench, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        workbench.focus_snippet(path.clone(), window, cx);
+                        workbench.click_snippet_at(event, window, cx);
+                    }),
+                );
+                area.child(cover)
+            })
     }
 
-    /// A paragraph's runs: `code` and `.shortcut` in the monospace font in `textPreformat` colors, links in
+    /// The focused snippet's press, as its line would take it; the snippet's box is where the page laid it out.
+    fn click_snippet_at(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.editors.active().filter(|editor| editor.document().scheme == SNIPPET_SCHEME) else { return };
+        let Some(snippet) = self.snippet_models().iter().position(|snippet| std::ptr::eq(*snippet, editor)) else { return };
+        let Some(child) = snippet_block_index(&parse(CONTENT), snippet) else { return };
+        // Child 0 is the spacer before the blocks; layout bounds leave out the scroll offset.
+        let Some(bounds) = self.playground.scroll.bounds_for_item(child + 1) else { return };
+        let origin = bounds.origin + self.playground.scroll.offset();
+        let metrics = self.editor_metrics(editor, window);
+        let last_line = editor.view_line_count() - 1;
+        let view_line = ((f32::from(event.position.y - origin.y) + editor.scroll.top) / metrics.line_height).max(0.) as usize;
+        let line = editor.model_line(view_line.min(last_line));
+        let x = ((f32::from(event.position.x - origin.x) - metrics.content_left() + editor.scroll.left) / metrics.char_width).max(0.);
+        let visible = editor.line_layout(line).model_visible(x);
+        self.click_text(line, visible, event.modifiers, event.modifiers.shift, event.click_count, cx);
+        cx.notify();
+    }
+
+    /// A paragraph's runs in `weight`: `code` and `.shortcut` in the monospace font in `textPreformat` colors, links in
     /// `textLink.foreground`; a `#heading` link scrolls the page to it, others open.
-    fn page_inline(&self, id: &str, inline: &Inline, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    fn page_inline(&self, id: &str, inline: &Inline, weight: FontWeight, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let foreground = self.color("foreground");
         let link_color = self.color("textLink.foreground");
         let (code_color, code_background) = (self.color("textPreformat.foreground"), self.color("textPreformat.background"));
         let mut runs = Vec::new();
         let mut links = Vec::new();
         let mut offset = 0;
-        let plain = |len: usize| TextRun { len, font: gpui::font(UI_FONT), color: foreground.into(), background_color: None, underline: None, strikethrough: None };
+        let font = gpui::Font { weight, ..gpui::font(UI_FONT) };
+        let plain = |len: usize| TextRun { len, font: font.clone(), color: foreground.into(), background_color: None, underline: None, strikethrough: None };
         for span in &inline.spans {
             if span.range.start > offset {
                 runs.push(plain(span.range.start - offset));

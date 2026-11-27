@@ -474,6 +474,11 @@ impl Workbench {
         if document.scheme == crate::notebook::NOTEBOOK_EDITOR_SCHEME && self.host.notebooks.interactives.iter().any(|interactive| interactive.repl && interactive.notebook == document.path.to_string_lossy()) {
             return Some(self.icon("debug-line-by-line", 16., 16., foreground).h(px(line_height)));
         }
+        // walkThroughPart.css: the playground's `vs_code_editor_walkthrough.md` file icon is code-icon.svg.
+        if document.scheme == super::welcome_page::WALKTHROUGH_SCHEME && self.is_playground(editor) {
+            let icon = self.app_root.join("src/vs/workbench/browser/media/code-icon.svg");
+            return Some(div().flex().items_center().h(px(line_height)).child(gpui::img(icon).size(px(16.))));
+        }
         // `ExtensionsInput.getIcon`.
         if document.scheme == super::extension_editor::EXTENSION_EDITOR_SCHEME {
             return Some(self.icon("extensions", 16., 16., foreground).h(px(line_height)));
@@ -1743,7 +1748,7 @@ impl Workbench {
         }
     }
 
-    fn click_text(&mut self, line: usize, visible: f32, modifiers: gpui::Modifiers, select: bool, click_count: usize, cx: &mut Context<Self>) {
+    pub(super) fn click_text(&mut self, line: usize, visible: f32, modifiers: gpui::Modifiers, select: bool, click_count: usize, cx: &mut Context<Self>) {
         let column_selection = self.setting("editor.columnSelection") == json!(true);
         // viewController.ts `_hasMulticursorModifier` and `_hasNonMulticursorModifier`; `ctrlCmd` is Cmd on macOS.
         let (multi_cursor, non_multi_cursor) = match self.multi_cursor_modifier_is_cmd() {
@@ -2149,7 +2154,7 @@ impl Workbench {
 pub(super) struct EditorMetrics {
     pub(super) font_size: f32,
     pub(super) line_height: f32,
-    char_width: f32,
+    pub(super) char_width: f32,
     line_numbers: LineNumbers,
     line_numbers_width: f32,
     /// The line decorations lane: lineDecorationsWidth plus the folding controls, without them in a diff editor.
