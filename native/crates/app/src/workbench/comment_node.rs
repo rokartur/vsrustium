@@ -200,9 +200,12 @@ impl Workbench {
             };
             let button = div()
                 .id(gpui::SharedString::from(format!("comment-edit-action-{id}")))
-                .h(px(26.))
+                .h(px(22.))
                 .ml(px(5.))
-                .px(px(8.))
+                // button.css `.monaco-text-button.small` (CommentFormActions' `small: true`).
+                .px(px(6.))
+                .text_size(px(11.))
+                .line_height(px(14.))
                 .flex()
                 .items_center()
                 .rounded(px(4.))
