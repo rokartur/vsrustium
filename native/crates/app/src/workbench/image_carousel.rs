@@ -190,7 +190,7 @@ mod tests {
         }
         let names: Vec<String> = media_in_folder(&dir).unwrap().iter().map(|path| path.file_name().unwrap().to_string_lossy().into_owned()).collect();
         assert_eq!(names, ["a.mp4", "b.PNG", "d.svg"]);
-        let page = carousel_page(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").as_path(), &[dir.join("</script>.png")], 0);
+        let page = carousel_page(Path::new(env!("VSCODE_SRC")).to_path_buf().as_path(), &[dir.join("</script>.png")], 0);
         assert!(!page.contains("{{"));
         assert!(!page.contains("\"</script>"));
         std::fs::remove_dir_all(dir).unwrap();
@@ -198,7 +198,7 @@ mod tests {
 
     #[gpui::test]
     fn images_preview_opens_in_the_modal_group(cx: &mut gpui::TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));

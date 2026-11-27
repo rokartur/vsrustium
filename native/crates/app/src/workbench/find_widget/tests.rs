@@ -13,7 +13,7 @@ use crate::workbench::Workbench;
 
 #[gpui::test]
 fn find_on_type_and_cursor_move_on_type_off_wait_for_enter(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-find-on-type-{}", std::process::id()));
@@ -54,7 +54,7 @@ fn find_on_type_and_cursor_move_on_type_off_wait_for_enter(cx: &mut TestAppConte
 
 #[gpui::test]
 fn cursor_move_on_type_off_keeps_the_cursor_while_typing(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-cursor-move-on-type-{}", std::process::id()));
@@ -81,7 +81,7 @@ fn cursor_move_on_type_off_keeps_the_cursor_while_typing(cx: &mut TestAppContext
 
 #[gpui::test]
 fn keys_typed_right_after_cmd_f_go_to_the_find_input(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-find-keys-{}", std::process::id()));

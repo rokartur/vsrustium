@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Downloads product.json `builtInExtensions` (js-debug, js-debug-companion, vscode-js-profile-table) from Open VSX into
-# .build/builtInExtensions, where the app scans them as upstream's dev build does. All three are MIT (port/notes.md).
+# .build/builtInExtensions of the VS Code tree (VSCODE_SRC), where the app scans them as upstream's dev build does. All
+# three are MIT (port/notes.md).
 set -euo pipefail
-cd "$(dirname "$0")/../.."
+source "$(dirname "$0")/vscode-src.sh"
+cd "$VSCODE_SRC"
 mkdir -p .build/builtInExtensions
 jq -r '.builtInExtensions[] | "\(.name) \(.version)"' product.json | while read -r name version; do
   target=.build/builtInExtensions/$name

@@ -60,7 +60,7 @@ mod tests {
 
     #[gpui::test]
     fn a_large_file_turns_off_folding_and_highlights_and_prompts_once(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-large-file-{}", std::process::id()));

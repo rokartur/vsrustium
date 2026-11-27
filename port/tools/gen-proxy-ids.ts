@@ -1,6 +1,9 @@
 // Emits native/crates/exthost/src/proxy_ids.rs from extHost.protocol.ts.
 // ProxyIdentifier.nid is a creation counter starting at 1, and extHost.protocol.ts creates every identifier in file order.
-const source = await Bun.file('src/vs/workbench/api/common/extHost.protocol.ts').text();
+import { join } from 'node:path';
+import { vscodeSrc } from './vscode-src.ts';
+
+const source = await Bun.file(join(vscodeSrc, 'src/vs/workbench/api/common/extHost.protocol.ts')).text();
 // Names are the MainContext/ExtHostContext keys, which differ from the identifier strings in a few places
 // (MainThreadLanguageModelTools is created as 'MainThreadChatSkills').
 const names = [...source.matchAll(/(\w+): createProxyIdentifier<\w+>\('\w+'\)/g)].map(m => m[1]);

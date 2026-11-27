@@ -15,7 +15,7 @@ use crate::workbench::Workbench;
 // textMateTokenizationFeature.contribution.ts `_workbench.colorizeTextMateTokens`, as vscode-colorize-perf-tests calls it.
 #[gpui::test]
 fn colorize_text_mate_tokens_times_a_file_and_fails_without_a_tokenizer(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let extensions = exthost::scan::scan_builtin_extensions(&app_root.join("extensions")).unwrap();
     let theme = load_theme(&extensions, "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-colorize-{}", std::process::id()));

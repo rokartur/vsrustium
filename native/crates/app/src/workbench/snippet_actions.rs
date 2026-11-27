@@ -599,7 +599,7 @@ mod tests {
 
     /// A folder with `a.txt` holding `word`, a user `plaintext.json` with a surrounding and a plain snippet.
     fn open(cx: &mut TestAppContext) -> (gpui::Entity<Workbench>, &mut VisualTestContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-snippet-actions-{}", std::process::id()));

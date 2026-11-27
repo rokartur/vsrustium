@@ -12,7 +12,7 @@ use crate::workbench::Workbench;
 
 #[gpui::test]
 fn a_view_with_hidden_visibility_stays_out_until_toggled_from_the_views_submenu(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let npm = scan_extension(&app_root.join("extensions/npm"), true).unwrap();

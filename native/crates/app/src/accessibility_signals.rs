@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn every_sound_file_exists_upstream() {
-        let media = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../src/vs/platform/accessibilitySignal/browser/media");
+        let media = Path::new(env!("VSCODE_SRC")).join("src/vs/platform/accessibilitySignal/browser/media");
         for signal in SIGNALS {
             for sound in signal.sounds {
                 assert!(media.join(sound).is_file(), "{sound}");

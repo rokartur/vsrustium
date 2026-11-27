@@ -667,7 +667,7 @@ mod tests {
     fn quick_diff_peek_shows_next_changes_and_closes(cx: &mut gpui::TestAppContext) {
         use super::super::quick_diff::{QuickDiff, QuickDiffKind};
         use std::path::Path;
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-quick-diff-peek-{}", std::process::id()));

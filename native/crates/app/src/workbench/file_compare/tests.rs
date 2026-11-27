@@ -11,7 +11,7 @@ use crate::workbench::Workbench;
 
 #[gpui::test]
 fn the_compare_commands_open_diff_editors(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-file-compare-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

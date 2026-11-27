@@ -268,7 +268,7 @@ mod tests {
 
     #[gpui::test]
     fn a_url_the_system_hands_the_app_opens_in_the_last_active_window(cx: &mut gpui::TestAppContext) {
-        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = std::path::Path::new(env!("VSCODE_SRC")).to_path_buf();
         let theme = crate::theme::load_theme(&[exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("vsrustium-open-url-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);

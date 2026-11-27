@@ -8,6 +8,7 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { vscodeSrc } from './vscode-src.ts';
 
 const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
 const binary = resolve('native/target/release/vsrustium');
@@ -36,15 +37,15 @@ async function checkUpdate() {
 			return Response.json({ tag_name: 'v99.0.0', html_url: 'https://github.com/rokartur/vsrustium/releases/tag/v99.0.0', draft: false, prerelease: false });
 		},
 	});
-	// The binary takes its working directory as the app root: the checkout, with product.json replaced.
+	// The binary takes VSCODE_SRC as the app root: the VS Code tree, with product.json replaced.
 	const root = join(scratch, 'root');
 	mkdirSync(root);
-	for (const entry of readdirSync('.').filter(entry => entry !== 'product.json')) {
-		symlinkSync(resolve(entry), join(root, entry));
+	for (const entry of readdirSync(vscodeSrc).filter(entry => entry !== 'product.json')) {
+		symlinkSync(join(vscodeSrc, entry), join(root, entry));
 	}
-	const product = JSON.parse(readFileSync('product.json', 'utf8'));
+	const product = JSON.parse(readFileSync(join(vscodeSrc, 'product.json'), 'utf8'));
 	writeFileSync(join(root, 'product.json'), JSON.stringify({ ...product, updateUrl: `http://127.0.0.1:${server.port}/releases/latest` }));
-	const child = Bun.spawn([binary, '--user-data-dir', userData({ 'update.mode': 'start' })], { cwd: root, env, stdout: 'ignore', stderr: 'ignore' });
+	const child = Bun.spawn([binary, '--user-data-dir', userData({ 'update.mode': 'start' })], { env: { ...env, VSCODE_SRC: root }, stdout: 'ignore', stderr: 'ignore' });
 	try {
 		await Bun.sleep(40000);
 		const tree = await windowTree(child.pid);

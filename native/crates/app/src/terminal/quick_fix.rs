@@ -290,7 +290,7 @@ mod tests {
     use crate::terminal::{ShellLaunchConfig, colors};
 
     fn run(output: &str, exit_code: i32, command: &str) -> TerminalInstance {
-        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let app_root = std::path::Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let colors = colors::TerminalColors::new(&crate::theme::load_theme(&[themes], "Dark Modern").unwrap());
         let launch = ShellLaunchConfig { extension_pty: true, cwd: std::env::temp_dir(), ..Default::default() };

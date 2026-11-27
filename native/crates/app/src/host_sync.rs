@@ -889,7 +889,7 @@ mod tests {
         use exthost::{ExtensionHost, HostOptions, Runtime};
         use std::time::{Duration, Instant};
 
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let folder = std::env::temp_dir().join(format!("code-gpui-live-{}", std::process::id()));
         std::fs::create_dir_all(folder.join("src")).unwrap();
         std::fs::write(folder.join("src/main.ts"), "export const answer = 42;\n").unwrap();
@@ -900,7 +900,7 @@ mod tests {
         let workspace = config::workspace::Workspace::folder(folder.clone());
         let paths = SessionPaths { app_root: &app_root, user_data: &user_data, workspace: Some(&workspace) };
         let init = init_data(&paths, &extensions, "1.147.0");
-        let entry = app_root.join("out-exthost/bootstrap-exthost.js");
+        let entry = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../out-exthost/bootstrap-exthost.js");
         let host = ExtensionHost::start(HostOptions { runtime: Runtime::Bun, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init).unwrap();
         let mut session = Session::new(host);
         session.start(&extensions, Some(workspace_data(&init, &workspace))).unwrap();

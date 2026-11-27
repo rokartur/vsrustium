@@ -17,7 +17,7 @@ use crate::workbench::Workbench;
 
 #[gpui::test]
 fn the_banner_action_takes_the_focus_out_of_the_editor_with_the_banner(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-unicode-banner-{}", std::process::id()));
@@ -50,7 +50,7 @@ fn the_banner_action_takes_the_focus_out_of_the_editor_with_the_banner(cx: &mut 
 
 #[gpui::test]
 fn non_basic_ascii_defaults_on_only_in_an_untrusted_workspace(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-unicode-trust-{}", std::process::id()));

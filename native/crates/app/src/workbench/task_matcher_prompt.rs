@@ -125,7 +125,7 @@ mod tests {
 
     #[gpui::test]
     fn a_contributed_task_without_matchers_asks_for_one(cx: &mut gpui::TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
@@ -147,7 +147,7 @@ mod tests {
     /// `_runTaskCommand`: a name the resolver finds by label runs as it is (`this.run(task)`), with no prompt.
     #[gpui::test]
     fn run_task_with_a_label_runs_without_the_problem_matcher_prompt(cx: &mut gpui::TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let folder = std::env::temp_dir().join(format!("code-gpui-run-task-{}", std::process::id()));

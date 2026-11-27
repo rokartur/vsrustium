@@ -23,7 +23,7 @@ fn labels(workbench: &Workbench, _: &gpui::App) -> Vec<String> {
 
 #[gpui::test]
 fn command_palette_runs_an_extension_command_and_remembers_it(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-palette-{}", std::process::id()));
@@ -101,7 +101,7 @@ fn command_palette_runs_an_extension_command_and_remembers_it(cx: &mut TestAppCo
 
 #[gpui::test]
 fn go_to_line_previews_the_line_and_restores_the_view_on_escape(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-goto-line-{}", std::process::id()));
@@ -146,7 +146,7 @@ fn go_to_line_previews_the_line_and_restores_the_view_on_escape(cx: &mut TestApp
 /// helpQuickAccess.ts: `?` lists the providers by prefix, accepting one shows it, typing its prefix too.
 #[gpui::test]
 fn help_lists_the_providers_and_shows_the_picked_one(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-help-{}", std::process::id()));
@@ -192,7 +192,7 @@ fn help_lists_the_providers_and_shows_the_picked_one(cx: &mut TestAppContext) {
 fn go_to_line_shows_relative_line_numbers_as_on_while_open(cx: &mut TestAppContext) {
     use crate::workbench::editor_view::LineNumbers;
 
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-goto-line-relative-{}", std::process::id()));

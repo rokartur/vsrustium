@@ -481,7 +481,7 @@ mod tests {
 
     #[test]
     fn force_retokenize_tokenizes_every_line_again() {
-        let extensions = exthost::scan::scan_builtin_extensions(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../extensions")).unwrap();
+        let extensions = exthost::scan::scan_builtin_extensions(&Path::new(env!("VSCODE_SRC")).join("extensions")).unwrap();
         let languages = Languages::new(&extensions);
         let lines: Vec<String> = ["let a = 1;", "/* open", "still comment */", "a;"].map(String::from).into();
         let mut tokens = Tokenization::new(languages.grammars.grammar("typescript"));
@@ -495,7 +495,7 @@ mod tests {
     /// Every colorize-tests fixture gives the reference's tokens, scopes and, in each default theme, colors.
     #[test]
     fn colorize_fixtures_match_the_reference() {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let extensions = exthost::scan::scan_builtin_extensions(&app_root.join("extensions")).unwrap();
         let languages = Languages::new(&extensions);
         let defaults = extensions.iter().find(|extension| extension.location.ends_with("theme-defaults")).unwrap();
@@ -545,7 +545,7 @@ mod tests {
     /// An edit recolors the text: the tokens drawn after it equal a fresh tokenization of the new text.
     #[test]
     fn edits_drop_stale_tokens_and_brackets() {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let extensions = exthost::scan::scan_builtin_extensions(&app_root.join("extensions")).unwrap();
         let languages = Languages::new(&extensions);
         let theme = load_theme(&extensions, "Dark Modern").unwrap();

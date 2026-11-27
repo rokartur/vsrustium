@@ -483,7 +483,7 @@ mod typescript {
     use crate::syntax::Tokenization;
 
     fn cursor(lines: &[&str], strategy: Strategy) -> Cursor {
-        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let app_root = std::path::Path::new(env!("VSCODE_SRC")).to_path_buf();
         let languages = Languages::new(&[exthost::scan::scan_extension(&app_root.join("extensions/typescript-basics"), true).unwrap()]);
         let mut editor = editor(&lines.join("\n"), "\n");
         editor.document_mut().tokens = Tokenization::new(languages.grammars.grammar("typescript"));

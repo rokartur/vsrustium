@@ -11,7 +11,7 @@ use crate::workbench::Workbench;
 
 #[gpui::test]
 fn keybindings_json_opens_in_the_modal_group_and_escape_closes_it(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-modal-group-{}", std::process::id()));
@@ -47,7 +47,7 @@ fn keybindings_json_opens_in_the_modal_group_and_escape_closes_it(cx: &mut TestA
 
 #[gpui::test]
 fn use_modal_off_opens_keybindings_json_in_the_active_group(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-modal-group-off-{}", std::process::id()));
@@ -73,7 +73,7 @@ fn use_modal_off_opens_keybindings_json_in_the_active_group(cx: &mut TestAppCont
 /// default keybindings in the active group, keybindings.json in a group added to its right, not in the modal group.
 #[gpui::test]
 fn open_default_keybindings_opens_keybindings_json_beside_the_defaults(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-default-keybindings-{}", std::process::id()));

@@ -71,10 +71,10 @@ fn quick_open_shows_the_rows_of_the_reference(cx: &mut TestAppContext) {
         ("src\\main", &["--file results--main.ts [src] {main} {d:src}"]),
         ("mn", &["--file results--main.ts [src] {m|n}"]),
     ];
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
-    let folder = app_root.join("port/fixtures/workspace");
+    let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../port/fixtures/workspace");
     let (workbench, cx) = cx.add_window_view(|window, cx| {
         let mut workbench = Workbench::new(theme, app_root.clone(), Some(Workspace::folder(folder.clone())), Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx);
         workbench.load_keybindings(crate::keybindings::default_keybindings(&[]), app_root.join("keybindings-unused.json"), cx);
@@ -98,10 +98,10 @@ fn quick_open_shows_the_rows_of_the_reference(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn quick_open_lists_history_and_files_and_opens_at_the_line(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
-    let folder = app_root.join("port/fixtures/workspace");
+    let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../port/fixtures/workspace");
     let storage = Arc::new(Mutex::new(Storage::in_memory()));
     let guide = format!(r#"[{{"editor":{{"resource":"file://{}/docs/guide.md"}}}}]"#, folder.display());
     storage.lock().unwrap().set("history.entries", guide);

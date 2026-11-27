@@ -16,7 +16,7 @@ use crate::workspace_trust::{Startup, WorkspaceTrust};
 
 #[gpui::test]
 fn trusting_the_window_starts_the_extensions_it_enables_without_a_reload(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-trust-change-{}", std::process::id()));

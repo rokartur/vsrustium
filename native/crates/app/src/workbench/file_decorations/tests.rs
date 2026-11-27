@@ -13,7 +13,7 @@ use crate::workbench::Workbench;
 
 #[gpui::test]
 fn explorer_rows_ask_each_provider_once_and_show_the_answer(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("vsrustium-decorations-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -57,7 +57,7 @@ fn explorer_rows_ask_each_provider_once_and_show_the_answer(cx: &mut TestAppCont
 
 #[gpui::test]
 fn problems_decorate_the_file_before_other_providers_and_bubble_to_its_folder(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let dir = Path::new("/w");
     let (sender, _receiver) = std::sync::mpsc::channel();

@@ -1400,7 +1400,7 @@ mod tests {
     }
 
     fn builtin_theme(id: &str) -> Theme {
-        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../extensions/theme-defaults");
+        let folder = Path::new(env!("VSCODE_SRC")).join("extensions/theme-defaults");
         load_theme(&[scan_extension(&folder, true).unwrap()], id).unwrap()
     }
 
@@ -1425,7 +1425,7 @@ mod tests {
     /// naming another color resolves through it.
     #[test]
     fn a_contributed_color_has_its_default_in_themes_without_it() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../extensions");
+        let root = Path::new(env!("VSCODE_SRC")).join("extensions");
         let extensions = [scan_extension(&root.join("theme-defaults"), true).unwrap(), scan_extension(&root.join("git"), true).unwrap()];
         let theme = load_theme(&extensions, "Dark Modern").unwrap();
         assert_eq!(hex(theme.color("gitDecoration.modifiedResourceForeground").unwrap()), "#e2c08dff");
@@ -1553,7 +1553,7 @@ mod tests {
     // Each color the port resolves must equal the reference's; ids the port leaves unresolved are not painted by it.
     #[test]
     fn resolved_colors_match_the_reference_workbench_variables() {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let extensions = exthost::scan::scan_builtin_extensions(&root.join("extensions")).unwrap();
         let themes = [
             ("dark", "Dark Modern"), ("light", "Light Modern"), ("hc", "Default High Contrast"), ("hclight", "Default High Contrast Light"),
@@ -1562,7 +1562,7 @@ mod tests {
         ];
         let mut mismatches = Vec::new();
         for (key, id) in themes {
-            let fixture = std::fs::read_to_string(root.join(format!("port/fixtures/theme-colors/{key}.json"))).unwrap();
+            let fixture = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(format!("../../../port/fixtures/theme-colors/{key}.json"))).unwrap();
             let reference: serde_json::Map<String, Value> = serde_json::from_str(&fixture).unwrap();
             let theme = load_theme(&extensions, id).unwrap();
             for color_id in include_str!("webview/color_ids.txt").lines() {
@@ -1582,7 +1582,7 @@ mod tests {
 
     #[test]
     fn every_builtin_theme_loads_with_token_colors() {
-        let extensions = exthost::scan::scan_builtin_extensions(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../extensions")).unwrap();
+        let extensions = exthost::scan::scan_builtin_extensions(&Path::new(env!("VSCODE_SRC")).join("extensions")).unwrap();
         let mut loaded = 0;
         for extension in &extensions {
             for contribution in extension.description["contributes"]["themes"].as_array().into_iter().flatten() {
