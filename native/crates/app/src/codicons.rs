@@ -78,5 +78,6 @@ mod tests {
         assert_eq!(super::icon_ids("explorer-view-icon"), ["explorer-view-icon", "files"]);
         assert_eq!(super::icon_ids("folding-manual-collapsed"), ["folding-manual-collapsed", "folding-collapsed", "chevron-right"]);
         assert_eq!(super::icon_ids("gear"), ["gear"]);
+        assert_eq!(super::icon_ids("debug-start"), ["debug-start"]);
     }
 }

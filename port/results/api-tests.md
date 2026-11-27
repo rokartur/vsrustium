@@ -37,6 +37,20 @@ Against the 318/28/0 target: every test of the target's suites ran and none fail
 Sixth session (after the port-integrate merge 0654c12078b): `start debugging failure` times out (60 s) and its after-each hook too, with or without the `$getInitialState` change, so the whole folder run stops in `vscode API - editors`. Intermittent, not a merge regression: a bisect over port-integrate's commits since 2b2543907d9 (`MOCHA_GREP="vscode API - debug"`) failed five commits and then passed on 12bd2d32dd9, the commit it had just failed; 2b2543907d9 passed once. While it hangs the workbench's threads are idle (sampled) and, in an `EXTHOST_TRACE=1` run, no reply comes for `$startDebugging` nor the next `closeAllEditors`. Not diagnosed yet.
 
 Targeted recheck on 2026-11-24: `MOCHA_GREP="vscode API - debug" SUITE_TIMEOUT=300 port/tools/api-tests` on Studio. Reference source `extensions/vscode-api-tests/src/singlefolder-tests/debug.test.ts` has exactly two `test.skip` cases (`breakpoints are available before accessing debug extension API`, `start debugging`). Reference folder log runs `breakpoints`, `function breakpoint`, and `start debugging failure` successfully. Port run matches both pending cases and passes the first two tests, but `start debugging failure` and its after-each hook time out at 60 seconds (2 passing, 2 pending, 2 failing); suite runner then reports 396 not reached because it runs both suites. This is an intermittent active-test failure, not the missing pending test. The earlier one-pending difference in the all-suite comparison was `window.test.ts` `active editor not always correct... #49125`, which called `this.skip()` when the port reported unfocused; `$getInitialState` was fixed and the focused `vscode API - window` run passed it. No new missing `test.skip` in the debug suite. Workspace output in this filtered rerun was incomplete (`exit 127`) after the folder suite, so no workspace conclusion from this run.
+### Integration run, milestone 20
+
+On the Studio at be4e964fcbe (branch port-m20-integrate-check: port-integrate after merging port-m17b-notebooks and port-m20-sweep, plus the icon registry fix), `port/tools/build-exthost && port/tools/api-tests`, no MOCHA_GREP. A first run without `build-exthost` used a stale `out-exthost/` and failed `custom root certificate`; with the bundle rebuilt it passes.
+
+| suites | passing | pending | failing | not reached |
+|--------|---------|---------|---------|-------------|
+| api-folder, all (exit 1 after 99 s) | 322 | 45 | 35 | 0 |
+| removed features: chat, chat - browser tools, chat - run_in_terminal, lm, vscode API - browser, browser CDP | 3 | 18 | 34 | 0 |
+| `env.remoteName` (asserts the removed `vscode.github-authentication`) | 0 | 0 | 1 | 0 |
+| the target's suites | 319 | 27 | 0 | 0 |
+| api-workspace (exit 0 after 1 s) | 4 | 0 | 0 | 0 |
+
+Same counts as the parity run above: the target is met, with #49125 passing instead of pending.
+
 ## Milestone 11: tree views and editor groups
 
 `MOCHA_GREP="vscode API - tree|vscode API - window" SUITE_TIMEOUT=600 port/tools/api-tests` on the Studio, the working tree after the panel commit d1e955ab4cf with tree views and decorations: api-folder 33 passing, 0 pending, 11 failing (exit 1 after 10s). All four tree.test.ts cases pass (`TreeView - element already registered`, `... after rapid root refresh`, `... during switch and update`, `... after refresh`). The 11 failing are window.test.ts cases that open editors in view columns, which `$tryShowTextDocument` ignored then, plus `Tabs - vscode.open & vscode.diff` (fake-fs, `_workbench.diff`) and `showWorkspaceFolderPick` (`_workbench.pickWorkspaceFolder` not found).
