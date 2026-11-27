@@ -1436,6 +1436,8 @@ impl Workbench {
                 .flex()
                 .items_center()
                 .rounded(px(4.))
+                // list.css `.monaco-list-row:hover:not(.selected):not(.focused)`.
+                .when(!is_focused && !is_selected && !sticky, |row| row.hover(|row| row.bg(self.color("list.hoverBackground"))))
                 .map(|row| match (file_icon, twistie.is_some() || has_folder_icons) {
                     (Some(icon), false) => row.pl(px(8. + indent)).child(icon.self_start()).child(div().self_start().flex_1().ml(px(6.)).line_height(px(label_line)).child(name)),
                     // monaco-tl-twistie: 3px row inset, 8px base indent plus 8px per level, a 16px icon, 6px before the label.
