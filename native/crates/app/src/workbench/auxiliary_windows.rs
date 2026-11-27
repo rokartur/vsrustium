@@ -155,7 +155,7 @@ impl Workbench {
         let group = self.create_auxiliary_part(bounds, cx);
         self.activate_group(group);
         for editor in copies.into_iter().chain(moved) {
-            self.editors.insert_moved(editor);
+            self.insert_moved_editor(editor);
         }
         if let (Transfer::CopyGroup | Transfer::MoveGroup, Some(active)) = (transfer, active) {
             self.editors.activate(active.min(self.editors.editors.len().saturating_sub(1)));
@@ -255,7 +255,7 @@ impl Workbench {
             if !dirty.is_empty() {
                 self.with_group(target, |workbench| {
                     for editor in dirty.into_iter().rev() {
-                        workbench.editors.insert_moved(editor);
+                        workbench.insert_moved_editor(editor);
                     }
                 });
             }
@@ -594,7 +594,8 @@ fn new_window_bounds(active: Bounds<Pixels>, origin: Option<Point<Pixels>>) -> B
         let centered = point((active.origin.x + active.size.width / 2. - window_size.width / 2.).max(px(0.)), (active.origin.y + active.size.height / 2. - window_size.height / 2.).max(px(0.)));
         if centered == active.origin { centered + point(px(30.), px(30.)) } else { centered }
     });
-    Bounds::new(origin, window_size)
+    // A fractional origin (a drop point less the pointer's offset in the tab) grows the window by a point.
+    Bounds::new(point(origin.x.round(), origin.y.round()), window_size)
 }
 
 #[cfg(test)]

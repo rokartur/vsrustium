@@ -604,7 +604,7 @@ impl Workbench {
         let Some(index) = self.editors.active_index().filter(|_| target != source) else { return };
         let editor = self.editors.take_editor(index);
         self.activate_group(target);
-        self.editors.insert_moved(editor);
+        self.insert_moved_editor(editor);
         self.close_group_if_empty(source);
         self.focus_group(target, window, cx);
     }
@@ -616,7 +616,7 @@ impl Workbench {
             workbench.with_group(target, |workbench| {
                 let active = workbench.editors.active_index();
                 for editor in moved {
-                    workbench.editors.insert_moved(editor);
+                    workbench.insert_moved_editor(editor);
                 }
                 if let Some(active) = active {
                     workbench.editors.activate(active);
@@ -772,7 +772,9 @@ impl Workbench {
             let group = self.part_groups(self.editor_groups.part)[0];
             if self.editors.group_tabs(group).0.is_empty() {
                 let strokes = self.compact_density().then(|| self.part_top_border());
-                return card.flex().flex_col().items_center().justify_center().child(self.watermark(256.)).children(strokes);
+                // editorDropTarget.ts: the empty part takes drops too.
+                let empty = div().flex_1().min_h_0().relative().flex().flex_col().items_center().justify_center().child(self.watermark(256.));
+                return card.flex().flex_col().child(self.group_drop_area(group, empty, cx)).children(strokes);
             }
             let body = if group == self.editors.id { self.editor_group_body(window, cx) } else { self.inactive_group_body(group, window, cx) };
             let area = self.group_drop_area(group, div().flex_1().min_h_0().relative().flex().flex_col().child(body), cx);
@@ -1016,7 +1018,7 @@ impl Workbench {
                 editor.sticky = false;
             }
             self.with_group(target, |workbench| {
-                workbench.editors.insert_moved(editor);
+                workbench.insert_moved_editor(editor);
                 if let (Some(index), Some(from)) = (index, workbench.editors.active_index()) {
                     workbench.editors.move_editor(from, index);
                 }
