@@ -1,0 +1,8 @@
+{
+	"nameShort": "VSRustium",
+	"nameLong": "VSRustium",
+	"applicationName": "vsrustium",
+	"dataFolderName": ".vsrustium",
+	"darwinBundleIdentifier": "com.rokartur.vsrustium",
+	"urlProtocol": "vsrustium"
+}

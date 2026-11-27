@@ -1703,10 +1703,10 @@ mod tests {
 
     #[gpui::test]
     fn clicking_a_folder_row_toggles_it(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
-        let folder = app_root.join("port/fixtures/workspace");
+        let folder = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../port/fixtures/workspace");
         let docs = folder.join("docs");
         let languages = Languages::new(&[]);
         let host = HostSync::new(std::sync::mpsc::channel().0);
@@ -1726,7 +1726,7 @@ mod tests {
 
     #[gpui::test]
     fn inspect_key_mappings_json_opens_pinned_untitled_editors_with_the_layout(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let host = HostSync::new(std::sync::mpsc::channel().0);
@@ -1745,7 +1745,7 @@ mod tests {
 
     #[gpui::test]
     fn keys_and_typed_text_edit_the_focused_editor_and_reach_the_host(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-keys-{}", std::process::id()));
@@ -1783,7 +1783,7 @@ mod tests {
 
     #[gpui::test]
     fn saving_runs_the_text_save_participants_of_the_settings(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-save-participants-{}", std::process::id()));
@@ -1818,7 +1818,7 @@ mod tests {
 
     #[gpui::test]
     fn in_tab_focus_mode_tab_moves_focus_to_the_status_bar_instead_of_indenting(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-tab-focus-{}", std::process::id()));
@@ -1854,7 +1854,7 @@ mod tests {
 
     #[gpui::test]
     fn user_keybindings_remove_defaults_and_bind_chords(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-keybindings-{}", std::process::id()));
@@ -1895,7 +1895,7 @@ mod tests {
 
     #[gpui::test]
     fn folding_and_cursor_keys_run_through_the_keybindings(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-folding-keys-{}", std::process::id()));
@@ -1943,10 +1943,10 @@ mod tests {
 
     #[gpui::test]
     fn folding_the_cursor_line_moves_the_cursor_to_the_fold_start(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
-        let file = app_root.join("port/fixtures/folding/long.py");
+        let file = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../port/fixtures/folding/long.py");
         // A host that is up, as in the app: no extension declares the `onCommand` events of the keys.
         let (sender, host_receiver) = std::sync::mpsc::channel();
         let mut host = HostSync::new(sender);
@@ -1979,7 +1979,7 @@ mod tests {
     #[gpui::test]
     fn selection_anchor_keys_select_from_the_anchor(cx: &mut TestAppContext) {
         use crate::editor::{Position, Selection};
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-anchor-keys-{}", std::process::id()));
@@ -2015,7 +2015,7 @@ mod tests {
     #[gpui::test]
     fn dragging_selected_text_moves_it_and_a_key_cancels_the_drag(cx: &mut TestAppContext) {
         use crate::editor::{Position, Selection};
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-text-drag-{}", std::process::id()));
@@ -2058,7 +2058,7 @@ mod tests {
 
     #[gpui::test]
     fn comment_keys_toggle_the_comments_of_the_file_language(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let typescript = scan_extension(&app_root.join("extensions/typescript-basics"), true).unwrap();
@@ -2100,7 +2100,7 @@ mod tests {
 
     #[gpui::test]
     fn line_operation_keys_edit_the_lines(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-line-keys-{}", std::process::id()));
@@ -2132,7 +2132,7 @@ mod tests {
 
     #[gpui::test]
     fn the_find_widget_searches_what_its_inputs_hold(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-find-{}", std::process::id()));

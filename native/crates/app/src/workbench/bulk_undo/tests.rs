@@ -11,7 +11,7 @@ use crate::workbench::Workbench;
 
 #[gpui::test]
 fn one_undo_takes_back_a_workspace_edit_in_every_file(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-bulk-undo-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -59,7 +59,7 @@ fn one_undo_takes_back_a_workspace_edit_in_every_file(cx: &mut TestAppContext) {
 fn undo_runs_the_file_edits_of_the_same_workspace_edit(cx: &mut TestAppContext) {
     use files::operations::{self, FileEdit, FileEditOptions};
 
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-group-undo-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

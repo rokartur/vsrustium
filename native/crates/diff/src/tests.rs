@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use std::path::PathBuf;
 
 fn fixtures_dir() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../src/vs/editor/test/node/diffing/fixtures")
+    PathBuf::from(env!("VSCODE_SRC")).join("src/vs/editor/test/node/diffing/fixtures")
 }
 
 fn split(text: &str) -> Vec<String> {

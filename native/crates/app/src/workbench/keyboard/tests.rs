@@ -25,7 +25,7 @@ fn kb_item(keybinding: &str, command: &str, when: Option<&str>) -> Item {
 
 /// A workbench whose only keybindings are `items`, with every command they name recording its calls.
 fn workbench_with(items: Vec<Item>, cx: &mut TestAppContext) -> (Entity<Workbench>, &mut VisualTestContext, Calls) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let calls: Calls = Rc::default();

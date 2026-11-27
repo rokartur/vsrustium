@@ -150,7 +150,7 @@ fn comment_lines_comments_a_line_shared_by_two_cursors_once() {
 }
 
 fn typescript() -> Languages {
-    let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let app_root = std::path::Path::new(env!("VSCODE_SRC")).to_path_buf();
     Languages::new(&[exthost::scan::scan_extension(&app_root.join("extensions/typescript-basics"), true).unwrap()])
 }
 

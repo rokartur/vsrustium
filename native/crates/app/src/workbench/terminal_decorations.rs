@@ -385,7 +385,7 @@ mod tests {
 
     #[gpui::test]
     fn toggle_visibility_writes_the_decorations_setting(cx: &mut gpui::TestAppContext) {
-        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = std::path::Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let user = std::env::temp_dir().join(format!("code-gpui-decoration-visibility-{}", std::process::id()));

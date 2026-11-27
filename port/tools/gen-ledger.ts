@@ -1,6 +1,8 @@
 // Builds port/ledger.md rows from the upstream tree and merges them with the rows already in the file,
 // so statuses and evidence written by hand survive a rerun. Run from the repo root: bun port/tools/gen-ledger.ts
 import { readdirSync, existsSync, readFileSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { vscodeSrc } from './vscode-src.ts';
 
 type Row = { id: string; area: string; status: string; evidence: string };
 
@@ -22,12 +24,12 @@ for (const id of ['seam/framing', 'seam/rpc', 'seam/handshake', 'seam/init-data'
 	add(id, 'extension host seam');
 }
 
-const protocol = readFileSync('src/vs/workbench/api/common/extHost.protocol.ts', 'utf8');
+const protocol = readFileSync(join(vscodeSrc, 'src/vs/workbench/api/common/extHost.protocol.ts'), 'utf8');
 for (const match of protocol.matchAll(/^export interface (MainThread\w+)Shape/gm)) {
 	add(`mainthread/${match[1]}`, 'MainThread* shape (Rust side)');
 }
 
-const folders = (dir: string) => readdirSync(dir).filter(name => statSync(`${dir}/${name}`).isDirectory()).sort();
+const folders = (dir: string) => readdirSync(join(vscodeSrc, dir)).filter(name => statSync(join(vscodeSrc, dir, name)).isDirectory()).sort();
 for (const name of folders('src/vs/base')) {
 	add(`base/${name}`, 'src/vs/base');
 }
@@ -54,7 +56,7 @@ for (const name of folders('src/vs/workbench/contrib')) {
 	add(`workbench/contrib/${name}`, 'workbench contribution');
 }
 for (const name of folders('extensions')) {
-	if (existsSync(`extensions/${name}/package.json`)) {
+	if (existsSync(join(vscodeSrc, 'extensions', name, 'package.json'))) {
 		add(`extension/${name}`, 'built-in extension');
 	}
 }

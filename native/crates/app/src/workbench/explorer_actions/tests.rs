@@ -12,7 +12,7 @@ use crate::workbench::Workbench;
 use crate::workbench::view_panes::{FILE_VIEW, PaneContainer};
 
 fn explorer<'a>(name: &str, cx: &'a mut TestAppContext) -> (PathBuf, gpui::Entity<Workbench>, &'a mut VisualTestContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-{name}-{}", std::process::id()));
@@ -348,7 +348,7 @@ fn closing_the_window_stores_the_tree_view_state_for_the_next_open(cx: &mut Test
     window_cx.run_until_parked();
     assert!(storage.lock().unwrap().get("workbench.explorer.treeViewState").is_some(), "stored when the workbench is released");
 
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let folder = dir.clone();
     let (reopened, window_cx) = cx.add_window_view(|_, cx| {
@@ -376,7 +376,7 @@ fn the_restored_editor_file_is_selected_after_a_restart(cx: &mut TestAppContext)
     let storage = std::sync::Arc::new(std::sync::Mutex::new(storage::Storage::in_memory()));
     storage.lock().unwrap().set("memento/workbench.parts.editor", saved);
 
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let folder = dir.clone();
     let (reopened, window_cx) = cx.add_window_view(|_, cx| {

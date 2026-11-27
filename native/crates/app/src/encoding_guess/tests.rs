@@ -1,16 +1,16 @@
 use super::*;
 
-const FIXTURES: &str = "../../../src/vs/workbench/services/textfile/test/node/encoding/fixtures";
+const FIXTURES: &str = "src/vs/workbench/services/textfile/test/node/encoding/fixtures";
 
 /// `readExactlyByFile(file, 512 * 8)` of encoding.test.ts.
 fn fixture(name: &str) -> Vec<u8> {
-    set_app_root(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."));
-    let bytes = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join(FIXTURES).join(name)).unwrap();
+    set_app_root(Path::new(env!("VSCODE_SRC")));
+    let bytes = std::fs::read(Path::new(env!("VSCODE_SRC")).join(FIXTURES).join(name)).unwrap();
     bytes[..bytes.len().min(512 * 8)].to_vec()
 }
 
 fn guessed(bytes: &[u8], candidates: &[&str]) -> Option<String> {
-    set_app_root(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."));
+    set_app_root(Path::new(env!("VSCODE_SRC")));
     detect_from_buffer(bytes, true, Some(json!(candidates)))
 }
 

@@ -9,7 +9,7 @@ use crate::languages::Languages;
 use crate::theme::load_theme;
 
 fn workbench<'a>(file: Option<&Path>, cx: &'a mut TestAppContext) -> (gpui::Entity<Workbench>, &'a mut gpui::VisualTestContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let keybindings = std::env::temp_dir().join(format!("code-gpui-menubar-{}.json", std::process::id()));
@@ -161,7 +161,7 @@ fn truncate_middle_keeps_both_ends() {
 /// reference's order, groups, labels and enablement, nothing more. Open Recent's entries depend on the history.
 fn assert_menubar_matches_the_reference(reference: &str, folder: Option<&Path>, file: Option<&Path>, cx: &mut TestAppContext) {
     let reference: Value = serde_json::from_str(reference).unwrap();
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let user = std::env::temp_dir().join(format!("code-gpui-menubar-reference-{}-{:?}", std::process::id(), std::thread::current().id()));

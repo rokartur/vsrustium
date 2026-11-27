@@ -52,7 +52,7 @@ fn workspace_stats_wrap_at_sixty_columns_and_fold_the_rest_into_other() {
 
 #[test]
 fn the_report_names_the_app_the_windows_and_the_hosts() {
-    crate::product::load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."));
+    crate::product::load(Path::new(env!("VSCODE_SRC")));
     let host = ProcessItem { name: "bun".into(), cmd: "bun bootstrap-exthost.js".into(), pid: 20, ppid: 10, load: 1.4, mem: 50. * 1024. * 1024., children: Vec::new() };
     let shell = ProcessItem { name: "/bin/zsh -l".into(), cmd: "/bin/zsh -l".into(), pid: 21, ppid: 10, load: 0., mem: 0., children: Vec::new() };
     let root = ProcessItem { name: "vsrustium".into(), cmd: "vsrustium".into(), pid: 10, ppid: 1, load: 2.5, mem: 300. * 1024. * 1024., children: vec![host, shell] };

@@ -743,7 +743,7 @@ mod tests {
 
     #[gpui::test]
     fn every_section_header_shows_while_a_session_runs(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let (_workbench, cx) = cx.add_window_view(|_, cx| {

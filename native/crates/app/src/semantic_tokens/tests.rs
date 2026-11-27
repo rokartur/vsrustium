@@ -35,7 +35,7 @@ fn custom_theme(registry: TokenClassificationRegistry, semantic_rules: Value, te
 }
 
 fn app_root() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..")
+    Path::new(env!("VSCODE_SRC")).to_path_buf()
 }
 
 fn read_json(path: &Path) -> Value {

@@ -11,7 +11,6 @@ use futures::channel::mpsc::UnboundedReceiver;
 use gpui::{AppContext, ClipboardItem, Context, Keystroke, PromptLevel, Task, Window};
 use search::ripgrep::Cancellation;
 use search::search_paths::{self, WorkspaceFolder};
-use search::text_search::SearchRange;
 use serde_json::{Value, json};
 
 use super::Workbench;
@@ -29,7 +28,7 @@ use crate::history::HistoryNavigator;
 use crate::input_box::InputBox;
 use crate::menus::MenuId;
 use crate::search_editor::SearchConfiguration;
-use crate::search_model::{MessageLink, SearchResult, after_replace_all_message, no_results_message, replace_all_confirmation_message, result_count_message, utf16_len};
+use crate::search_model::{MessageLink, SearchResult, after_replace_all_message, no_results_message, replace_all_confirmation_message, result_count_message};
 
 #[cfg(test)]
 mod tests;

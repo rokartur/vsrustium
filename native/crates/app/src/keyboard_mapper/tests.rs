@@ -8,7 +8,7 @@ use super::*;
 use crate::keybindings::parse_keybinding;
 
 fn fixture(name: &str) -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../src/vs/workbench/services/keybinding/test/node").join(name);
+    let path = Path::new(env!("VSCODE_SRC")).join("src/vs/workbench/services/keybinding/test/node").join(name);
     std::fs::read_to_string(path).unwrap().replace("\r\n", "\n")
 }
 

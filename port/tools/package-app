@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 // Packages VSRustium.app (roadmap section 19): the release binary and bun in Contents/MacOS; product.json,
-// package.json, the extension host bundle, the shipped built-in extensions (port/tools/shipped-files.ts) with the
+// package.json, the extension host bundle, the shipped built-in extensions (port/tools/shipped-files.ts, with
+// port/patches/extensions-*.patch applied) with the
 // packages they and the host resolve, and the upstream media the workbench reads, in Contents/Resources/app;
 // Info.plist with the reference's document types and the vsrustium URL protocol; then codesign with the hardened
 // runtime and `spctl -a`. Run on the Studio after a release build and port/tools/build-exthost:
@@ -9,14 +10,15 @@
 import { cpSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, relative } from 'node:path';
 import { inertPackages, shippedBuiltins } from './shipped-files.ts';
+import { vscodeSrc } from './vscode-src.ts';
 
 const root = process.cwd();
 const ref = process.env.REF ?? join(process.env.HOME!, 'Developer/vscode-ref');
 const extensionsDir = process.env.VSCODE_GPUI_EXTENSIONS ?? join(ref, 'extensions');
 const out = process.env.OUT ?? join(root, 'native/target/VSRustium.app');
 const identity = process.env.IDENTITY ?? '-';
-const product = JSON.parse(readFileSync('product.json', 'utf8'));
-const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
+const product = { ...JSON.parse(readFileSync(join(vscodeSrc, 'product.json'), 'utf8')), ...JSON.parse(readFileSync('port/product.json', 'utf8')) };
+const version = JSON.parse(readFileSync(join(vscodeSrc, 'package.json'), 'utf8')).version;
 
 rmSync(out, { recursive: true, force: true });
 const contents = join(out, 'Contents');
@@ -26,12 +28,12 @@ mkdirSync(app, { recursive: true });
 
 cpSync('native/target/release/vsrustium', join(contents, 'MacOS/vsrustium'));
 cpSync(realpathSync(Bun.which('bun')!), join(contents, 'MacOS/bun'));
-for (const file of ['product.json', 'package.json', 'out-exthost/bootstrap-exthost.js']) {
-	cpSync(file, join(app, file));
-}
+writeFileSync(join(app, 'product.json'), JSON.stringify(product, null, '\t'));
+cpSync(join(vscodeSrc, 'package.json'), join(app, 'package.json'));
+cpSync('out-exthost/bootstrap-exthost.js', join(app, 'out-exthost/bootstrap-exthost.js'));
 // The upstream files the workbench reads at runtime (accessibility_signals.rs, workbench.rs, webview_panels.rs).
 for (const dir of ['src/vs/platform/accessibilitySignal/browser/media', 'src/vs/workbench/browser/parts/editor/media', 'src/vs/workbench/contrib/webview/browser/pre']) {
-	cpSync(dir, join(app, dir), { recursive: true });
+	cpSync(join(vscodeSrc, dir), join(app, dir), { recursive: true });
 }
 
 // Packages keep pnpm's layout: each .pnpm/<id> entry is copied whole with its relative links, and a package a
@@ -96,6 +98,9 @@ for (const extension of shippedBuiltins(extensionsDir)) {
 		link(path, join(target, 'node_modules', name));
 	}
 }
+for (const patch of new Bun.Glob('port/patches/extensions-*.patch').scanSync()) {
+	await Bun.$`patch -s -p1 -d ${app} -i ${join(root, patch)}`;
+}
 // typescript-language-features runs the TypeScript the build puts in extensions/node_modules (typescript.tsdk default).
 for (const [name, path] of copyDependencies(extensionsDir, ['typescript'])) {
 	link(path, join(app, 'extensions/node_modules', name));
@@ -103,21 +108,21 @@ for (const [name, path] of copyDependencies(extensionsDir, ['typescript'])) {
 // The extension host bundle keeps its packages external; codicons and ripgrep are read by the workbench and search,
 // vscode-languagedetection by the language detection worker.
 const hostPackages = ['@vscode/proxy-agent', '@vscode/ripgrep-universal', '@vscode/spdlog', 'http-proxy-agent', 'https-proxy-agent', 'kerberos', 'minimist', 'undici', 'vscode-regexpp', '@vscode/codicons', '@vscode/vscode-languagedetection'];
-for (const [name, path] of copyDependencies(root, hostPackages)) {
+for (const [name, path] of copyDependencies(vscodeSrc, hostPackages)) {
 	link(path, join(app, 'node_modules', name));
 }
 // The encoding guess worker (encoding_guess/worker.mjs, embedded in the binary) loads these from the app's
 // node_modules; upstream's notices come from its build, so their licenses are appended to the shipped copy.
 const guessPackages = ['jschardet', '@vscode/iconv-lite-umd'];
-let notices = readFileSync('ThirdPartyNotices.txt', 'utf8');
-for (const [name, path] of copyDependencies(root, guessPackages)) {
+let notices = readFileSync(join(vscodeSrc, 'ThirdPartyNotices.txt'), 'utf8');
+for (const [name, path] of copyDependencies(vscodeSrc, guessPackages)) {
 	link(path, join(app, 'node_modules', name));
 	const manifest = JSON.parse(readFileSync(join(path, 'package.json'), 'utf8'));
 	const license = readFileSync(join(path, 'LICENSE'), 'utf8').trim();
 	notices += `\n\n---------------------------------------------------------\n\n${name} ${manifest.version}\n${manifest.homepage ?? manifest.repository?.url ?? ''}\n\n${license}\n\n---------------------------------------------------------\n`;
 }
 writeFileSync(join(app, 'ThirdPartyNotices.txt'), notices);
-cpSync('LICENSE.txt', join(app, 'LICENSE.txt'));
+cpSync(join(vscodeSrc, 'LICENSE.txt'), join(app, 'LICENSE.txt'));
 
 // A pnpm entry links its dev and peer dependencies too; the ones not copied would dangle, and codesign --strict
 // refuses a bundle with a dangling link.
@@ -153,12 +158,12 @@ rmSync(join(contents, 'Info.plist.json'));
 writeFileSync(join(contents, 'PkgInfo'), 'APPL????');
 // actool writes Assets.car (the Liquid Glass icon in every appearance) and AppIcon.icns (macOS 15 and older); it
 // exits 0 without writing either when the .icon folder is not named AppIcon.icon, and fails on a relative path.
-await Bun.$`xcrun actool ${join(root, 'resources/darwin/AppIcon.icon')} --compile ${join(contents, 'Resources')} --platform macosx --minimum-deployment-target ${plist.LSMinimumSystemVersion} --app-icon AppIcon --output-partial-info-plist /dev/null --errors`;
+await Bun.$`xcrun actool ${join(root, 'port/AppIcon.icon')} --compile ${join(contents, 'Resources')} --platform macosx --minimum-deployment-target ${plist.LSMinimumSystemVersion} --app-icon AppIcon --output-partial-info-plist /dev/null --errors`;
 if (!existsSync(join(contents, 'Resources/Assets.car')) || !existsSync(join(contents, 'Resources/AppIcon.icns'))) {
 	throw new Error('actool wrote no app icon');
 }
 for (const icon of new Set<string>(reference.CFBundleDocumentTypes.map((type: { CFBundleTypeIconFile: string }) => type.CFBundleTypeIconFile))) {
-	cpSync(join('resources/darwin', icon), join(contents, 'Resources', icon));
+	cpSync(join(vscodeSrc, 'resources/darwin', icon), join(contents, 'Resources', icon));
 }
 
 // Every Mach-O inside is signed first (native modules, ripgrep, bun), then the app; bun needs JIT and the

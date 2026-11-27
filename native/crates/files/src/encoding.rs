@@ -314,7 +314,7 @@ mod tests {
     use super::*;
 
     fn fixture(name: &str) -> Vec<u8> {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../src/vs/workbench/services/textfile/test/node/encoding/fixtures").join(name);
+        let path = Path::new(env!("VSCODE_SRC")).join("src/vs/workbench/services/textfile/test/node/encoding/fixtures").join(name);
         let bytes = std::fs::read(path).unwrap();
         bytes[..bytes.len().min(512)].to_vec()
     }
@@ -341,7 +341,7 @@ mod tests {
 
     #[test]
     fn decode_and_encode() {
-        let bytes = std::fs::read(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../src/vs/workbench/services/textfile/test/node/encoding/fixtures/some_utf16be.css")).unwrap();
+        let bytes = std::fs::read(Path::new(env!("VSCODE_SRC")).join("src/vs/workbench/services/textfile/test/node/encoding/fixtures/some_utf16be.css")).unwrap();
         let text = decode(&bytes, UTF16BE);
         assert!(!text.starts_with('\u{FEFF}'));
         assert_eq!(encode(&text, UTF16BE, true), bytes);

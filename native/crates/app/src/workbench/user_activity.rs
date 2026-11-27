@@ -86,7 +86,7 @@ mod tests {
 
     #[gpui::test]
     fn the_window_turns_inactive_after_two_quiet_checks_and_the_debounce(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let (sender, messages) = std::sync::mpsc::channel();
@@ -110,7 +110,7 @@ mod tests {
 
     #[gpui::test]
     fn the_initial_window_state_is_the_window_focus(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let (sender, _messages) = std::sync::mpsc::channel();

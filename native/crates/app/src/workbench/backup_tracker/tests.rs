@@ -37,7 +37,7 @@ fn open<'a>(cx: &'a mut TestAppContext, dir: &Path, settings_json: &str) -> (gpu
 
 /// `open`, with the editor part restored from `editor_part` first, as main.rs restores workspace state before backups.
 fn open_with_editor_part<'a>(cx: &'a mut TestAppContext, dir: &Path, settings_json: &str, editor_part: Option<String>) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let folder = dir.join("folder");
@@ -158,7 +158,7 @@ const NOTEBOOK: &str = "test-notebook";
 /// A window on `<dir>/folder` with a `test-notebook` type for `*.tnb` and its serializer, `a.txt` open; its host
 /// messages arrive on the receiver.
 fn open_with_notebooks<'a>(cx: &'a mut TestAppContext, dir: &Path) -> (gpui::Entity<Workbench>, std::sync::mpsc::Receiver<crate::host_sync::HostMessage>, &'a mut VisualTestContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let folder = dir.join("folder");
