@@ -1,6 +1,6 @@
 // An echo kernel for the interactive window and REPL editor pairs of `port/tools/ui-pair` with
 // `ARGS=--extensionDevelopmentPath=<this folder>`: the user setting `replPair.open` ("interactive" or "repl") opens one
-// at startup, with the kernel bound, so both apps show the same editor without a kernel extension.
+// at the first startup, with the kernel bound, so both apps show the same editor without a kernel extension.
 const vscode = require('vscode');
 
 exports.activate = context => {
@@ -21,7 +21,9 @@ exports.activate = context => {
 		controllers[type] = controller;
 		context.subscriptions.push(controller);
 	}
-	const open = vscode.workspace.getConfiguration('replPair').get('open');
+	// Once per user data: after a restart the window comes back from the editor part state, not from here.
+	const open = context.globalState.get('opened') ? undefined : vscode.workspace.getConfiguration('replPair').get('open');
+	context.globalState.update('opened', true);
 	setTimeout(async () => {
 		if (open === 'interactive') {
 			await vscode.commands.executeCommand('interactive.open', { viewColumn: vscode.ViewColumn.Active, preserveFocus: false }, undefined, 'port.repl-pair/echo-interactive', 'Echo');

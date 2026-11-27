@@ -189,6 +189,7 @@ impl Workbench {
         // A plain `.action-item` (not `.menu-entry`): 22px wide without margins, as measured in the reference.
         self.icon("toolbar-more", 22., 16., self.color("icon.foreground"))
             .id(("notebook-cell-toolbar-more", handle as usize))
+            .debug_selector(move || format!("notebook-cell-toolbar-more-{handle}"))
             .rounded(px(5.))
             .when(open, |button| button.bg(self.color("toolbar.activeBackground")))
             .cursor_pointer()
@@ -203,8 +204,11 @@ impl Workbench {
                 let context = workbench.cell_toolbar_context(model, &row, window);
                 let actions = menu_group_actions(&workbench.menus, cell_toolbar_menus(&context).0, &context, |group| !is_inline(group));
                 let args = vec![json!({ "start": row.index, "end": row.index + 1, "ui": true }), model.uri.clone()];
+                // The pointer leaves the preview for the menu, which lies over the webview upstream (`mouseLeaveMarkupCell`);
+                // here the hidden webview never reports it.
                 if let Some(view) = workbench.notebook_views.views.get_mut(&tab) {
                     view.toolbar_menu = Some(handle);
+                    view.hovered = None;
                 }
                 workbench.show_context_menu_actions(actions, &context, bounds.get(), args, window, cx);
             }))
@@ -378,7 +382,7 @@ impl Workbench {
     }
 
     /// Replaces cells with one undo step and moves the editor's focus to `focus`.
-    fn edit_notebook_cells(&mut self, key: &str, edits: Vec<Value>, focus: Option<usize>, cx: &mut Context<Self>) -> bool {
+    pub(super) fn edit_notebook_cells(&mut self, key: &str, edits: Vec<Value>, focus: Option<usize>, cx: &mut Context<Self>) -> bool {
         let Ok(applied) = self.apply_notebook_edits(key, &edits, cx) else { return false };
         if !applied.undo.is_empty() {
             self.push_cells_undo(key, applied.undo, edits);

@@ -193,6 +193,7 @@ impl Workbench {
         }
         self.commands.register("notebook.selectKernel", |workbench, _, window, cx| workbench.show_kernel_picker(window, cx));
         self.register_notebook_list_commands();
+        self.register_notebook_find_commands();
         self.register_notebook_output_commands();
         self.register_notebook_layout_commands();
         self.register_notebook_cell_commands();
@@ -744,8 +745,12 @@ impl Workbench {
         }
         // notebookEditorWidget.ts focuses the cell list, not a cell's editor: the editor takes the focus on a click
         // into a cell or Enter.
+        // A restored view state with `editorFocused` gives the keyboard to the focused cell's editor.
         if options["preserveFocus"] != true {
-            window.focus(&self.notebook_views.list_focus, cx);
+            match self.take_notebook_restore_editor_focus(tab_model_id) {
+                true => window.focus(&self.editor_focus, cx),
+                false => window.focus(&self.notebook_views.list_focus, cx),
+            }
         }
         self.editors_changed(cx);
         self.update_notebook_cell_status_bars(key, cx);
@@ -759,13 +764,24 @@ impl Workbench {
             let (editors, _) = self.editors.group_tabs(group);
             tabs.extend(editors.iter().filter(|editor| editor.document().scheme == NOTEBOOK_EDITOR_SCHEME).map(|editor| (editor.model_id, editor.document().path.to_string_lossy().into_owned())));
         }
+        // notebookEditor.ts saves a closing editor's view state (`onWillCloseEditor`) and loads it into a new one.
+        let closed: Vec<u32> = self.host.notebooks.editors.iter().map(|editor| editor.tab_model_id).filter(|tab| !tabs.iter().any(|(id, _)| id == tab)).collect();
+        for tab in closed {
+            self.save_notebook_view_state(tab);
+        }
         let notebooks = &mut self.host.notebooks;
         notebooks.editors.retain(|editor| tabs.iter().any(|(id, _)| *id == editor.tab_model_id));
+        let mut opened = Vec::new();
         for (tab_model_id, notebook) in tabs {
             if notebooks.editor(tab_model_id).is_none() {
                 notebooks.editors.push(NotebookEditor { tab_model_id, id: format!("$notebookEditor{tab_model_id}"), notebook, focus: 0, selections: vec![(0, 1)], input_focused: false, visible_ranges: None });
+                opened.push(tab_model_id);
             }
         }
+        for tab in opened {
+            self.restore_notebook_view_state(tab);
+        }
+        let notebooks = &mut self.host.notebooks;
         self.editors.stacked_editors.clear();
         for editor in &notebooks.editors {
             let Some(model) = notebooks.model(&editor.notebook) else { continue };

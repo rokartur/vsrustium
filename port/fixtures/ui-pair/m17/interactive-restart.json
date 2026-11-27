@@ -1,0 +1,18 @@
+[
+	{ "wait": 12000 },
+	{ "type": "hello", "foreground": true },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 3000 },
+	{ "shot": "executed" },
+	{ "hotkey": ["cmd", "q"] },
+	{ "wait": 3000 },
+	{ "restart": true },
+	{ "wait": 12000 },
+	{ "shot": "restored" },
+	{ "type": "again", "foreground": true },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 3000 },
+	{ "shot": "executed-again" }
+]
