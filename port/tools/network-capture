@@ -44,7 +44,7 @@ if [[ -z $control ]]; then
 fi
 echo "control run seen: $(echo "$control" | head -1)"
 
-port_gui_shared=1 source port/tools/gui-lock.sh
+source port/tools/gui-lock.sh
 cp -R port/fixtures/workspace "$OUT/workspace"
 mkdir -p "$OUT/user-data/User"
 echo "${SETTINGS:-{\}}" >"$OUT/user-data/User/settings.json"

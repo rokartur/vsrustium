@@ -6,7 +6,7 @@ set -uo pipefail
 cd "$(dirname "$0")/../.."
 REF=${REF:-$HOME/Developer/vscode-ref}
 (cd native && cargo build --release -q -p app) || exit 1
-port_gui_shared=1 source port/tools/gui-lock.sh
+source port/tools/gui-lock.sh
 tests=$PWD/port/fixtures/extensions/${FIXTURE:-webview-tests}
 status=0
 for app in ${APP:-reference port}; do

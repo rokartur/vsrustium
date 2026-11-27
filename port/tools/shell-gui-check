@@ -140,7 +140,7 @@ async function windowTree(pid: number) {
 
 // ui-pair's lock: /tmp/port-gui.lock holds the owner's pid; a dead owner's lock is taken over.
 async function takeGuiLock() {
-	const lock = process.env.PORT_GUI_LOCK ?? '/tmp/port-gui.lock';
+	const lock = '/tmp/port-gui.lock';
 	while (true) {
 		try {
 			mkdirSync(lock);
