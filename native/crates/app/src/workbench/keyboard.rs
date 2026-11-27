@@ -538,6 +538,7 @@ impl Workbench {
     pub(super) fn open_untitled_with_contents(&mut self, contents: &str, window: &mut Window, cx: &mut Context<Self>) {
         let path = (1..).map(|n| PathBuf::from(format!("Untitled-{n}"))).find(|path| self.editors.model("untitled", path).is_none()).expect("a free name");
         let document = TextDocument::untitled(&path, contents, None, &self.languages, &self.settings.lock().unwrap());
+        self.leave_locked_group("untitled", &path);
         self.editors.open(document, false);
         window.focus(&self.editor_focus, cx);
         self.editors_changed(cx);

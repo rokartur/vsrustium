@@ -487,7 +487,8 @@ impl Workbench {
         let handle = self.next_custom_editor_handle();
         let placeholder = PathBuf::from(format!("webview-panel/webview-{view_type}-{handle}"));
         let document = TextDocument::from_text(WEBVIEW_PANEL_SCHEME, &placeholder, "", "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
-        self.webview_panels.panels.push(WebviewPanel::new(handle.clone(), WEBVIEW_PANEL_SCHEME.into(), placeholder, view_type, title, extension, Value::Null, retain, custom));
+        self.webview_panels.panels.push(WebviewPanel::new(handle.clone(), WEBVIEW_PANEL_SCHEME.into(), placeholder.clone(), view_type, title, extension, Value::Null, retain, custom));
+        self.leave_locked_group(WEBVIEW_PANEL_SCHEME, &placeholder);
         self.editors.open(document, preview);
         handle
     }

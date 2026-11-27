@@ -147,6 +147,7 @@ fn copies_into_split(scheme: &str) -> bool {
 
 impl Workbench {
     pub(super) fn register_editor_group_actions(&mut self) {
+        self.register_locked_group_commands();
         self.commands.register("workbench.action.closeEditorsInOtherGroups", |workbench, _, window, cx| {
             workbench.leave_panel_group();
             let keep = workbench.editors.id;
@@ -358,7 +359,7 @@ impl Workbench {
         context.insert("activeEditorGroupEmpty".into(), json!(self.editors.group_tabs(self.editor_group_id()).0.is_empty()));
         context.insert("activeEditorGroupIndex".into(), json!(index + 1));
         context.insert("activeEditorGroupLast".into(), json!(index + 1 == groups.len()));
-        context.insert("activeEditorGroupLocked".into(), json!(false));
+        context.insert("activeEditorGroupLocked".into(), json!(self.editors.locked.contains(&self.editor_group_id())));
         context.insert("groupEditorsCount".into(), json!(self.editors.group_tabs(self.editor_group_id()).0.len()));
     }
 
@@ -778,7 +779,8 @@ impl Workbench {
             if self.editors.group_tabs(group).0.is_empty() {
                 let strokes = self.compact_density().then(|| self.part_top_border());
                 // editorDropTarget.ts: the empty part takes drops too.
-                let empty = div().flex_1().min_h_0().relative().flex().flex_col().items_center().justify_center().child(self.watermark(256.));
+                let watermark = div().flex_1().min_h_0().flex().flex_col().items_center().justify_center().child(self.watermark(256.));
+                let empty = div().flex_1().min_h_0().relative().flex().flex_col().children(self.empty_group_toolbar(group, cx)).child(watermark);
                 return card.flex().flex_col().child(self.group_drop_area(group, empty, cx)).children(strokes);
             }
             let body = if group == self.editors.id { self.editor_group_body(window, cx) } else { self.inactive_group_body(group, window, cx) };
@@ -823,7 +825,10 @@ impl Workbench {
                 let secondary = self.side_by_side_secondary(window, cx);
                 self.text_editor_part(secondary, window, cx)
             }
-            None => div().size_full().flex().flex_col().items_center().justify_center().child(self.watermark(200.)),
+            None => {
+                let watermark = div().flex_1().min_h_0().flex().flex_col().items_center().justify_center().child(self.watermark(200.));
+                div().size_full().flex().flex_col().children(self.empty_group_toolbar(self.editors.id, cx)).child(watermark)
+            }
         }
     }
 
@@ -1000,8 +1005,9 @@ impl Workbench {
         crate::recently_opened::add(&mut self.shared_storage.lock().unwrap(), entries);
         self.recently_opened_changed(window, cx);
         self.activate_group(target);
+        // The drop picked the group: a locked one takes the files too.
         for path in files {
-            self.open_file(path, true, window, cx);
+            self.open_file_in_active_group(path, true, window, cx);
         }
         window.focus(&self.editor_focus.clone(), cx);
         cx.notify();
@@ -1173,6 +1179,7 @@ fn opposite(direction: Direction) -> Direction {
     }
 }
 
+mod locked_groups;
 mod part_state;
 
 #[cfg(test)]

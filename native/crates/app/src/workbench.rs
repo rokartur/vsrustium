@@ -974,6 +974,8 @@ impl Workbench {
         if pinned {
             self.close_modal_editor(window, cx);
         }
+        self.leave_side_group();
+        self.leave_locked_group("file", &path);
         self.open_file_in_active_group(path, pinned, window, cx);
     }
 
@@ -1052,6 +1054,7 @@ impl Workbench {
         self.semantic_tokens_model_changed(cx);
         self.refresh_language_status(cx);
         self.sync_webview_panels();
+        self.auto_lock_group();
         self.sync_editor_insets();
         self.text_files_editors_changed();
         self.leave_compact_mode();

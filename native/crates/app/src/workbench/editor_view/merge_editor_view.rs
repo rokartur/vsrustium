@@ -367,6 +367,7 @@ impl Workbench {
                 let input = MergeInput::new(base, input1, input2, result, initial_result);
                 // The entry's file name is the tab label (`MergeEditorInput.getName`).
                 let entry = TextDocument::from_text(MERGE_EDITOR_SCHEME, Path::new(&format!("/{id}/{}", input.name())), "", "utf8".into(), Some("plaintext"), &self.languages, &self.settings.lock().unwrap());
+                self.leave_locked_group(MERGE_EDITOR_SCHEME, &entry.path);
                 self.editors.open_merge(entry, input, false);
                 self.update_merge_editor(cx);
                 let merge = self.editors.active_merge_mut().expect("opened above");

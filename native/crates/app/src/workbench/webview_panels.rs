@@ -166,7 +166,13 @@ impl Workbench {
         panel.find_enabled = init["panelOptions"]["enableFindWidget"] == true;
         self.webview_panels.panels.push(panel);
         let column = &show["viewColumn"];
-        let target = self.webview_target_group(column).unwrap_or(self.editors.id);
+        let target = match self.webview_target_group(column) {
+            Some(group) => group,
+            None => {
+                self.leave_locked_group(WEBVIEW_PANEL_SCHEME, &document.path);
+                self.editors.id
+            }
+        };
         let preserve_focus = show["preserveFocus"] == true;
         self.open_in_group(target, preserve_focus, |workbench| workbench.editors.open(document, false));
         self.editors_changed(cx);

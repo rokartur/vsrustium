@@ -119,6 +119,7 @@ impl Workbench {
                 panel.html = media.page(&self.setting("mediaPreview.video.autoPlay"), &self.setting("mediaPreview.video.loop"));
                 panel.media = Some(media);
                 self.webview_panels.panels.push(panel);
+                self.leave_locked_group(WEBVIEW_PANEL_SCHEME, &document.path);
                 self.editors.open(document, options["pinned"] != true);
                 handle
             }

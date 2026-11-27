@@ -3,7 +3,7 @@
 //! indent guides, word highlights).
 
 use std::cell::{Ref, RefCell, RefMut};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -810,6 +810,10 @@ pub struct EditorGroup {
     pub decoration_types: HashMap<String, serde_json::Value>,
     pub disposed: model_service::DisposedModels,
     pub view_states: view_state::ViewStates,
+    /// The locked groups (editorGroupModel.ts `locked`).
+    pub locked: HashSet<u32>,
+    /// The group whose first editor just opened, which `workbench.editor.autoLockGroups` may lock.
+    pub opened_first_editor: Option<u32>,
 }
 
 impl EditorGroup {
@@ -1143,6 +1147,7 @@ impl EditorGroup {
         if let Some(copy) = copy_active.then(|| self.copy_active()).flatten() {
             group.recent.push(copy.model_id);
             group.editors.push(copy);
+            self.opened_first_editor = Some(id);
         }
         self.other_groups.push(group);
         id
@@ -1287,6 +1292,9 @@ impl EditorGroup {
             }
         };
         self.activate(index);
+        if self.editors.len() == 1 {
+            self.opened_first_editor = Some(self.id);
+        }
     }
 
     pub fn activate(&mut self, index: usize) {

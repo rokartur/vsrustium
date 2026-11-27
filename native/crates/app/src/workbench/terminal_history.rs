@@ -370,6 +370,7 @@ impl Workbench {
         let Some(command) = command.and_then(|index| self.terminal_view.instance(instance)?.commands.get(index).cloned()) else { return };
         let path = PathBuf::from(format!("{}... {}", command.command, crate::workbench::terminal_history::from_now(command.timestamp)));
         let document = TextDocument::from_text(TERMINAL_OUTPUT_SCHEME, &path, &command.output, "utf8".into(), None, &self.languages, &self.settings.lock().unwrap());
+        self.leave_locked_group(TERMINAL_OUTPUT_SCHEME, &path);
         self.editors.open(document, false);
         self.editors_changed(cx);
         let _ = window;

@@ -422,6 +422,9 @@ impl Workbench {
         }
         let (scheme, ref path) = uri_parts(uri)?;
         self.activate_column(&options["position"]);
+        if !options["position"].as_i64().is_some_and(|column| column >= 0) {
+            self.leave_locked_group(scheme, path);
+        }
         let pinned = options["pinned"] == json!(true);
         if let Some(index) = self.editors.editors.iter().position(|editor| editor.document().is(scheme, path)) {
             self.editors.activate(index);

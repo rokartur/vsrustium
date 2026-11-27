@@ -162,6 +162,7 @@ impl Workbench {
                 actions.children(self.editor_title_actions(window, cx)).child(self.icon("split-horizontal", 22., 16., icon_color).id("split-editor").cursor_pointer().on_click(cx.listener(|workbench, _, window, cx| {
                     workbench.execute_command("workbench.action.splitEditor", Vec::new(), window, cx);
                 })))
+                .children(self.lock_group_action(self.editors.id, cx))
             })
             .child(self.icon("ellipsis", 22., 16., icon_color).cursor_pointer().when(self.editors.active_merge().is_some(), |more| {
                 more.on_mouse_down(gpui::MouseButton::Left, cx.listener(|workbench, event: &gpui::MouseDownEvent, window, cx| workbench.show_merge_more_actions(event, window, cx)))

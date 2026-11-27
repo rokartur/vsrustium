@@ -102,6 +102,7 @@ impl Workbench {
     /// the focus. A new one creates its snippet models and gets its last scroll position back.
     fn open_playground(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let path = self.playground_path();
+        self.leave_locked_group(WALKTHROUGH_SCHEME, &path);
         match self.editors.editors.iter().position(|editor| editor.document().is(WALKTHROUGH_SCHEME, &path)) {
             Some(index) => self.editors.activate(index),
             None => {
