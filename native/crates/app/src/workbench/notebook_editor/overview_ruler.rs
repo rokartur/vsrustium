@@ -39,7 +39,10 @@ impl Workbench {
             .iter()
             .map(|row| RulerCell { index: row.index, height: row.layout.height, editor_height: row.layout.editor_height, lines: self.cell_line_count(&model.cells[row.index].uri) })
             .collect();
-        let marks = ruler_marks(&cells, &decorations, f32::from(bounds.size.height), scroll_height, self.notebook_line_height(), window.scale_factor());
+        // `getLayoutInfo().height` is the whole editor's, the notebook toolbar's 26px included: the marks sit that much
+        // lower than the list's scale, and the canvas runs past the list's bottom.
+        let height = f32::from(bounds.size.height) + super::TOOLBAR_HEIGHT;
+        let marks = ruler_marks(&cells, &decorations, height, scroll_height, self.notebook_line_height(), window.scale_factor());
         let marks: Vec<_> = marks.into_iter().map(|(bounds, color)| (bounds, self.color(color))).collect();
         div().absolute().top_0().right_0().bottom_0().w(px(RULER_WIDTH)).child(
             canvas(
