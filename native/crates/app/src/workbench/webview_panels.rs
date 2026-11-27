@@ -857,7 +857,7 @@ mod tests {
 
     #[gpui::test]
     fn panels_open_in_their_view_column_and_move_on_reveal(cx: &mut gpui::TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-webview-columns-{}", std::process::id()));
@@ -894,7 +894,7 @@ mod tests {
     #[gpui::test]
     fn panels_with_a_serializer_are_restored_from_the_editor_state(cx: &mut gpui::TestAppContext) {
         const EDITOR_PART_KEY: &str = "memento/workbench.parts.editor";
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let (sender, host) = std::sync::mpsc::channel();

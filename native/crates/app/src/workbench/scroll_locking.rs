@@ -66,7 +66,7 @@ mod tests {
 
     #[gpui::test]
     fn toggling_adds_and_removes_the_status_entry(cx: &mut gpui::TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let (sender, _receiver) = std::sync::mpsc::channel();

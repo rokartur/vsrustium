@@ -17,7 +17,7 @@ use crate::workbench::editor_message::{MessageLayout, layout_in_page};
 
 /// A folder holding `name` with `text` and `.vscode/settings.json` with `settings`, opened in a workbench.
 fn open<'a>(cx: &'a mut TestAppContext, name: &str, text: &str, settings_json: &str) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext, PathBuf) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     static OPENED: AtomicUsize = AtomicUsize::new(0);

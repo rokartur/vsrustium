@@ -3,13 +3,14 @@
 // app packaging (port/tools/package-app), so the check covers exactly what ships.
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { vscodeSrc } from './vscode-src.ts';
 
 // native/crates/exthost/src/scan.rs REMOVED_BUILTINS and TEST_BUILTINS, read from the source so they cannot drift.
 const scanSource = readFileSync(join(import.meta.dir, '../../native/crates/exthost/src/scan.rs'), 'utf8');
 const skippedBuiltins = [...scanSource.matchAll(/(?:REMOVED|TEST)_BUILTINS: \[&str; \d+\] = \[([^\]]*)\]/g)].flatMap(match => [...match[1].matchAll(/"([^"]+)"/g)].map(name => name[1]));
 
 // Served as inert modules by the extension host (src/vs/workbench/api/common/extHostInertModules.ts): never loaded.
-const inertSource = readFileSync(join(import.meta.dir, '../../src/vs/workbench/api/common/extHostInertModules.ts'), 'utf8');
+const inertSource = readFileSync(join(vscodeSrc, 'src/vs/workbench/api/common/extHostInertModules.ts'), 'utf8');
 export const inertPackages = [...inertSource.matchAll(/^\t\['([^']+)', \{/gm)].map(match => match[1]);
 
 // Not loaded at runtime: sources, maps, docs and tests.

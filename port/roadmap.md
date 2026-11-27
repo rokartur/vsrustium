@@ -183,20 +183,22 @@ Done when: the ledger names 1.148.0. Every row the diff touches is `verified`, `
 
 ## 22. Split the port from the VS Code tree
 
-Artur: in the end the repository holds two code bases apart, `main` with the Rust port only and a `vscode` branch with upstream VS Code. Order: milestones 11 to 20 finish, everything lands on `main` (after its full check), then this split, then milestone 21, which becomes moving `vscode` to the new tag.
+Artur: in the end `main` holds the Rust port only and upstream VS Code is a plain checkout of an upstream tag beside it. Order: milestones 11 to 20 finish, everything lands on `main` (after its full check), then this split, then milestone 21, which becomes moving `upstream/` to the new tag.
 
 Today the port reads upstream from the same tree: the extension host is built from `src/` (`port/tools/build-exthost`) with 11 upstream files edited (288 lines: `src/bootstrap-exthost.ts`, `extHostExtensionService.ts`, `extensionHostProcess.ts`, `extHostInertModules.ts`, `extHostRequireInterceptor.ts`, `proxyResolver.ts`, `ipc.net.ts`, `product.json`, `extensions/configuration-editing/package.json`); the built-in extensions come from `extensions/`; `native/crates/app/build.rs` builds the NLS index from `src/vs`; `port/tools/package-app` copies media from `src/vs`; the tools (`gen-ledger.ts`, `gen-proxy-ids.ts`, `uplift-diff.ts`, `api-tests`, `extension-tests`, `ref-*`, `dump-settings`, `privacy-check`, `shipped-files.ts`) read `src/`, `extensions/` and `product.json`.
 
 Target:
-- `vscode`: upstream at the followed tag (1.147.0), never edited, updated by fast-forward to the next tag.
-- `main`: `native/`, `port/`, the port's skills, README and licenses. It checks out `vscode` as a git worktree at `upstream/` (ignored), or the path in `VSCODE_SRC`; every build step and tool reads upstream from there.
-- The 11 upstream edits move to `port/patches/*.patch`, applied to a build copy of `upstream/` by `build-exthost` and `package-app`, never committed to `vscode`; `product.json` changes become an overlay in `port/`.
+- `upstream/` (ignored): upstream VS Code checked out detached at the followed tag (`git -C upstream checkout 1.147.0`), never edited; an uplift moves it with `git -C upstream checkout 1.148.0`. No `vscode` branch.
+- `main`: `native/`, `port/`, the port's skills, README and licenses. Every build step and tool reads upstream from `upstream/`, or the path in `VSCODE_SRC`.
+- The 11 upstream edits move to `port/patches/*.patch`, applied to a build copy by `build-exthost` and `package-app`, never committed to upstream; `product.json` changes become an overlay in `port/`.
 
-Steps: 1) route every upstream path through one setting (`VSCODE_SRC`, default `upstream/`) in build.rs, the tools and the app's dev paths, in today's tree, with the full check green; 2) turn the 11 edits into patches applied at build time, full check green; 3) create `vscode` at the 1.147.0 tag and the new `main` (decision below), add the `upstream/` worktree, rebuild the Studio mirrors and `vscode-ref`; 4) a clean clone builds, tests, packages and passes the full check.
+Steps: 1) route every upstream path through one setting (`VSCODE_SRC`, default `upstream/`, the repo root while the tree is not split) in build.rs, the tools and the app's dev paths, in today's tree, with the full check green; 2) turn the 11 edits into patches applied at build time, full check green; 3) create the new `main` (decision below), check out `upstream/` at 1.147.0, rebuild the Studio mirrors and `vscode-ref`; 4) a clean clone builds, tests, packages and passes the full check.
 
-Decision for Artur: keep the port's history on the new `main` (`git filter-repo` to `native/`, `port/`, skills: every commit hash changes) or start `main` from one commit with today's tree (history stays readable on the old `gpui` branch).
+Decision (Artur): the new `main` starts from one commit with today's port tree, without `git filter-repo`; the port's history stays readable on the old branch.
 
-Done when: `main` holds no upstream file; `git worktree add upstream vscode` plus the documented build gives the same app, unit tests, api-tests and pixel-check as before the split.
+Port version after the split: the followed VS Code version is `package.json`'s `version` in `VSCODE_SRC` (upstream's, at the checked-out tag), which `uplift-diff.ts` reads as its default `from`; no port-side version file.
+
+Done when: `main` holds no upstream file; checking out `upstream/` at the tag plus the documented build gives the same app, unit tests, api-tests and pixel-check as before the split.
 
 ## Decisions (Artur)
 

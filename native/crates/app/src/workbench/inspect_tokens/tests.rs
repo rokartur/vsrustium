@@ -72,7 +72,7 @@ fn of_equally_specific_selectors_the_later_rule_wins() {
 
 #[test]
 fn a_typescript_comment_shows_its_scopes_innermost_first_and_the_theme_comment_rule() {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let extensions = exthost::scan::scan_builtin_extensions(&app_root.join("extensions")).unwrap();
     let languages = Languages::new(&extensions);
     let theme = load_theme(&extensions, "Dark Modern").unwrap();
@@ -92,7 +92,7 @@ fn a_typescript_comment_shows_its_scopes_innermost_first_and_the_theme_comment_r
 
 #[gpui::test]
 fn the_command_toggles_the_widget_and_escape_or_another_model_stops_it(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-inspect-tokens-{}", std::process::id()));

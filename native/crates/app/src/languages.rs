@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn detects_languages_like_the_reference() {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let extensions = exthost::scan::scan_builtin_extensions(&app_root.join("extensions")).unwrap();
         let languages = Languages::new(&extensions);
         let cases = [

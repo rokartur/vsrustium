@@ -99,7 +99,7 @@ mod tests {
 
     #[test]
     fn about_details_name_version_commit_date_and_os() {
-        crate::product::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."));
+        crate::product::load(std::path::Path::new(env!("VSCODE_SRC")));
         let details = about_details(&("Test OS".into(), "test-arch".into(), "1.0".into()));
         let lines: Vec<&str> = details.lines().collect();
         assert!(lines[0].starts_with("Version: 1.147"));

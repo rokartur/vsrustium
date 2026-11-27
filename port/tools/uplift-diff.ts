@@ -2,13 +2,15 @@
 // Run from the repo root after `git fetch origin tag <to> --no-tags`: bun port/tools/uplift-diff.ts <to> [from]
 // `from` defaults to package.json's version, the release the port follows.
 import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { vscodeSrc } from './vscode-src.ts';
 
 const to = process.argv[2];
 if (!to) {
 	console.error('usage: bun port/tools/uplift-diff.ts <to-tag> [from-tag]');
 	process.exit(2);
 }
-const from = process.argv[3] ?? JSON.parse(readFileSync('package.json', 'utf8')).version;
+const from = process.argv[3] ?? JSON.parse(readFileSync(join(vscodeSrc, 'package.json'), 'utf8')).version;
 
 const ledger = new Map<string, string>();
 // Evidence may hold `|` (MOCHA_GREP alternations), so only the first three cells are read.
@@ -44,7 +46,7 @@ const isTest = (path: string) => /\/test\/|\.test\.ts$|\.integrationTest\.ts$/.t
 // Names that point at the parts Artur removed (AI, sign-in, settings sync, remote, Microsoft services); a hint, not a verdict.
 const removedHint = /chat|agent|copilot|mcp|languageModel|inlineChat|\bai|embedding|speech|session|userDataSync|sync|authentication|account|remote|tunnel|telemetry|experiment|survey|issue/i;
 
-const numstat = Bun.spawnSync(['git', 'diff', '--numstat', '-M', from, to, '--', 'src/vs', 'src/vscode-dts', 'extensions', 'product.json']);
+const numstat = Bun.spawnSync(['git', 'diff', '--numstat', '-M', from, to, '--', 'src/vs', 'src/vscode-dts', 'extensions', 'product.json'], { cwd: vscodeSrc });
 if (numstat.exitCode !== 0) {
 	console.error(numstat.stderr.toString() || `git diff ${from} ${to} failed: fetch the tag first`);
 	process.exit(1);

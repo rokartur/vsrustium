@@ -15,7 +15,7 @@ use crate::workbench::Workbench;
 
 #[gpui::test]
 fn folders_added_and_removed_in_a_workspace_reach_its_file_the_explorer_settings_and_host(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-workspace-editing-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

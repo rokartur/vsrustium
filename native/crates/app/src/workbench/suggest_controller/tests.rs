@@ -29,7 +29,7 @@ fn line_words_split_at_separators() {
 
 /// A folder with `a.txt` holding `text`, open and focused at its end.
 fn open<'a>(cx: &'a mut TestAppContext, text: &str) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     static OPENED: AtomicUsize = AtomicUsize::new(0);

@@ -305,7 +305,7 @@ mod tests {
     use super::*;
 
     fn seti() -> FileIconTheme {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let seti = scan_extension(&app_root.join("extensions/theme-seti"), true).unwrap();
         FileIconTheme::load(&[seti], DEFAULT_ICON_THEME).unwrap()
     }
@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn image_themes_give_folders_their_icons() {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let modern = scan_extension(&app_root.join("extensions/theme-modern-icons"), true).unwrap();
         let theme = FileIconTheme::load(&[modern], "vscode-modern-icons").unwrap();
         assert!(theme.has_folder_icons() && theme.uses_current_color);

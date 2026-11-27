@@ -254,7 +254,7 @@ mod tests {
 
     #[test]
     fn the_worker_runs_the_model_from_node_modules() {
-        let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let repo = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let mut worker = start_worker(&repo).unwrap();
         let (sender, receiver) = oneshot::channel();
         worker.pending.lock().unwrap().insert(7, sender);

@@ -11,7 +11,7 @@ use crate::theme::load_theme;
 use crate::workbench::Workbench;
 
 fn workbench_in<'a>(name: &str, cx: &'a mut TestAppContext) -> (PathBuf, gpui::Entity<Workbench>, &'a mut VisualTestContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-{name}-{}", std::process::id()));
@@ -110,7 +110,7 @@ fn view_columns_pick_or_add_groups_in_grid_order(cx: &mut TestAppContext) {
 
 #[gpui::test]
 fn workbench_open_reads_a_provider_resource_through_the_host(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let (sender, messages) = std::sync::mpsc::channel();
     let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(sender), cx));
@@ -155,7 +155,7 @@ fn tokens_at_position_answers_the_token_of_an_open_model(cx: &mut TestAppContext
 /// a token per newline; an unknown language is one plain token.
 #[gpui::test]
 fn full_syntax_highlighting_tokenizes_with_the_theme(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let languages = Languages::new(&exthost::scan::scan_builtin_extensions(&app_root.join("extensions")).unwrap());
     let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, languages, crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx));

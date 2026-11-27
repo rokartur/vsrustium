@@ -173,10 +173,10 @@ fn main() -> anyhow::Result<()> {
     };
     std::fs::create_dir_all(&user_data).with_context(|| format!("creating {}", user_data.display()))?;
     // Packaged as VSRustium.app (port/tools/package-app) the app files sit in Contents/Resources/app; run from the
-    // checkout they are the working directory.
+    // checkout they are the VS Code tree (VSCODE_SRC, native/vscode_src.rs).
     let bundled = std::env::current_exe()?.parent().and_then(|macos| macos.parent()).map(|contents| contents.join("Resources/app")).filter(|app| app.join("product.json").is_file());
     let working_dir = std::env::current_dir()?;
-    let app_root = bundled.unwrap_or_else(|| working_dir.clone());
+    let app_root = bundled.unwrap_or_else(|| std::env::var_os("VSCODE_SRC").map_or_else(|| PathBuf::from(env!("VSCODE_SRC")), PathBuf::from));
     product::load(&app_root);
     encoding_guess::set_app_root(&app_root);
     let socket = launch::socket_path(&user_data);
@@ -621,6 +621,15 @@ pub(crate) fn open_window(request: WindowRequest, cx: &mut App) -> anyhow::Resul
     Ok(window)
 }
 
+/// The extension host bundle: in the app files of VSRustium.app, else port/tools/build-exthost's output in the checkout.
+fn exthost_entry(app_root: &Path) -> PathBuf {
+    let bundled = app_root.join("out-exthost/bootstrap-exthost.js");
+    if bundled.is_file() {
+        return bundled;
+    }
+    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../../../out-exthost/bootstrap-exthost.js")).to_path_buf()
+}
+
 /// Owns the session for the life of the app: handshake, one call each way, then serves host requests and
 /// forwards what the workbench tells the host.
 // It takes what main parsed for the session thread; a struct for one call site would only rename the list.
@@ -651,7 +660,7 @@ fn run_extension_host(
     if let Some(development) = &development {
         development.add_to_init_data(&mut init);
     }
-    let entry = app_root.join("out-exthost/bootstrap-exthost.js");
+    let entry = exthost_entry(&app_root);
 
     let host = ExtensionHost::start(HostOptions { runtime, entry: &entry, extra_env: vec![], extra_args: vec![] }, &init)?;
     let _ = status.unbounded_send(format!("{HANDSHAKE_PREFIX}{}", host.child.id()));
@@ -771,7 +780,7 @@ fn default_settings() -> Arc<Mutex<Settings>> {
 
 #[test]
 fn icon_theme_follows_workbench_icon_theme() {
-    let extensions = scan_builtin_extensions(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../../extensions")).unwrap();
+    let extensions = scan_builtin_extensions(&PathBuf::from(env!("VSCODE_SRC")).join("extensions")).unwrap();
     let user_home = std::env::temp_dir().join(format!("code-gpui-icon-theme-{}", std::process::id()));
     std::fs::create_dir_all(&user_home).unwrap();
     let icons_with = |settings_json: &str| {

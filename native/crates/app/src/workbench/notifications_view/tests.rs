@@ -15,7 +15,7 @@ use crate::theme::load_theme;
 use crate::workbench::Workbench;
 
 fn workbench(cx: &mut TestAppContext) -> (gpui::Entity<Workbench>, &mut VisualTestContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     static NEXT: AtomicUsize = AtomicUsize::new(0);

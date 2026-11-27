@@ -19,7 +19,7 @@ fn notebook_workbench(cx: &mut TestAppContext) -> (gpui::Entity<Workbench>, &mut
 
 /// An untitled notebook of `cells` shown in its editor, as `vscode.openNotebookDocument` and `showNotebookDocument`.
 fn workbench_with_cells(cells: serde_json::Value, cx: &mut TestAppContext) -> (gpui::Entity<Workbench>, &mut VisualTestContext, std::sync::mpsc::Receiver<crate::host_sync::HostMessage>) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     // One folder per call: tests run in parallel threads of one process and would remove each other's.

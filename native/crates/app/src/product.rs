@@ -32,7 +32,7 @@ pub fn name_long() -> &'static str {
 mod tests {
     #[test]
     fn reads_the_checkout_product() {
-        super::load(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.."));
+        super::load(std::path::Path::new(env!("VSCODE_SRC")));
         assert_eq!(super::name_long(), "VSRustium");
         assert_eq!(super::get("urlProtocol"), "vsrustium");
         assert_eq!(super::get("darwinBundleIdentifier"), "com.rokartur.vsrustium");

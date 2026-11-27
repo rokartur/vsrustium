@@ -963,7 +963,7 @@ mod tests {
     #[gpui::test]
     fn alt_f1_shows_the_editor_help_and_escape_returns_to_the_editor(cx: &mut gpui::TestAppContext) {
         use std::path::Path;
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-accessible-view-{}", std::process::id()));
@@ -1037,7 +1037,7 @@ mod tests {
     #[gpui::test]
     fn the_terminal_buffer_shows_in_the_accessible_view(cx: &mut gpui::TestAppContext) {
         use std::path::Path;
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));

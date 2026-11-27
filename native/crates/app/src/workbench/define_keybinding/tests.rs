@@ -63,7 +63,7 @@ fn each_key_string_of_the_array_is_marked_where_it_stands() {
 
 #[gpui::test]
 fn define_keybinding_inserts_a_rule_into_the_user_keybindings_json(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-define-keybinding-{}", std::process::id()));

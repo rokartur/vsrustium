@@ -43,7 +43,7 @@ fn right_click(position: Point<Pixels>, cx: &mut VisualTestContext) {
 
 #[gpui::test]
 fn the_title_bar_menus_toggle_the_command_center_and_the_layout_controls(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-title-bar-{}", std::process::id()));
@@ -133,7 +133,7 @@ fn the_title_bar_menus_toggle_the_command_center_and_the_layout_controls(cx: &mu
 #[gpui::test]
 #[should_panic(expected = "not implemented")]
 fn a_press_on_the_empty_title_bar_moves_the_window(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), std::env::temp_dir().join("code-gpui-title-bar-drag/User"), None)));

@@ -14,7 +14,7 @@ use crate::workbench::view_panes::{OUTLINE_VIEW, PaneContainer, TIMELINE_VIEW};
 
 #[gpui::test]
 fn focus_view_commands_open_the_explorer_pane_and_focus_it(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("vsrustium-focus-view-{}", std::process::id()));
