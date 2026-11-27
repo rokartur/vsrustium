@@ -516,6 +516,8 @@ impl Workbench {
         match view.id {
             FILE_VIEW => has_folder,
             EMPTY_VIEW => !has_folder,
+            // shortcut: their hidden state stays under the Explorer's key after a move, upstream keys it by the container.
+            OPEN_EDITORS_VIEW | OUTLINE_VIEW | TIMELINE_VIEW => !self.view_hidden("explorer", view.id),
             SCM_HISTORY_VIEW => self.active_scm_provider().is_some_and(|provider| provider.has_history_provider),
             VARIABLES_VIEW | WATCH_VIEW | CALL_STACK_VIEW | LOADED_SCRIPTS_VIEW | BREAKPOINTS_VIEW => self.debug_views().iter().any(|(id, _)| *id == view.id),
             id => match (self.panel.views.iter().find(|panel_view| panel_view.view_id == id), self.tree_views.views.iter().find(|tree_view| tree_view.id == id)) {

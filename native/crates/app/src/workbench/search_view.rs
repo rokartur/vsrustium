@@ -406,7 +406,7 @@ impl Workbench {
 
     pub(super) fn search_view_pane(&self, window: &Window, cx: &mut Context<Self>) -> super::view_panes::ViewPane {
         let body = self.search_view(window, cx).into_any_element();
-        super::view_panes::ViewPane { id: super::view_locations::SEARCH_VIEW, title: "Search".into(), description: None, actions: Some(self.search_title_actions(cx).into_any_element()), show_actions: false, body }
+        super::view_panes::ViewPane { id: super::view_locations::SEARCH_VIEW, title: "Search".into(), description: None, actions: Some(self.search_title_actions(cx).into_any_element()), show_actions: self.focused_movable_view(window) == Some(super::view_locations::SEARCH_VIEW), body }
     }
 
     /// The Search view's content below the title: the widgets, the message line and the results tree.

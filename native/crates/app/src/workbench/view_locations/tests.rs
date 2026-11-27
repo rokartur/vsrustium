@@ -36,6 +36,17 @@ fn explorer_panes(workbench: &gpui::Entity<Workbench>, cx: &mut VisualTestContex
 }
 
 #[gpui::test]
+fn move_view_lists_only_the_visible_views(cx: &mut TestAppContext) {
+    let (workbench, cx) = open(Arc::new(Mutex::new(Storage::in_memory())), cx);
+    // layoutActions.ts lists `visibleViewDescriptors`: Open Editors is hidden by default.
+    let listed = workbench.read_with(cx, |workbench, _| {
+        workbench.views_in(EXPLORER_CONTAINER).into_iter().filter(|view| workbench.movable_view_shown(view)).map(|view| view.id).collect::<Vec<_>>()
+    });
+    assert!(!listed.contains(&OPEN_EDITORS_VIEW), "{listed:?}");
+    assert!(listed.contains(&OUTLINE_VIEW), "{listed:?}");
+}
+
+#[gpui::test]
 fn outline_moved_to_a_new_panel_entry_gets_its_own_tab_and_comes_back_without_a_trace(cx: &mut TestAppContext) {
     let profile = Arc::new(Mutex::new(Storage::in_memory()));
     let (workbench, cx) = open(profile.clone(), cx);
