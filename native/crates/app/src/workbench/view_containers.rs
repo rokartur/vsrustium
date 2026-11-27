@@ -99,9 +99,16 @@ impl Workbench {
             ("workbench.view.testing", "workbench.view.testing"),
         ];
         for (view, container) in containers {
-            self.commands.register(format!("{view}.focus"), move |workbench, _, window, cx| match workbench.open_moved_view(view, cx) {
-                true => Outcome::done(),
-                false => workbench.execute_command(container, Vec::new(), window, cx),
+            self.commands.register(format!("{view}.focus"), move |workbench, _, window, cx| {
+                if !workbench.open_moved_view(view, cx) {
+                    return workbench.execute_command(container, Vec::new(), window, cx);
+                }
+                match view {
+                    "workbench.view.search" => workbench.focus_search_input(super::search_view::SearchField::Query, true, window, cx),
+                    "workbench.scm" => window.focus(&workbench.scm.input_focus.clone(), cx),
+                    _ => {}
+                }
+                Outcome::done()
             });
         }
         // markers.contribution.ts: "Focus Problems (Errors, Warnings, Infos)" opens the Problems view focused.

@@ -554,15 +554,13 @@ impl Workbench {
         cx.spawn_in(window, async move |workbench, cx| {
             let Some(index) = picked.await.ok().and_then(Result::ok).and_then(|handle| handle.as_u64()) else { return };
             let destination = destinations[index as usize];
-            let _ = workbench.update_in(cx, |workbench, _, cx| {
-                let container = match destination {
-                    Destination::NewEntry(part) => workbench.move_view_to_location(view.id, part, cx),
-                    Destination::Container(container) => {
-                        workbench.move_view_to_container(view.id, container, cx);
-                        container
-                    }
-                };
-                workbench.open_view_container_of(container, view.id, cx);
+            let _ = workbench.update_in(cx, |workbench, window, cx| {
+                match destination {
+                    Destination::NewEntry(part) => _ = workbench.move_view_to_location(view.id, part, cx),
+                    Destination::Container(container) => workbench.move_view_to_container(view.id, container, cx),
+                }
+                // layoutActions.ts: `viewsService.openView(focusedViewId, true)`.
+                drop(workbench.execute_command(&format!("{}.focus", view.id), Vec::new(), window, cx));
             });
         })
         .detach();

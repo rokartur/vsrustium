@@ -170,6 +170,13 @@ fn search_moved_into_the_explorer_is_one_of_its_panes_and_leaves_the_activity_ba
     assert_eq!(stored(&profile)["viewLocations"], json!({ SEARCH_VIEW: EXPLORER_CONTAINER }));
     assert_eq!(explorer_panes(&workbench, cx), [crate::workbench::view_panes::EMPTY_VIEW, OUTLINE_VIEW, TIMELINE_VIEW, SEARCH_VIEW]);
     assert!(workbench.read_with(cx, |workbench, _| workbench.container_hidden_if_empty(SEARCH_CONTAINER)));
+
+    // Move View's `openView(id, true)`: the moved view opens in the Explorer with its search input focused.
+    let focused = workbench.update_in(cx, |workbench, window, cx| {
+        drop(workbench.execute_command("workbench.view.search.focus", Vec::new(), window, cx));
+        workbench.search.input(crate::workbench::search_view::SearchField::Query).focus.is_focused(window)
+    });
+    assert!(focused);
 }
 
 #[gpui::test]

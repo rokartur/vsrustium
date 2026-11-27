@@ -152,7 +152,8 @@ impl SearchView {
             focus: cx.focus_handle(),
             toggle_replace_focus: cx.focus_handle(),
             scroll: UniformListScrollHandle::new(),
-            replace_active: false,
+            // searchView.ts: `showReplace` without a stored state is true.
+            replace_active: true,
             details_visible: false,
             match_case: false,
             whole_word: false,
