@@ -128,6 +128,15 @@ fn the_arrow_and_page_commands_scroll_the_page(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn a_wheel_line_scrolls_the_page_50px(cx: &mut TestAppContext) {
+    let (workbench, cx, _) = workbench(cx);
+    let center = workbench.read_with(cx, |workbench, _| workbench.playground.scroll.bounds().center());
+    cx.simulate_event(gpui::ScrollWheelEvent { position: center, delta: ScrollDelta::Lines(point(0., -2.)), ..Default::default() });
+    cx.run_until_parked();
+    assert_eq!(workbench.read_with(cx, |workbench, _| workbench.playground_scroll_top()), 100.);
+}
+
+#[gpui::test]
 fn a_heading_link_scrolls_its_heading_20px_below_the_top(cx: &mut TestAppContext) {
     let (workbench, cx, _) = workbench(cx);
     workbench.update_in(cx, |workbench, window, cx| workbench.open_playground_link("#line-actions", window, cx));

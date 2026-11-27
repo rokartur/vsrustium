@@ -7,8 +7,8 @@ use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 
 use gpui::{
-    AnyElement, Context, Div, FocusHandle, FontWeight, InteractiveText, MouseButton, MouseDownEvent, ScrollHandle, StyledText, TextRun,
-    Window, div, point, prelude::*, px,
+    AnyElement, Context, Div, FocusHandle, FontWeight, InteractiveText, MouseButton, MouseDownEvent, ScrollDelta, ScrollHandle, ScrollWheelEvent, StyledText,
+    TextRun, Window, div, point, prelude::*, px,
 };
 use serde_json::{Value, json};
 
@@ -17,6 +17,7 @@ use super::welcome_page::WALKTHROUGH_SCHEME;
 use crate::commands::Outcome;
 use crate::editor::view_state::ViewStates;
 use crate::editor::{OpenEditor, TextDocument};
+use crate::list_tree::wheel_scroll_delta;
 use crate::markdown::{Block, Inline, MarkdownString};
 
 #[cfg(test)]
@@ -199,6 +200,17 @@ impl Workbench {
         self.playground.scroll.set_offset(point(px(0.), px(-top)));
     }
 
+    /// scrollableElement.ts `_onMouseWheel` of the page's `DomScrollableElement`: default sensitivities, no smooth scroll.
+    fn playground_wheel(&mut self, event: &ScrollWheelEvent, cx: &mut Context<Self>) {
+        let (x, y) = match event.delta {
+            ScrollDelta::Pixels(delta) => (f32::from(delta.x) / 40., f32::from(delta.y) / 40.),
+            ScrollDelta::Lines(delta) => (delta.x, delta.y),
+        };
+        let (_, delta_top) = wheel_scroll_delta(x, y, event.modifiers.alt, 1., 5.);
+        self.set_playground_scroll_top(self.playground_scroll_top() + delta_top);
+        cx.notify();
+    }
+
     /// walkThroughPart.ts `getArrowScrollHeight`.
     fn playground_arrow_scroll_height(&self) -> f32 {
         let font_size = self.setting("editor.fontSize").as_f64().filter(|size| *size >= 1.).unwrap_or(12.) as f32;
@@ -246,8 +258,10 @@ impl Workbench {
             .min_w_0()
             .flex()
             .flex_col()
-            .overflow_y_scroll()
+            // Hidden, not scroll: GPUI's own wheel handler moves 22px a line, the page 50.
+            .overflow_hidden()
             .track_scroll(&self.playground.scroll)
+            .on_scroll_wheel(cx.listener(|workbench, event: &ScrollWheelEvent, _, cx| workbench.playground_wheel(event, cx)))
             .px(px(20.))
             .py(px(10.))
             .font_family(UI_FONT)
