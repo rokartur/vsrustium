@@ -91,7 +91,7 @@ mod tests {
 
     #[gpui::test]
     fn a_remembered_choice_answers_without_a_dialog_until_reset(cx: &mut TestAppContext) {
-        let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = load_theme(&[themes], "Dark Modern").unwrap();
         let host = HostSync::new(std::sync::mpsc::channel().0);

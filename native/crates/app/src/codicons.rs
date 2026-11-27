@@ -66,7 +66,7 @@ fn read_aliases(mapping: &Path, icons: &Path) -> HashMap<String, String> {
 mod tests {
     #[test]
     fn an_alias_resolves_to_the_file_of_its_code_point() {
-        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+        let app_root = std::path::Path::new(env!("VSCODE_SRC")).to_path_buf();
         assert!(super::svg_path(&app_root, "plus").ends_with("add.svg"));
         assert!(super::svg_path(&app_root, "gear").ends_with("gear.svg"));
         assert!(super::svg_path(&app_root, "git-fetch").ends_with("repo-fetch.svg"));

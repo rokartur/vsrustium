@@ -30,7 +30,7 @@ fn titles_joined(actions: &[MenuAction]) -> String {
 
 #[gpui::test]
 fn markdown_editor_files_offer_their_editors_in_the_breadcrumbs(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let markdown = scan_extension(&app_root.join("extensions/markdown-language-features"), true).unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-editor-type-picker-{}", std::process::id()));

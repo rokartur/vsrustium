@@ -19,7 +19,7 @@ const RANGE_HANDLE: u64 = 9;
 
 /// `a.txt` open with semantic coloring on (the Dark Modern theme's `semanticHighlighting`), its provider registered.
 fn open<'a>(cx: &'a mut TestAppContext, name: &str, method: &str, handle: u64) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext, Receiver<HostMessage>) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-semantic-tokens-{}-{name}", std::process::id()));

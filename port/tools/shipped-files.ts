@@ -8,9 +8,9 @@ import { dirname, join } from 'node:path';
 const scanSource = readFileSync(join(import.meta.dir, '../../native/crates/exthost/src/scan.rs'), 'utf8');
 const skippedBuiltins = [...scanSource.matchAll(/(?:REMOVED|TEST)_BUILTINS: \[&str; \d+\] = \[([^\]]*)\]/g)].flatMap(match => [...match[1].matchAll(/"([^"]+)"/g)].map(name => name[1]));
 
-// Served as inert modules by the extension host (src/vs/workbench/api/common/extHostInertModules.ts): never loaded.
-const inertSource = readFileSync(join(import.meta.dir, '../../src/vs/workbench/api/common/extHostInertModules.ts'), 'utf8');
-export const inertPackages = [...inertSource.matchAll(/^\t\['([^']+)', \{/gm)].map(match => match[1]);
+// Served as inert modules by the extension host (extHostInertModules.ts, port/patches/src-extHostInertModules.patch): never loaded.
+const inertSource = readFileSync(join(import.meta.dir, '../patches/src-extHostInertModules.patch'), 'utf8');
+export const inertPackages = [...inertSource.matchAll(/^\+\t\['([^']+)', \{/gm)].map(match => match[1]);
 
 // Not loaded at runtime: sources, maps, docs and tests.
 const skippedFile = /\.(ts|map|md|markdown)$|^(LICENSE|CHANGELOG|README)/i;

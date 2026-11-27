@@ -628,7 +628,7 @@ mod tests {
 
     #[gpui::test]
     fn quick_diff_contributed_providers_and_diff_information_follow_main_thread_quick_diff(cx: &mut gpui::TestAppContext) {
-        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = std::path::Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let dir = std::env::temp_dir().join(format!("code-gpui-quick-diff-api-{}", std::process::id()));

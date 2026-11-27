@@ -17,7 +17,7 @@ fn a_folder_in_the_installation_folder_shows_the_warning_until_closed(cx: &mut T
     let dir = std::env::temp_dir().join(format!("vsrustium-banner-{}", std::process::id()));
     let folder = dir.join("VSRustium.app/folder");
     std::fs::create_dir_all(&folder).unwrap();
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let theme = load_theme(&[scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap()], "Dark Modern").unwrap();
     let workspace = config::workspace::Workspace::folder(folder);
     let settings = Arc::new(Mutex::new(Settings::load(Registry::with_extensions(&[]), dir.join("User"), Some(workspace.clone()))));

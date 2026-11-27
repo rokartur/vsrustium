@@ -297,7 +297,7 @@ mod tests {
     /// terminalEnvironment.ts `getCwd`: the setting's variables resolve, a relative result joins the folder.
     #[gpui::test]
     fn the_cwd_setting_resolves_its_variables(cx: &mut gpui::TestAppContext) {
-        let app_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+        let app_root = std::path::Path::new(env!("VSCODE_SRC")).to_path_buf();
         let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
         let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
         let folder = std::path::PathBuf::from("/w/project");

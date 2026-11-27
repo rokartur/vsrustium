@@ -12,7 +12,7 @@ use storage::Storage;
 
 #[gpui::test]
 fn dragging_the_header_moves_the_quick_input_and_a_double_click_puts_it_back(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-drag-{}", std::process::id()));
@@ -67,7 +67,7 @@ fn dragging_the_header_moves_the_quick_input_and_a_double_click_puts_it_back(cx:
 
 #[gpui::test]
 fn the_quick_input_stays_open_while_the_window_is_inactive(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-deactivate-{}", std::process::id()));
@@ -99,7 +99,7 @@ fn the_quick_input_stays_open_while_the_window_is_inactive(cx: &mut TestAppConte
 
 #[gpui::test]
 fn the_word_highlight_stops_while_the_quick_input_has_the_focus(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-word-blur-{}", std::process::id()));
@@ -157,7 +157,7 @@ fn keep_scroll_position_keeps_the_list_where_it_is(cx: &mut TestAppContext) {
     use crate::main_thread_quick_open::Owner;
     use crate::quick_input::{Entry, Item, Kind, QuickInput};
 
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Dark Modern").unwrap();
     let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx));
@@ -204,7 +204,7 @@ fn the_close_animation_ends_after_150ms_and_reopening_discards_it(cx: &mut TestA
     use crate::main_thread_quick_open::Owner;
     use crate::quick_input::{Kind, QuickInput};
 
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let themes = scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
     let theme = load_theme(&[themes], "Default High Contrast").unwrap();
     let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, Languages::new(&[]), crate::default_settings(), HostSync::new(std::sync::mpsc::channel().0), cx));

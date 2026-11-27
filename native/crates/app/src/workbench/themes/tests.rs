@@ -26,7 +26,7 @@ fn rows(workbench: &Workbench, _: &gpui::App) -> Vec<String> {
 
 #[gpui::test]
 fn the_picker_previews_the_focused_theme_writes_the_accepted_one_and_escape_restores(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let mut extensions = Vec::new();
     for entry in std::fs::read_dir(app_root.join("extensions")).unwrap() {
         let path = entry.unwrap().path();
@@ -121,7 +121,7 @@ fn the_picker_previews_the_focused_theme_writes_the_accepted_one_and_escape_rest
 /// Escape undoes, and the accepted theme written to `workbench.iconTheme` (`null` for None).
 #[gpui::test]
 fn the_file_icon_theme_picker_previews_writes_and_restores(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let extensions: Vec<_> = ["theme-seti", "theme-defaults", "theme-modern-icons"].iter().map(|name| scan_extension(&app_root.join("extensions").join(name), true).unwrap()).collect();
     let theme = load_theme(&extensions, "Dark 2026").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-icon-themes-{}", std::process::id()));
@@ -174,8 +174,8 @@ fn the_file_icon_theme_picker_previews_writes_and_restores(cx: &mut TestAppConte
 /// accepted theme is written to `workbench.productIconTheme` and draws its glyphs.
 #[gpui::test]
 fn the_product_icon_theme_picker_writes_the_accepted_theme(cx: &mut TestAppContext) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
-    let extensions = vec![scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap(), scan_extension(&app_root.join("port/fixtures/extensions/product-icons"), false).unwrap()];
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
+    let extensions = vec![scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap(), scan_extension(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../port/fixtures/extensions/product-icons"), false).unwrap()];
     let theme = load_theme(&extensions, "Dark 2026").unwrap();
     let dir = std::env::temp_dir().join(format!("code-gpui-product-icon-themes-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -208,7 +208,7 @@ fn the_product_icon_theme_picker_writes_the_accepted_theme(cx: &mut TestAppConte
 #[gpui::test]
 fn the_host_color_scheme_picks_the_preferred_theme_setting(cx: &mut TestAppContext) {
     use super::{HostColorScheme, SettingTarget, color_theme_setting_id};
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let mut extensions = Vec::new();
     for name in ["theme-defaults", "theme-solarized-dark", "theme-solarized-light"] {
         extensions.push(scan_extension(&app_root.join("extensions").join(name), true).unwrap());

@@ -409,31 +409,12 @@ function createPatchedModules(params: ProxyAgentParams, resolveProxy: ResolvePro
 		return Object.assign(target, patch);
 	}
 
-	const patched = {
+	return {
 		http: mergeModules(http, createHttpPatch(params, http, resolveProxy)),
 		https: mergeModules(https, createHttpPatch(params, https, resolveProxy)),
 		net: mergeModules(net, createNetPatch(params, net)),
 		tls: mergeModules(tls, createTlsPatch(params, tls))
 	};
-	if (process.versions.bun) {
-		addBunSecureContext(patched.tls);
-	}
-	return patched;
-}
-
-/**
- * Bun 1.4.5's tls.connect builds its context without calling `tls.createSecureContext`, where proxy-agent adds
- * the `_vscodeAdditionalCaCerts` of `http.systemCertificates` (and the tests' `testCertificates`); build it there.
- */
-function addBunSecureContext(target: typeof tlsType) {
-	const connect = target.connect;
-	target.connect = function (this: unknown, ...args: unknown[]) {
-		const options = args.find(arg => arg && typeof arg === 'object') as (tlsType.ConnectionOptions & { _vscodeAdditionalCaCerts?: string[] }) | undefined;
-		if (options?._vscodeAdditionalCaCerts && !options.secureContext) {
-			options.secureContext = target.createSecureContext(options);
-		}
-		return Reflect.apply(connect, this, args);
-	} as typeof tlsType.connect;
 }
 
 function certSettingV1(configProvider: ExtHostConfigProvider, isRemote: boolean) {

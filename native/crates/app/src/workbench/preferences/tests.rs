@@ -14,7 +14,7 @@ use crate::theme::{color_themes, load_theme};
 use crate::workbench::Workbench;
 
 fn workbench<'a>(cx: &'a mut TestAppContext, name: &str) -> (gpui::Entity<Workbench>, &'a mut VisualTestContext, PathBuf) {
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let scan = |name: &str| scan_extension(&app_root.join("extensions").join(name), true).unwrap();
     let themes = [scan("theme-defaults")];
     let theme = load_theme(&themes, "Dark 2026").unwrap();
@@ -143,7 +143,7 @@ fn the_default_keybindings_file_lists_the_defaults_then_the_unbound_commands(cx:
 #[gpui::test]
 fn export_default_keybindings_writes_the_core_then_the_built_in_extension_rules(cx: &mut TestAppContext) {
     let (workbench, cx, dir) = workbench(cx, "export");
-    let app_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..").canonicalize().unwrap();
+    let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
     let markdown = scan_extension(&app_root.join("extensions/markdown-language-features"), true).unwrap();
     let written = workbench.update(cx, |workbench, cx| {
         workbench.load_keybindings(crate::keybindings::default_keybindings(std::slice::from_ref(&markdown)), dir.join("User/keybindings.json"), cx);

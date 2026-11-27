@@ -3,8 +3,10 @@
 
 use std::path::Path;
 
+include!("../../vscode_src.rs");
+
 fn main() {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../src");
+    let src = emit_vscode_src().join("src");
     println!("cargo::rerun-if-changed={}", src.join("vs").display());
     let call = regex::Regex::new(r#"\blocalize2?\(\s*(?:'([^']+)'|"([^"]+)"|\{\s*key:\s*['"]([^'"]+)['"](?:[^{}]|\{[^{}]*\})*\})\s*,\s*(?:"((?:[^"\\\n]|\\.)*)"|'((?:[^'\\\n]|\\.)*)'|`((?:[^`\\]|\\.)*)`)"#).unwrap();
     let mut index = String::new();
