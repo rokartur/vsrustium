@@ -27,4 +27,5 @@ ssh studio "cd ~/$work/$name && bash -c 'test -f .git/objects/info/alternates ||
 # openrsync has no --ignore-missing-args: leave out files deleted here.
 cat "$stale" <(git diff --name-only -z --diff-filter=d HEAD) <(git ls-files -o --exclude-standard -z) | sort -zu | { grep -zvxFf <(git -c core.quotepath=off diff --name-only --diff-filter=D HEAD) || true; } | rsync -az --from0 --files-from=- . "studio:$work/$name/"
 git diff --name-only -z --diff-filter=D HEAD | ssh studio "cd ~/$work/$name && xargs -0 rm -f"
-ssh studio "cd ~/$work/$name && bash -lc $(printf '%q' "$1")"
+# Builds of parallel sessions run niced: the apps under test in a ui-pair run get the CPU first.
+ssh studio "cd ~/$work/$name && bash -lc $(printf '%q' "cargo() { nice -n 15 cargo \"\$@\"; }; export -f cargo; $1")"
