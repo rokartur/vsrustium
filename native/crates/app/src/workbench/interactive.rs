@@ -196,7 +196,7 @@ impl Workbench {
         if let Some(tab) = self.interactive_tab(&key) {
             self.reveal_notebook_cells(tab, index, index + 1, CellReveal::InView);
         }
-        let outcome = self.execute_notebook_cells(&key, vec![handle], cx);
+        let outcome = self.execute_notebook_cells(&key, vec![handle], window, cx);
         if let Some(editor) = self.host.notebooks.editors.iter_mut().find(|editor| editor.notebook == key) {
             editor.selections = vec![(index, index + 1)];
             editor.focus = index;

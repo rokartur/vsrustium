@@ -1,0 +1,13 @@
+[
+	{ "wait": 15000 },
+	{ "hotkey": ["cmd", "p"] },
+	{ "wait": 800 },
+	{ "type": "sample.ipynb" },
+	{ "wait": 800 },
+	{ "key": "return" },
+	{ "wait": 30000 },
+	{ "click": [965, 103] },
+	{ "wait": 2000 },
+	{ "shot": "kernel-picker" },
+	{ "key": "escape" }
+]

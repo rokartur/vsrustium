@@ -100,6 +100,8 @@ pub struct NotebookViews {
     preferred_renderers: HashMap<(String, String), String>,
     /// Notebook editors the editor part restored, opened once their notebooks resolve (notebooks.rs).
     pub(super) restores: Vec<super::notebooks::NotebookRestore>,
+    /// The active notebook editor's tab and the cell whose editor was `activeCodeEditor` when it became active.
+    status_editor: Option<(u32, Option<Value>)>,
     pub(super) find: find::NotebookFind,
     /// notebookEditor.ts `_editorMemento`: `INotebookEditorViewState` by notebook URI, in workspace storage.
     view_states: crate::editor::view_state::ViewStates,
@@ -118,6 +120,7 @@ impl NotebookViews {
             mime_order: None,
             preferred_renderers: HashMap::new(),
             restores: Vec::new(),
+            status_editor: None,
             cell_clipboard: None,
             find: find::NotebookFind::new(cx),
             view_states: Default::default(),
@@ -497,15 +500,59 @@ impl Workbench {
                 }
             }
             "customRendererMessage" => {
-                if let Some(editor) = self.host.notebooks.editor(tab) {
-                    let editor_id = editor.id.clone();
-                    self.host.send("ExtHostNotebookRenderers", "$postRendererMessage", vec![json!(editor_id), message["rendererId"].clone(), message["message"].clone()]);
-                }
+                let Some(editor) = self.host.notebooks.editor(tab) else { return };
+                let editor_id = editor.id.clone();
+                let renderer_id = message["rendererId"].as_str().unwrap_or_default().to_owned();
+                self.post_renderer_message(editor_id, renderer_id, message["message"].clone(), cx);
             }
             "didFind" => self.notebook_find_did_find(tab, message["matches"].as_array().map_or(&[], Vec::as_slice), cx),
             "didFindHighlightCurrent" => self.notebook_find_did_highlight(tab, message["offset"].as_f64().unwrap_or_default() as f32, cx),
             _ => {}
         }
+    }
+
+    /// editorStatus.ts `updateStatusBar` runs on `onDidActiveEditorChange` and `onDidChangeControl` (once the notebook
+    /// editor's input is set), so it keeps the cell editor that was `activeCodeEditor` then; a cell focused later
+    /// does not move it.
+    pub(super) fn capture_notebook_status_editor(&mut self) {
+        let tab = self.active_notebook_editor().map(|editor| editor.tab_model_id);
+        if tab == self.notebook_views.status_editor.as_ref().map(|(tab, _)| *tab) {
+            return;
+        }
+        let cell = self.active_notebook_editor().filter(|_| self.active_cell_has_editor()).and_then(|editor| Some(self.host.notebooks.model(&editor.notebook)?.cells.get(editor.focus)?.uri.clone()));
+        self.notebook_views.status_editor = tab.map(|tab| (tab, cell));
+    }
+
+    pub(super) fn notebook_status_editor(&self) -> Option<&crate::editor::OpenEditor> {
+        let (tab, cell) = self.notebook_views.status_editor.as_ref()?;
+        if self.active_notebook_editor()?.tab_model_id != *tab {
+            return None;
+        }
+        self.cell_model(cell.as_ref()?)
+    }
+
+    /// notebookRendererMessagingServiceImpl.ts `postMessage`: a renderer's messages to the host wait, in order, for
+    /// its `onRenderer:<id>` activation.
+    fn post_renderer_message(&mut self, editor_id: String, renderer_id: String, message: Value, cx: &mut Context<Self>) {
+        if let Some(queue) = self.host.notebooks.renderer_messages.get_mut(&renderer_id) {
+            queue.push((editor_id, message));
+            return;
+        }
+        let activation = self.host.activate_by_event(&format!("onRenderer:{renderer_id}"));
+        if activation.peek().is_some() {
+            self.host.send("ExtHostNotebookRenderers", "$postRendererMessage", vec![json!(editor_id), json!(renderer_id), message]);
+            return;
+        }
+        self.host.notebooks.renderer_messages.insert(renderer_id.clone(), vec![(editor_id, message)]);
+        cx.spawn(async move |workbench, cx| {
+            let _ = activation.await;
+            workbench.update(cx, |workbench, _| {
+                for (editor_id, message) in workbench.host.notebooks.renderer_messages.remove(&renderer_id).expect("queued above") {
+                    workbench.host.send("ExtHostNotebookRenderers", "$postRendererMessage", vec![json!(editor_id), json!(renderer_id), message]);
+                }
+            })
+        })
+        .detach();
     }
 
     /// Focuses cell `handle` of the notebook editor of `tab`; with `editor` the code editor takes the keyboard.
@@ -728,6 +775,8 @@ impl Workbench {
         }
         for (handle, execution_id, output, picked, cell_top, offset) in &outputs {
             let Some((mime, renderer_id)) = picked else { continue };
+            // notebookEditorWidget.ts `createOutput`: `notebookRendererMessaging.prepare`.
+            drop(self.host.activate_by_event(&format!("onRenderer:{renderer_id}")));
             let item = output.items.iter().find(|item| item.mime == *mime).expect("picked from the output's items");
             match back_layer.outputs.get(&output.id) {
                 Some((_, sent, bytes)) if sent == mime && *bytes == item.data => continue,
@@ -1033,7 +1082,8 @@ impl Workbench {
                     drop(workbench.execute_command(command, args.clone(), window, cx));
                 }))
         };
-        let kernel = self.host.notebooks.kernels.matching(&model.view_type, &model.uri_string()).1.map(|kernel| kernel.label.clone());
+        // `updateKernelStatusAction`: the bound kernel, else the only one.
+        let kernel = self.host.notebooks.kernels.resolve(&model.view_type, &model.uri_string()).map(|kernel| kernel.label.clone());
         let kernel_label = kernel.unwrap_or("Select Kernel".into());
         let toolbar = div().h(px(TOOLBAR_HEIGHT)).flex_none().px(px(8.)).flex().items_center().gap(px(4.)).text_size(px(13.)).text_color(foreground);
         // The interactive window's and REPL editor's toolbar (`MenuId.InteractiveToolbar`): its `navigation` items on the
@@ -1060,7 +1110,7 @@ impl Workbench {
             }
             items.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
             let toolbar = toolbar.children(items.into_iter().map(|(_, _, element)| element));
-            return toolbar.child(div().flex_1()).child(button("notebook-kernel", "server-environment", &kernel_label, "notebook.selectKernel", Vec::new(), cx));
+            return toolbar.child(div().flex_1()).child(button("notebook-kernel", "server-environment", &kernel_label, "_notebook.selectKernel", Vec::new(), cx));
         }
         toolbar
             .child(button("notebook-insert-code", "add", "Code", "notebook.cell.insertCodeCellBelowAndFocusContainer", Vec::new(), cx))
@@ -1070,7 +1120,7 @@ impl Workbench {
             .child(button("notebook-run-all", "run-all", "Run All", "notebook.execute", Vec::new(), cx))
             .children(self.notebook_toolbar_more(window, cx).map(|more| more.ml(px(4.))))
             .child(div().flex_1())
-            .child(button("notebook-kernel", "server-environment", &kernel_label, "notebook.selectKernel", Vec::new(), cx))
+            .child(button("notebook-kernel", "server-environment", &kernel_label, "_notebook.selectKernel", Vec::new(), cx))
     }
 
     /// notebookCellList.ts: the cells at their tops less the scroll, the webview placed over the list.
@@ -1177,10 +1227,14 @@ impl Workbench {
                 container = container.child(bar(row.layout.output_top + layout::FOCUS_INDICATOR_GAP, outputs_height - layout::FOCUS_INDICATOR_GAP));
             }
         }
-        // notebookCellTitleToolbar.css: the toolbar of the hovered row, of the focused one while the list has the
-        // focus, or of the row whose `...` dropdown is open.
+        // notebookCellTitleToolbar.css: with `notebook.cellToolbarVisibility` `click` (the default) the focused row's
+        // toolbar; with `hover` the hovered row's and the focused one's while the list has the focus; and the row
+        // whose `...` dropdown is open.
         let dropdown = self.context_menu.is_some() && self.notebook_views.views.get(&tab).is_some_and(|view| view.toolbar_menu == Some(row.handle));
-        let shows_toolbar = hovered || (focused && list_focused) || dropdown;
+        let shows_toolbar = match self.setting("notebook.cellToolbarVisibility") == "hover" {
+            true => hovered || (focused && list_focused) || dropdown,
+            false => focused || dropdown,
+        };
         container = container.child(self.insert_toolbar(tab, row, cx));
         container = container.children(self.fold_indicator(tab, row, focused, hovered, cx)).children(self.folded_hint(tab, model, row, cx));
         if row.kind != CODE && !row.editing {
@@ -1196,7 +1250,7 @@ impl Workbench {
             .rounded(px(4.))
             .border_1()
             // notebook.css `.cell-editor-focus .cell-editor-part:before`: the focused cell's editor with the keyboard.
-            .border_color(match focused && self.editor_focus.is_focused(window) {
+            .border_color(match focused && self.editor_focus.is_focused(window) && !input {
                 true => self.color("notebook.focusedEditorBorder"),
                 false => self.theme.color("notebook.cellBorderColor").unwrap_or(self.color("editorWidget.border")),
             })

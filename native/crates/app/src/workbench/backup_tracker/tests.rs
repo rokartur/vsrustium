@@ -284,7 +284,8 @@ fn a_repl_backup_opens_a_repl_editor(cx: &mut TestAppContext) {
     assert!(repl, "a REPL editor shows the notebook");
     assert_eq!(tabs, 2, "next to a.txt");
 
-    // The restored notebook is dirty: it backs up again.
+    // The restored notebook is an untitled REPL scratchpad: not dirty, but modified, so it backs up again.
+    assert!(workbench.read_with(cx, |workbench, _| !workbench.host.notebooks.model(&key).unwrap().dirty));
     cx.executor().advance_clock(BACKUP_DELAY);
     cx.run_until_parked();
     answer(next_message(&receiver, "$notebookToData"), json!({ "$vsbuffer": "QkFDS1VQ" }), cx);
