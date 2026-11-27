@@ -345,6 +345,7 @@ impl Workbench {
         // views.ts `FocusedViewContext` is '' while no view has focus, so `focusedView != ''` is false then.
         context.insert("focusedView".into(), json!(self.focused_movable_view(window).unwrap_or_default()));
         self.editor_groups_context(&mut context);
+        self.auxiliary_window_context(window, &mut context);
         self.history_context(&mut context);
         self.list_scroll_context(window, &mut context);
         context.insert("editorIsOpen".into(), json!(self.editors.active().is_some()));

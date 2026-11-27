@@ -13,6 +13,7 @@ mod configuration_migration;
 mod content_hover;
 mod content_hover_view;
 mod editor_groups;
+pub(crate) mod auxiliary_windows;
 mod history_actions;
 mod configuration_resolver;
 mod context_menu;
@@ -454,6 +455,7 @@ pub struct Workbench {
     editor_type_picker: editor_type_picker::EditorTypePicker,
     edit_setting: preferences::edit_setting::EditSetting,
     editor_groups: editor_groups::EditorGroups,
+    auxiliary_windows: auxiliary_windows::AuxiliaryWindows,
     history: history_actions::History,
     panel: panel::Panel,
     explorer_panes: view_panes::ContainerPanes,
@@ -530,7 +532,13 @@ impl Render for Workbench {
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
         let inset = if window_border.is_some() { 1. } else { 0. };
         self.editors.sync_editors();
-        let editor = self.editor_groups_part(window, cx);
+        self.auxiliary_windows.main_window = Some(window.window_handle());
+        self.close_auxiliary_windows_of_closed_parts(cx);
+        let editor = self.in_part(editor_groups::MAIN_PART, |workbench| workbench.editor_groups_part(window, cx));
+        // The title and the status bar's editor items follow the main part's active editor (windowTitle.ts and
+        // editorStatus.ts are scoped to the window's part).
+        let main_group = self.part_active_group(editor_groups::MAIN_PART).expect("the main part has a group");
+        let status_bar = self.is_status_bar_visible().then(|| self.with_group(main_group, |workbench| workbench.status_bar(window, cx)));
         let grid = div()
             .absolute()
             .left(px(inset))
@@ -539,20 +547,22 @@ impl Render for Workbench {
             .h(viewport.height)
             .flex()
             .flex_col()
-            .child(self.title_bar(f32::from(viewport.width), window.is_window_active(), cx))
+            .child(self.with_group(main_group, |workbench| workbench.title_bar(f32::from(viewport.width), window.is_window_active(), None, cx)))
             .children(self.banner_part(window, cx))
             .child(self.middle_section(viewport, editor, window, cx))
-            .when(self.is_status_bar_visible(), |grid| grid.child(self.status_bar(window, cx)));
+            .children(status_bar);
         let modal_editor = self.keybindings_editor_widget(window, cx).or_else(|| self.settings_editor_widget(window, cx)).or_else(|| self.profiles_editor_widget(window, cx)).or_else(|| self.workspace_trust_editor_widget(window, cx)).or_else(|| self.modal_group_widget(window, cx));
-        let quick_input = self.quick_input_widget(window, cx);
+        // The overlays show in the active window of the workbench, this one unless an editor window is.
+        let overlays_here = self.auxiliary_windows.active().is_none();
+        let quick_input = if overlays_here { self.quick_input_widget(window, cx) } else { None };
         let notifications = self.notifications_widget(viewport, window, cx);
-        let context_menu = self.context_menu_widget(cx);
-        let action_widget = self.action_widget(window, cx);
-        let hover = self.hover_widget(window, cx);
-        let dialog = self.custom_dialog_widget(window, cx);
+        let context_menu = if overlays_here { self.context_menu_widget(cx) } else { None };
+        let action_widget = if overlays_here { self.action_widget(window, cx) } else { None };
+        let hover = if overlays_here { self.hover_widget(window, cx) } else { None };
+        let dialog = if overlays_here { self.custom_dialog_widget(window, cx) } else { None };
         let accessible_view = self.accessible_view_widget(window, cx);
         self.update_menubar(window, cx);
-        self.sync_window_title(window);
+        self.with_group(main_group, |workbench| workbench.sync_window_title(window));
         div()
             .relative()
             .size_full()
@@ -575,6 +585,7 @@ impl Render for Workbench {
             .children(dialog)
             .children(action_widget)
             .children(hover)
+            .child(self.cross_window_drag(cx))
             .on_modifiers_changed(cx.listener(|workbench, event: &gpui::ModifiersChangedEvent, _, cx| {
                 workbench.hover_modifiers_changed(event.modifiers.alt, cx);
                 workbench.terminal_link_modifiers_changed(event.modifiers, cx);
@@ -739,6 +750,7 @@ impl Workbench {
             editor_type_picker: Default::default(),
             edit_setting: Default::default(),
             editor_groups: Default::default(),
+            auxiliary_windows: Default::default(),
             history: Default::default(),
             panel: panel::Panel::default(),
             explorer_panes: view_panes::ContainerPanes::default(),
@@ -896,6 +908,7 @@ impl Workbench {
         workbench.register_new_file_commands();
         workbench.register_welcome_page_commands();
         workbench.register_process_explorer_commands();
+        workbench.register_auxiliary_window_commands();
         workbench.register_debug_commands();
         workbench.register_debug_console_commands();
         workbench.register_breakpoint_widget_commands();
@@ -903,6 +916,10 @@ impl Workbench {
         // Keybindings resolve before the focused element sees the key, and with nothing focused too.
         let entity = cx.entity().downgrade();
         cx.intercept_keystrokes(move |event, window, cx| {
+            // Every window's keys come here: this workbench takes those of its own windows.
+            if auxiliary_windows::window_workbench(window, cx).is_none_or(|owner| owner.entity_id() != entity.entity_id()) {
+                return;
+            }
             let _ = entity.update(cx, |workbench, cx| {
                 workbench.user_activity(cx);
                 workbench.dispatch_key(&event.keystroke, window, cx)
@@ -1028,6 +1045,7 @@ impl Workbench {
         self.sync_editor_insets();
         self.text_files_editors_changed();
         self.save_editor_part_state();
+        self.close_auxiliary_windows_of_closed_parts(cx);
         self.show_editor_if_hidden(cx);
         self.send_notebook_changes();
         self.host.send_changes(&self.editors);
@@ -1059,7 +1077,10 @@ impl Workbench {
             .child(self.action_hover(title, command, HoverOptions::instant()))
     }
 
-    fn title_bar(&self, viewport_width: f32, active: bool, cx: &mut Context<Self>) -> Div {
+    /// The window's title bar; an editor window's (`always_on_top` is its state) has the always on top toggle in
+    /// place of the layout controls, and its border.
+    fn title_bar(&self, viewport_width: f32, active: bool, always_on_top: Option<bool>, cx: &mut Context<Self>) -> Div {
+        let auxiliary = always_on_top.is_some();
         // titlebarPart.ts `updateStyles` and titlebarpart.css `.inactive`: inactive colors, the contents at 0.6 opacity.
         let foreground = match active {
             true => self.color("titleBar.activeForeground"),
@@ -1140,21 +1161,25 @@ impl Workbench {
             .flex()
             .gap(px(4.))
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-            .children(self.notifications_title_bar_item(foreground, cx))
-            .when(layout_control_enabled, |right| right.children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())))))
+            .when(!auxiliary, |right| right.children(self.notifications_title_bar_item(foreground, cx)))
+            .when_some(always_on_top.filter(|_| layout_control_enabled), |right, always_on_top| right.child(self.always_on_top_title_action(always_on_top, foreground, cx)))
+            .when(!auxiliary && layout_control_enabled, |right| right.children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())))))
             // titlebarPart.ts: with the activity bar on top or bottom, its global Manage action moves to the title bar.
-            .when(self.compact_activity_bar_location().is_some(), |right| right.child(self.icon("settings-gear", 22., 16., foreground).cursor_pointer().child(self.hover_target("manage-title", HoverContent::Text("Manage".into()), HoverOptions::instant()))));
+            .when(!auxiliary && self.compact_activity_bar_location().is_some(), |right| right.child(self.icon("settings-gear", 22., 16., foreground).cursor_pointer().child(self.hover_target("manage-title", HoverContent::Text("Manage".into()), HoverOptions::instant()))));
         // NativeTitlebarPart.minimumHeight: DEFAULT_CUSTOM_TITLEBAR_HEIGHT with the command center, else macTitlebarSize.
         let height = match (command_center_visible, is_tahoe_or_newer()) {
             (true, _) => 35.,
             (false, true) => 32.,
             (false, false) => 28.,
         };
+        // titlebarPart.ts `updateStyles`: an auxiliary title bar keeps `titleBar.border` under the modern UI.
+        let border = self.theme.color("titleBar.border").filter(|_| auxiliary);
         div()
             .relative()
             .h(px(height))
             .flex_none()
             .when_some(background, |bar, background| bar.bg(background))
+            .when_some(border, |bar, border| bar.border_b_1().border_color(border))
             .child(center)
             .child(right)
             // titlebarpart.css `.titlebar-drag-region`: the bar drags the window and a double click runs the system's
