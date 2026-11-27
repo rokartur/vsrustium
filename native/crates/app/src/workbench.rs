@@ -75,6 +75,7 @@ pub(crate) mod host;
 mod power;
 mod relauncher;
 mod update;
+pub(crate) mod customize_layout;
 pub(crate) mod perf_view;
 mod proxy_auth;
 mod user_activity;
@@ -438,6 +439,7 @@ pub struct Workbench {
     pub(crate) context_menu: Option<context_menu::ContextMenu>,
     /// The activity bar's Manage button, the anchor of its menu.
     manage_bounds: Rc<Cell<gpui::Bounds<gpui::Pixels>>>,
+    update_state: update::UpdateState,
     context_menus_shown: usize,
     pub(crate) notifications: notifications_view::NotificationsUi,
     /// Extension status bar entries, in statusbarModel.ts order.
@@ -533,6 +535,7 @@ impl Render for Workbench {
         self.update_metered_connection(cx);
         self.check_relaunch_settings(window, cx);
         self.welcome_page_frame(window, cx);
+        self.follow_customize_layout(window, cx);
         let viewport = window.viewport_size();
         let window_border = self.theme.color("window.activeBorder");
         // The reference lays the grid out at the full window size and shifts it inside the 1px window border.
@@ -740,6 +743,7 @@ impl Workbench {
             menus: crate::menus::workbench_menus(),
             context_menu: None,
             manage_bounds: Rc::default(),
+            update_state: Default::default(),
             context_menus_shown: 0,
             notifications: notifications_view::NotificationsUi::new(cx),
             status_entries: Vec::new(),
@@ -826,6 +830,7 @@ impl Workbench {
         workbench.register_list_scroll_commands();
         workbench.register_search_actions();
         workbench.register_layout_actions();
+        workbench.register_customize_layout_commands();
         workbench.register_zen_mode_actions();
         workbench.register_centered_layout_actions();
         workbench.register_editor_group_actions();
@@ -1175,7 +1180,20 @@ impl Workbench {
             .when_some(always_on_top.filter(|_| layout_control_enabled), |right, always_on_top| right.child(self.always_on_top_title_action(always_on_top, foreground, cx)))
             .when(!auxiliary && layout_control_enabled, |right| right.children(layout_actions.map(|(name, title, command)| self.icon(name, 22., 16., foreground).cursor_pointer().child(self.action_hover(title, command, HoverOptions::instant())))))
             // titlebarPart.ts: with the activity bar on top or bottom, its global Manage action moves to the title bar.
-            .when(!auxiliary && self.compact_activity_bar_location().is_some(), |right| right.child(self.icon("settings-gear", 22., 16., foreground).cursor_pointer().child(self.hover_target("manage-title", HoverContent::Text("Manage".into()), HoverOptions::instant()))));
+            // globalCompositeBar.ts `SimpleGlobalActivityActionViewItem`: a left mouse down opens MenuId.GlobalActivity below it.
+            .when(!auxiliary && self.compact_activity_bar_location().is_some(), |right| {
+                right.child(
+                    self.icon("settings-gear", 22., 16., foreground)
+                        .cursor_pointer()
+                        .child(output_view::bounds_tracker(self.manage_bounds.clone()))
+                        .child(self.hover_target("manage-title", HoverContent::Text("Manage".into()), HoverOptions::instant()))
+                        .on_mouse_down(MouseButton::Left, cx.listener(|workbench, _, window, cx| {
+                            let context = workbench.key_context(window);
+                            let actions = crate::menus::menu_actions(&workbench.menus, MenuId::GlobalActivity, &context);
+                            workbench.show_context_menu_actions(actions, &context, workbench.manage_bounds.get(), Vec::new(), window, cx);
+                        })),
+                )
+            });
         // NativeTitlebarPart.minimumHeight: DEFAULT_CUSTOM_TITLEBAR_HEIGHT with the command center, else macTitlebarSize.
         let height = match (command_center_visible, is_tahoe_or_newer()) {
             (true, _) => 35.,
@@ -1300,7 +1318,7 @@ impl Workbench {
             .child(
                 self.icon(self.manage_activity_icon(), 36., 24., inactive)
                     .cursor_pointer()
-                    .children(self.profile_badge())
+                    .children(self.manage_activity_badge())
                     .child(output_view::bounds_tracker(self.manage_bounds.clone()))
                     .child(self.hover_target("manage", HoverContent::Text(self.manage_activity_title()), hover))
                     // globalCompositeBar.ts: a left mouse down opens MenuId.GlobalActivity beside the button.

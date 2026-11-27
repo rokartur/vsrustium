@@ -80,8 +80,10 @@ pub enum Owner {
     Debug(Option<futures::channel::oneshot::Sender<Option<String>>>),
     /// A task picker (run, build, test, terminate, restart).
     Tasks(crate::workbench::task_quick_pick::TaskPicker),
-    /// The tasks.json template picker of the folder.
+    /// The template picker of a tasks.json file (a folder's or the profile's).
     TaskTemplates(std::path::PathBuf),
+    /// `workbench.action.customizeLayout`.
+    CustomizeLayout(crate::workbench::customize_layout::CustomizeLayoutPicker),
 }
 
 impl Workbench {
@@ -273,6 +275,7 @@ impl Workbench {
             Owner::Debug(_) => self.debug_pick_event(id, event, window, cx),
             Owner::Tasks(_) => self.task_pick_event(id, event, window, cx),
             Owner::TaskTemplates(_) => self.task_template_event(id, event, window, cx),
+            Owner::CustomizeLayout(_) => self.customize_layout_event(id, event, window, cx),
             Owner::ProfileTemplateImport => self.profile_template_import_event(id, event, window, cx),
             Owner::Snippets(_) => self.snippet_picker_event(id, event, window, cx),
             Owner::SnippetFileName(_) => self.snippet_file_name_event(id, event, window, cx),

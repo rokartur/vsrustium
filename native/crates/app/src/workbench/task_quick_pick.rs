@@ -7,6 +7,7 @@ use gpui::{Context, PromptLevel, Window};
 use serde_json::{Value, json};
 
 use super::Workbench;
+use super::task_configure::tabs_to_spaces;
 use super::task_matcher_prompt::MatcherChoice;
 use crate::commands::Outcome;
 use crate::dialog;
@@ -115,6 +116,10 @@ impl Workbench {
                 workbench.run_configure_tasks(window, cx);
                 Outcome::done()
             })
+        });
+        self.commands.register("workbench.action.tasks.openUserTasks", |workbench, _, window, cx| {
+            workbench.open_user_tasks(window, cx);
+            Outcome::done()
         });
         self.commands.register("workbench.action.tasks.configureDefaultBuildTask", |workbench, _, window, cx| {
             workbench.with_task_trust(window, cx, |workbench, window, cx| {
@@ -261,7 +266,7 @@ impl Workbench {
         self.hide_quick_input_by_id(id, window, cx);
         match (pick, action) {
             (TaskPick::Task(task), PickAction::Configure) => self.configure_task(task, window, cx),
-            (TaskPick::OpenConfig(folder), _) => self.open_task_config(Some(folder), window, cx),
+            (TaskPick::OpenConfig(folder), _) => self.open_task_config(folder, window, cx),
             (TaskPick::ConfigureDefault(group), _) => self.configure_default_task(group, window, cx),
             (TaskPick::Task(task), PickAction::Run) => self.run_picked_task(task, window, cx),
             (TaskPick::Task(task), PickAction::Terminate) => self.terminate_task(&task, window, cx),
@@ -516,15 +521,29 @@ impl Workbench {
     }
 
     /// `_openTaskFile`: an existing tasks.json opens; without one, a template is picked and written.
-    pub(super) fn open_task_config(&mut self, folder: Option<PathBuf>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(folder) = folder else {
-            self.notify(Notification::new(Severity::Info, "Tasks are only available on a workspace folder."));
-            return;
-        };
+    pub(super) fn open_task_config(&mut self, folder: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let existing = [".vscode", ".vsrustium"].iter().map(|dir| folder.join(dir).join("tasks.json")).find(|path| path.exists());
         if let Some(path) = existing {
             return self.open_file(path, true, window, cx);
         }
+        self.pick_task_template(folder.join(".vscode").join("tasks.json"), window, cx);
+    }
+
+    /// `workbench.action.tasks.openUserTasks` (`_openTaskFile` of `TaskSourceKind.User`): the profile's tasks.json
+    /// opens when it has tasks, else a template is picked first.
+    fn open_user_tasks(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (path, user_tasks) = {
+            let settings = self.settings.lock().unwrap();
+            let inspected = settings.configuration.inspect("tasks", &config::configuration::Overrides::default());
+            (settings.user_files().tasks.clone(), inspected.user_local.value)
+        };
+        if user_tasks.is_some_and(|config| config["tasks"].as_array().is_some_and(|tasks| !tasks.is_empty())) {
+            return self.open_file(path, false, window, cx);
+        }
+        self.pick_task_template(path, window, cx);
+    }
+
+    fn pick_task_template(&mut self, path: PathBuf, window: &mut Window, cx: &mut Context<Self>) {
         let mut input = QuickInput::new(0, Kind::QuickPick);
         input.placeholder = Some("Select a Task Template".into());
         let mut entries = Vec::new();
@@ -534,7 +553,7 @@ impl Workbench {
             push_entry(&mut entries, &mut picks, item, TaskPick::Nothing);
         }
         input.set_items(entries);
-        let id = self.quick_inputs.add(input, Owner::TaskTemplates(folder));
+        let id = self.quick_inputs.add(input, Owner::TaskTemplates(path));
         self.show_quick_input(id, window, cx);
         self.flush_quick_input_events(window, cx);
     }
@@ -542,14 +561,15 @@ impl Workbench {
     pub fn task_template_event(&mut self, id: i64, event: Event, window: &mut Window, cx: &mut Context<Self>) {
         match event {
             Event::Accept(_) => {
-                let Some(Owner::TaskTemplates(folder)) = self.quick_inputs.owner(id) else { return };
-                let folder = folder.clone();
+                let Some(Owner::TaskTemplates(path)) = self.quick_inputs.owner(id) else { return };
+                let path = path.clone();
                 let Some(handle) = self.quick_inputs.get(id).and_then(|input| input.selected_handles().first().copied()) else { return };
                 self.hide_quick_input_by_id(id, window, cx);
-                let template = &crate::tasks::templates::templates()[handle as usize];
-                let path = folder.join(".vscode").join("tasks.json");
-                let written = std::fs::create_dir_all(folder.join(".vscode")).and_then(|()| std::fs::write(&path, template.content));
-                match written {
+                let mut content = crate::tasks::templates::templates()[handle as usize].content.to_owned();
+                if self.setting("editor.insertSpaces") == true {
+                    content = tabs_to_spaces(&content, self.setting("editor.tabSize").as_u64().unwrap_or(4) as usize);
+                }
+                match self.write_task_template(&path, &content) {
                     Ok(()) => self.open_file(path, true, window, cx),
                     Err(error) => self.notify_error(format!("Unable to write {}: {error}", path.display())),
                 }
@@ -557,6 +577,20 @@ impl Workbench {
             Event::Hide => self.quick_inputs.remove(id),
             _ => {}
         }
+    }
+
+    /// A new file gets the template's text; only the user tasks.json can exist here (a folder's opens without a
+    /// template), and gets the template's value as its `tasks` through the configuration service.
+    fn write_task_template(&mut self, path: &Path, content: &str) -> Result<(), String> {
+        if !path.exists() {
+            let parent = path.parent().expect("tasks.json is in a folder");
+            return std::fs::create_dir_all(parent).and_then(|()| std::fs::write(path, content)).map_err(|error| error.to_string());
+        }
+        let value = config::json::parse(content, &mut Vec::new(), Default::default());
+        let mut settings = self.settings.lock().unwrap();
+        let change = settings.update_value("tasks", value.as_ref(), config::service::Target::User, None, &[])?;
+        self.host.send_configuration_change(&settings, &change);
+        Ok(())
     }
 
     /// `_getRecentTasks`: the stored entries still configured or of a contributed type, most recent first.
@@ -678,5 +712,41 @@ mod tests {
             let Some(Owner::Tasks(picker)) = workbench.quick_inputs.owner(id) else { panic!("the task picker is gone") };
             assert!(matches!(picker.picks[0], TaskPick::Configure));
         });
+    }
+
+    /// task.contribution.ts `openUserTasks`: without user tasks a template is picked and written to the profile's
+    /// tasks.json with `editor.insertSpaces`; once it has tasks, the file opens directly.
+    #[gpui::test]
+    fn open_user_tasks_writes_a_template_then_opens_the_file(cx: &mut gpui::TestAppContext) {
+        let app_root = Path::new(env!("VSCODE_SRC")).to_path_buf();
+        let themes = exthost::scan::scan_extension(&app_root.join("extensions/theme-defaults"), true).unwrap();
+        let theme = crate::theme::load_theme(&[themes], "Dark Modern").unwrap();
+        let dir = std::env::temp_dir().join(format!("code-gpui-user-tasks-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("User")).unwrap();
+        std::fs::write(dir.join("User/settings.json"), r#"{ "editor.insertSpaces": true, "editor.tabSize": 4 }"#).unwrap();
+        let (workbench, cx) = cx.add_window_view(|_, cx| Workbench::new(theme, app_root.clone(), None, crate::languages::Languages::new(&[]), crate::default_settings(), crate::host_sync::HostSync::new(std::sync::mpsc::channel().0), cx));
+        let settings = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None);
+        let tasks_file = settings.user_files().tasks.clone();
+        workbench.update(cx, |workbench, _| {
+            *workbench.settings.lock().unwrap() = settings;
+            workbench.start_tasks();
+        });
+        workbench.update_in(cx, |workbench, window, cx| {
+            drop(workbench.execute_command("workbench.action.tasks.openUserTasks", Vec::new(), window, cx));
+            let id = workbench.quick_inputs.find_id(|owner| matches!(owner, Owner::TaskTemplates(_))).expect("the template picker");
+            assert_eq!(workbench.quick_inputs.get(id).unwrap().placeholder.as_deref(), Some("Select a Task Template"));
+            workbench.quick_inputs.get_mut(id).unwrap().set_selected_items(&[3]);
+            workbench.task_template_event(id, Event::Accept(false), window, cx);
+            workbench.flush_quick_input_events(window, cx);
+        });
+        let written = std::fs::read_to_string(&tasks_file).unwrap();
+        assert!(written.starts_with("{\n    \"version\": \"2.0.0\",\n    \"tasks\": [\n        {"), "{written}");
+        workbench.update_in(cx, |workbench, window, cx| {
+            assert_eq!(workbench.editors.active().map(|editor| editor.document().path.clone()), Some(tasks_file.clone()));
+            *workbench.settings.lock().unwrap() = config::service::Settings::load(config::registry::Registry::with_extensions(&[]), dir.join("User"), None);
+            drop(workbench.execute_command("workbench.action.tasks.openUserTasks", Vec::new(), window, cx));
+            assert!(workbench.quick_inputs.find_id(|owner| matches!(owner, Owner::TaskTemplates(_))).is_none(), "user tasks open without a template");
+        });
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
